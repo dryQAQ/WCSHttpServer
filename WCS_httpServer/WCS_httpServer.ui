@@ -1,0 +1,28 @@
+<UI version="4.0" >
+ <class>WCS_httpServerClass</class>
+ <widget class="QMainWindow" name="WCS_httpServerClass" >
+  <property name="objectName" >
+   <string notr="true">WCS_httpServerClass</string>
+  </property>
+  <property name="geometry" >
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>600</width>
+    <height>400</height>
+   </rect>
+  </property>
+  <property name="windowTitle" >
+   <string>WCS_httpServer</string>
+  </property>  <widget class="QMenuBar" name="menuBar" />
+  <widget class="QToolBar" name="mainToolBar" />
+  <widget class="QWidget" name="centralWidget" />
+  <widget class="QStatusBar" name="statusBar" />
+ </widget>
+ <layoutDefault spacing="6" margin="11" />
+ <pixmapfunction></pixmapfunction>
+ <resources>
+   <include location="WCS_httpServer.qrc"/>
+ </resources>
+ <connections/>
+</UI>

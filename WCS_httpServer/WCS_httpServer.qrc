@@ -1,0 +1,4 @@
+<RCC>
+    <qresource prefix="WCS_httpServer">
+    </qresource>
+</RCC>
