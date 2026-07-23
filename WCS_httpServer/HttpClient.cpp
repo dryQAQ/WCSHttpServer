@@ -1,11 +1,19 @@
 #include "HttpClient.h"
-#include "WaveManager.h"
 #include "log_center.h"
+#include "hlog1.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDateTime>
+#include <QEventLoop>
+#include <QTimer>
+#include <QNetworkRequest>
 
-HttpClient::HttpClient(QObject* parent) : QObject(parent) {}
+HttpClient::HttpClient(QObject* parent)
+    : QObject(parent)
+{
+    m_pNetworkMgr = new QNetworkAccessManager(this);
+}
+
 HttpClient::~HttpClient() {}
 
 int HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
@@ -20,57 +28,48 @@ int HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
 
     QJsonObject req;
     req["head"] = head;
+    QByteArray postData = QJsonDocument(req).toJson(QJsonDocument::Compact);
 
-    QByteArray body = QJsonDocument(req).toJson(QJsonDocument::Compact);
 
-    IHttpClientPtr client(new IHttpClient(this));
-    client->SetTimeout(m_timeoutMs);
+    QUrl url(m_url);
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
+    request.setRawHeader("AppKey", m_appkey.toUtf8());
 
-    int seq = client->SendRequest(m_url.toUtf8().constData(), "POST",
-                                   body.constData(), body.length());
-    m_seqOrderCode[seq] = orderCode;
+    QTimer timer;
+    timer.setSingleShot(true);
+    timer.setInterval(m_timeoutMs);
+    timer.start();
 
-    WCS_INFO("[Report] 异步回传 orderCode=%s sumLocation=%d seq=%d",
-        orderCode.toLocal8Bit().data(), sumLocation, seq);
+    QNetworkReply* reply = m_pNetworkMgr->post(request, postData);
 
-    return seq;
-}
+    QEventLoop loop;
+    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    loop.exec();
 
-EnHandleResult HttpClient::OnResponse(IHttpClient* pSender, CHttpResponse* pResp, int iSeq)
-{
-    QString body = QString::fromUtf8(pResp->GetBody(), pResp->GetBodyLength());
-    int status = pResp->GetStatus();
-
-    QString orderCode = m_seqOrderCode.take(iSeq);
-
-    if (status == 200)
+    if (!reply->isFinished())
     {
-        QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8());
-        bool success = doc.object()["success"].toBool(false);
-
-        WCS_INFO("[Report] 响应 orderCode=%s success=%d", orderCode.toLocal8Bit().data(), success);
-        LogCenter::Instance()->wcs_run_log_warn(true,
-            QString("[Report] orderCode=%1 success=%2 body=%3")
-                .arg(orderCode).arg(success).arg(body.left(200)));
-
-        emit reportResult(orderCode, success, body);
-    }
-    else
-    {
-        LogCenter::Instance()->wcs_run_log_warn(false,
-            QString("[Report] HTTP错误 orderCode=%1 status=%2").arg(orderCode).arg(status));
-        emit reportResult(orderCode, false, body);
+        reply->abort();
+        reply->deleteLater();
+        WCS_INFO("[Report] 超时 orderCode=%s", orderCode.toLocal8Bit().data());
+        emit reportResult(orderCode, false, QString());
+        return -1;
     }
 
-    return HR_OK;
-}
+    QByteArray respBody = reply->readAll();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    reply->deleteLater();
 
-EnHandleResult HttpClient::OnError(IHttpClient* pSender, int iErrorCode, int iSeq)
-{
-    QString orderCode = m_seqOrderCode.take(iSeq);
+    QJsonDocument doc = QJsonDocument::fromJson(respBody);
+    bool success = doc.object()["success"].toBool(false);
 
-    LogCenter::Instance()->wcs_run_log_warn(false,
-        QString("[Report] 网络错误 orderCode=%1 error=%2").arg(orderCode).arg(iErrorCode));
-    emit reportResult(orderCode, false, QString());
-    return HR_OK;
+    WCS_INFO("[Report] 回传 orderCode=%s status=%d success=%d",
+        orderCode.toLocal8Bit().data(), statusCode, success);
+    LogCenter::Instance()->wcs_run_log_warn(success,
+        QString("[Report] orderCode=%1 success=%2 body=%3")
+            .arg(orderCode).arg(success).arg(QString::fromUtf8(respBody).left(200)));
+
+    emit reportResult(orderCode, success, QString::fromUtf8(respBody));
+    return success ? 0 : -1;
 }

@@ -1,6 +1,6 @@
 #pragma once
 // ============================================================================
-// ConfigManager.h — 配置管理（兼容WCSApp的wcs.xml格式 + 本程序独立配置）
+// ConfigManager.h — 配置管理（使用XML格式独立配置）
 // ============================================================================
 
 #include <QObject>
@@ -9,8 +9,7 @@
 struct AppConfig
 {
     // ──── 服务配置 ────
-    int     wmsListenPort    = 8191;   // WMS推送监听端口
-    int     internalPort     = 8192;   // WCSApp查询端口
+    int     wmsListenPort    = 8191;   // HTTP监听端口
 
     // ──── 回传配置 ────
     QString feedbackUrl;               // 正式环境回传URL

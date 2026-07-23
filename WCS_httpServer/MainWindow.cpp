@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "ConfigManager.h"
 #include "log_center.h"
+#include "hlog1.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -76,14 +77,12 @@ void MainWindow::setupUI()
 
     m_lblServerStatus = new QLabel("● 已停止");
     m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
-    m_lblWmsPort = new QLabel("WMS端口: 8191");
-    m_lblInternalPort = new QLabel("内部端口: 8192");
+    m_lblPort = new QLabel("端口: 8191");
 
     serverLayout->addWidget(m_btnStartStop);
     serverLayout->addWidget(m_lblServerStatus);
     serverLayout->addStretch();
-    serverLayout->addWidget(m_lblWmsPort);
-    serverLayout->addWidget(m_lblInternalPort);
+    serverLayout->addWidget(m_lblPort);
 
     // ═══════════════════════════════════════════
     // 第二行：波次信息面板
@@ -132,7 +131,6 @@ void MainWindow::setupUI()
     QGridLayout* cfgLayout = new QGridLayout(grpConfig);
 
     m_spinWmsPort = new QSpinBox();     m_spinWmsPort->setRange(1, 65535); m_spinWmsPort->setValue(8191);
-    m_spinInternalPort = new QSpinBox(); m_spinInternalPort->setRange(1, 65535); m_spinInternalPort->setValue(8192);
     m_editFeedbackUrl = new QLineEdit();
     m_editAppkey      = new QLineEdit();
     m_chkTestEnv      = new QCheckBox("测试环境");
@@ -142,8 +140,7 @@ void MainWindow::setupUI()
     btnSave->setMinimumHeight(32);
 
     int cr = 0;
-    cfgLayout->addWidget(new QLabel("WMS端口:"), cr, 0); cfgLayout->addWidget(m_spinWmsPort, cr++, 1);
-    cfgLayout->addWidget(new QLabel("内部端口:"), cr, 0); cfgLayout->addWidget(m_spinInternalPort, cr++, 1);
+    cfgLayout->addWidget(new QLabel("端口:"), cr, 0); cfgLayout->addWidget(m_spinWmsPort, cr++, 1);
     cfgLayout->addWidget(new QLabel("回传URL:"),  cr, 0); cfgLayout->addWidget(m_editFeedbackUrl, cr++, 1);
     cfgLayout->addWidget(new QLabel("AppKey:"),    cr, 0); cfgLayout->addWidget(m_editAppkey, cr++, 1);
     cfgLayout->addWidget(new QLabel("波次超时:"),  cr, 0); cfgLayout->addWidget(m_spinTimeout, cr++, 1);
@@ -157,7 +154,7 @@ void MainWindow::setupUI()
 
     m_txtLog = new QTextEdit();
     m_txtLog->setReadOnly(true);
-    m_txtLog->setMaximumBlockCount(5000); // 最多保留5000行
+    m_txtLog->document()->setMaximumBlockCount(5000);
     m_txtLog->setStyleSheet("font-family: Consolas, 'Microsoft YaHei'; font-size: 12px;");
 
     QPushButton* btnClearLog = new QPushButton("清空日志");
@@ -190,14 +187,12 @@ void MainWindow::applyConfig()
 {
     AppConfig& cfg = ConfigManager::instance()->config();
     m_spinWmsPort->setValue(cfg.wmsListenPort);
-    m_spinInternalPort->setValue(cfg.internalPort);
     m_editFeedbackUrl->setText(cfg.activeFeedbackUrl());
     m_editAppkey->setText(cfg.activeAppkey());
     m_chkTestEnv->setChecked(cfg.useTestEnv);
     m_spinTimeout->setValue(cfg.waveTimeoutMin);
 
-    m_lblWmsPort->setText(QString("WMS端口: %1").arg(cfg.wmsListenPort));
-    m_lblInternalPort->setText(QString("内部端口: %1").arg(cfg.internalPort));
+    m_lblPort->setText(QString("端口: %1").arg(cfg.wmsListenPort));
 }
 
 // ============================================================================
@@ -231,10 +226,12 @@ void MainWindow::onStartStop()
         m_pClient->setUrl(cfg.activeFeedbackUrl());
         m_pClient->setAppkey(cfg.activeAppkey());
 
-        int extPort = m_spinWmsPort->value();
-        int intPort = m_spinInternalPort->value();
+        m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
+        m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
 
-        if (m_pServer->start(extPort, intPort))
+        int port = m_spinWmsPort->value();
+
+        if (m_pServer->start(port))
         {
             m_bRunning = true;
             m_btnStartStop->setText("停止服务");
@@ -244,7 +241,14 @@ void MainWindow::onStartStop()
                 "QPushButton:hover { background-color: #d32f2f; }");
             m_lblServerStatus->setText("● 运行中");
             m_lblServerStatus->setStyleSheet("font-size: 14px; color: #4CAF50;");
-            appendLog(QString("HTTP服务已启动 WMS端口=%1 内部端口=%2").arg(extPort).arg(intPort));
+            appendLog(QString("HTTP服务已启动 端口=%1").arg(port));
+
+            connect(m_pServer, &HttpServer::waveReadyToReport, this, [this](const QString& orderCode) {
+                if (!m_pClient) return;
+                int sumLocation = m_pServer->waveManager()->sumLocation();
+                appendLog(QString("自动回传波次 %1 sumLocation=%2").arg(orderCode).arg(sumLocation));
+                m_pClient->sendWaveComplete(orderCode, sumLocation);
+            });
         }
         else
         {
@@ -308,7 +312,7 @@ void MainWindow::onManualReport()
 
     if (ret == QMessageBox::Yes)
     {
-        m_pServer->waveManager()->status() = WAVE_COMPLETING;
+        m_pServer->waveManager()->setState(WAVE_COMPLETING);
         m_pClient->sendWaveComplete(snap.orderCode, snap.sumLocation);
         appendLog(QString("手动回传波次 %1 sumLocation=%2").arg(snap.orderCode).arg(snap.sumLocation));
     }
@@ -318,7 +322,6 @@ void MainWindow::onSaveConfig()
 {
     AppConfig& cfg = ConfigManager::instance()->config();
     cfg.wmsListenPort  = m_spinWmsPort->value();
-    cfg.internalPort   = m_spinInternalPort->value();
     cfg.waveTimeoutMin = m_spinTimeout->value();
     cfg.useTestEnv     = m_chkTestEnv->isChecked();
 

@@ -24,7 +24,6 @@ bool AppConfig::loadFromFile(const QString& path)
 
         QStringRef name = xml.name();
         if (name == "wmsListenPort")       wmsListenPort = xml.readElementText().toInt();
-        else if (name == "internalPort")   internalPort = xml.readElementText().toInt();
         else if (name == "feedbackUrl")    feedbackUrl = xml.readElementText();
         else if (name == "feedbackTestUrl") feedbackTestUrl = xml.readElementText();
         else if (name == "appkey")         appkey = xml.readElementText();
@@ -51,7 +50,6 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeStartElement("config");
 
     xml.writeTextElement("wmsListenPort",    QString::number(wmsListenPort));
-    xml.writeTextElement("internalPort",     QString::number(internalPort));
     xml.writeTextElement("feedbackUrl",      feedbackUrl);
     xml.writeTextElement("feedbackTestUrl",  feedbackTestUrl);
     xml.writeTextElement("appkey",           appkey);

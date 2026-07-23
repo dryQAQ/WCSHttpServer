@@ -1,78 +1,86 @@
 #pragma once
 // ============================================================================
-// HttpServer.h — HP-Socket HTTP Server 封装
+// HttpServer.h — HP-Socket HTTP Server
 //
-// 同时处理两类请求:
-//   外部: POST /api/.../InsertWaveInfo     WMS推送波次
-//   内部: GET  /api/query                  WCSApp查询格口
-//         POST /api/markSorted             WCSApp标记已分拣
-//         POST /api/markException           WCSApp标记异常
-//         GET  /api/waveStatus             WCSApp查询波次状态
+// 设计模式：
+//   HttpServer 继承 CHttpServerListener
+//   m_pServer 在初始化列表: m_pServer(this — IHttpServerListener*)
+//   Start: m_pServer->Start((TCHAR*)"0.0.0.0", port)
+//   HasStarted() 检查状态
+//   OnMessageComplete／OnBody／OnRequestLine 处理 HTTP
 // ============================================================================
 
 #include <QObject>
 #include <QJsonObject>
+#include <QMap>
+#include <QByteArray>
+#include <mutex>
 #include "HPSocket.h"
 #include "TaskQueue.h"
 #include "DoubleBuffer.h"
 #include "WaveManager.h"
 
-class HttpServer;
+class ParseWorker;
 
-// ──── HP-Socket 请求处理器 ────
-class CHttpHandler : public IHttpServerHandler
+// 连接状态
+struct ConnState
 {
-public:
-    CHttpHandler(HttpServer* pOwner);
-    virtual EnHandleResult OnRequest(IHttpServer* pSender, CHttpRequest* pReq,
-                                     CHttpResponse* pResp, int iSeq) override;
-private:
-    HttpServer* m_pOwner;
+    QByteArray body;
+    QString    method;
+    QString    path;
+    QString    queryString;
 };
 
-// ──── HTTP Server 管理类 ────
-class HttpServer : public QObject
+class HttpServer : public QObject, public CHttpServerListener
 {
     Q_OBJECT
 public:
     explicit HttpServer(QObject* parent = nullptr);
     ~HttpServer();
 
-    bool start(int externalPort = 8191, int internalPort = 8192);
+    bool start(int port = 8191);
     void stop();
-    bool isRunning() const { return m_pExtServer && m_pExtServer->IsStarted(); }
+    bool isRunning() const { return m_pServer && m_pServer->HasStarted(); }
 
-    // 组件访问
-    TaskQueue*   taskQueue()    { return m_pQueue; }
-    GridBuffer*  gridBuffer()   { return m_pBuffer; }
-    WaveManager* waveManager()  { return m_pWaveMgr; }
-    ParseWorker* parseWorker()  { return m_pWorker; }
+    TaskQueue*   taskQueue()   { return m_pQueue; }
+    GridBuffer*  gridBuffer()  { return m_pBuffer; }
+    WaveManager* waveManager() { return m_pWaveMgr; }
 
 signals:
-    void serverStarted(int extPort, int intPort);
+    void serverStarted(int port);
     void serverStopped();
-    void logMessage(const QString& msg, bool isError = false);
+    void waveReadyToReport(const QString& orderCode);
+
+protected:
+    // CHttpServerListener 回调（只重写需要的）
+    EnHttpParseResult OnRequestLine(IHttpServer* pSender, CONNID dwConnID,
+                                     LPCSTR lpszMethod, LPCSTR lpszUrl) override;
+    EnHttpParseResult OnBody(IHttpServer* pSender, CONNID dwConnID,
+                              const BYTE* pData, int iLength) override;
+    EnHttpParseResult OnMessageComplete(IHttpServer* pSender, CONNID dwConnID) override;
+    EnHttpParseResult OnHeadersComplete(IHttpServer* pSender, CONNID dwConnID) override { return HPR_OK; }
+    EnHttpParseResult OnParseError(IHttpServer* pSender, CONNID dwConnID, int iErrorCode, LPCSTR lpszErrorDesc) override { return HPR_OK; }
+    EnHandleResult OnClose(ITcpServer* pSender, CONNID dwConnID,
+                            EnSocketOperation enOperation, int iErrorCode) override;
 
 private:
-    friend class CHttpHandler;
-
-    // 请求处理
-    QJsonObject handleInsertWaveInfo(const QJsonObject& req);
+    void processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState& state);
     QJsonObject handleQuery(const QString& code);
     QJsonObject handleMarkSorted(const QJsonObject& req);
     QJsonObject handleMarkException(const QJsonObject& req);
     QJsonObject handleWaveStatus();
-
-    // 响应辅助
+    void sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
+                          const QJsonObject& json, USHORT status = 200);
     QJsonObject okResponse(const QString& data = "accepted");
     QJsonObject errResponse(const QString& msg, int code = -1);
 
-    // 组件
-    IHttpServerPtr  m_pExtServer;    // 外部端口（WMS推送）
-    IHttpServerPtr  m_pIntServer;    // 内部端口（WCSApp查询）
-    CHttpHandler    m_handler;
-    TaskQueue*      m_pQueue    = nullptr;
-    GridBuffer*     m_pBuffer   = nullptr;
-    WaveManager*    m_pWaveMgr  = nullptr;
-    ParseWorker*    m_pWorker   = nullptr;
+    // HP-Socket 模式: m_pServer(this)
+    CHttpServerPtr m_pServer;
+    TaskQueue*     m_pQueue   = nullptr;
+    GridBuffer*    m_pBuffer  = nullptr;
+    WaveManager*   m_pWaveMgr = nullptr;
+    ParseWorker*   m_pWorker  = nullptr;
+
+    QMap<CONNID, ConnState> m_connStates;
+    std::mutex              m_connMutex;
 };

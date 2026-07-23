@@ -1,0 +1,5 @@
+/src/*
+/WCS_httpServer/.vs
+/WCS_httpServer/x64
+/doc
+/.git

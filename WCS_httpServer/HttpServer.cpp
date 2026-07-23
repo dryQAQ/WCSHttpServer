@@ -1,136 +1,38 @@
 #include "HttpServer.h"
 #include "ParseWorker.h"
 #include "log_center.h"
+#include "hlog1.h"
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QUrlQuery>
 #include <QDateTime>
 #include <cstring>
+#include <windows.h>
+#include <tchar.h>
 
 // ============================================================================
-// CHttpHandler 实现
-// ============================================================================
-
-CHttpHandler::CHttpHandler(HttpServer* pOwner) : m_pOwner(pOwner) {}
-
-EnHandleResult CHttpHandler::OnRequest(IHttpServer* pSender, CHttpRequest* pReq,
-                                        CHttpResponse* pResp, int iSeq)
-{
-    LPCSTR path = pReq->GetPath();
-    if (!path) return HR_SKIP;
-
-    LPCSTR method = pReq->GetMethod();
-    int bodyLen   = pReq->GetBodyLength();
-    LPCSTR body   = pReq->GetBody();
-
-    QJsonObject respJson;
-
-    // ──── 外部接口：WMS推送波次 ────
-    if (strcmp(path, "/api/DispatchSortingCommand/InsertWaveInfo") == 0 && method && strcmp(method, "POST") == 0)
-    {
-        // 水位保护
-        if (m_pOwner->m_pQueue->size() >= 3)
-        {
-            respJson = m_pOwner->errResponse("服务器繁忙，请稍后重试", 503);
-        }
-        else if (bodyLen <= 0 || !body)
-        {
-            respJson = m_pOwner->errResponse("请求Body为空");
-        }
-        else
-        {
-            // 入队（只拷贝，不解析）
-            WaveTask task;
-            task.rawBody  = QByteArray(body, bodyLen);
-            task.recvTime = QDateTime::currentMSecsSinceEpoch();
-            m_pOwner->m_pQueue->push(task);
-
-            respJson = m_pOwner->okResponse("accepted");
-            WCS_INFO("[Http] WMS波次入队 bodyLen=%d queueSize=%d", bodyLen, m_pOwner->m_pQueue->size());
-        }
-
-        pResp->SetStatus(respJson["success"].toBool() ? 200 : 503);
-        pResp->SetContentType("application/json; charset=UTF-8");
-        QByteArray respData = QJsonDocument(respJson).toJson(QJsonDocument::Compact);
-        pResp->SetBody(respData.constData(), respData.length());
-        return HR_OK;
-    }
-
-    // ──── 内部接口：WCSApp查询格口 ────
-    if (strcmp(path, "/api/query") == 0 && method && strcmp(method, "GET") == 0)
-    {
-        LPCSTR rawParams = pReq->GetQueryString();
-        QString params = rawParams ? QString::fromUtf8(rawParams) : QString();
-        QUrlQuery query(params);
-        QString code = query.queryItemValue("code").trimmed();
-
-        respJson = m_pOwner->handleQuery(code);
-        pResp->SetStatus(200);
-        pResp->SetContentType("application/json; charset=UTF-8");
-        QByteArray respData = QJsonDocument(respJson).toJson(QJsonDocument::Compact);
-        pResp->SetBody(respData.constData(), respData.length());
-        return HR_OK;
-    }
-
-    // ──── 内部接口：WCSApp标记已分拣 ────
-    if (strcmp(path, "/api/markSorted") == 0 && method && strcmp(method, "POST") == 0)
-    {
-        QJsonDocument doc = QJsonDocument::fromJson(QByteArray(body, bodyLen));
-        respJson = m_pOwner->handleMarkSorted(doc.object());
-        pResp->SetStatus(200);
-        pResp->SetContentType("application/json; charset=UTF-8");
-        QByteArray respData = QJsonDocument(respJson).toJson(QJsonDocument::Compact);
-        pResp->SetBody(respData.constData(), respData.length());
-        return HR_OK;
-    }
-
-    // ──── 内部接口：WCSApp标记异常 ────
-    if (strcmp(path, "/api/markException") == 0 && method && strcmp(method, "POST") == 0)
-    {
-        QJsonDocument doc = QJsonDocument::fromJson(QByteArray(body, bodyLen));
-        respJson = m_pOwner->handleMarkException(doc.object());
-        pResp->SetStatus(200);
-        pResp->SetContentType("application/json; charset=UTF-8");
-        QByteArray respData = QJsonDocument(respJson).toJson(QJsonDocument::Compact);
-        pResp->SetBody(respData.constData(), respData.length());
-        return HR_OK;
-    }
-
-    // ──── 内部接口：WCSApp查询波次状态 ────
-    if (strcmp(path, "/api/waveStatus") == 0 && method && strcmp(method, "GET") == 0)
-    {
-        respJson = m_pOwner->handleWaveStatus();
-        pResp->SetStatus(200);
-        pResp->SetContentType("application/json; charset=UTF-8");
-        QByteArray respData = QJsonDocument(respJson).toJson(QJsonDocument::Compact);
-        pResp->SetBody(respData.constData(), respData.length());
-        return HR_OK;
-    }
-
-    return HR_SKIP;
-}
-
-// ============================================================================
-// HttpServer 实现
+// HP-Socket CHttpServerListener 模式
+//   m_pServer(this)  // this = IHttpServerListener*
+//   m_pServer->Start(_T("0.0.0.0"), port);
+//   m_pServer->Stop();
 // ============================================================================
 
 HttpServer::HttpServer(QObject* parent)
-    : QObject(parent), m_handler(this)
+    : QObject(parent)
+    , m_pServer(this)           // ★ this = IHttpServerListener*
 {
-    m_pQueue   = new TaskQueue(3);       // 最多积压3个波次
+    m_pQueue   = new TaskQueue(3);
     m_pBuffer  = new GridBuffer();
     m_pWaveMgr = new WaveManager(m_pBuffer, this);
     m_pWorker  = new ParseWorker(m_pQueue, m_pBuffer, this);
 
-    // 解析完成后通知WaveManager设置波次数据
-    connect(m_pWorker, &ParseWorker::waveParsed, this, [this](const QString& orderCode, int skuCount, int orderQty, qint64) {
-        m_pWaveMgr->setWaveData(orderCode, orderQty, skuCount);
-    });
+    connect(m_pWorker, &ParseWorker::waveParsed, this,
+        [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet) {
+            m_pWaveMgr->setWaveData(orderCode, orderQty, skuCount);
+            m_pWaveMgr->setRecvSet(recvSet);
+        });
 
-    // 波次可回传时发送信号
-    connect(m_pWaveMgr, &WaveManager::waveReadyToReport, this, [this](const QString& orderCode) {
-        WCS_INFO("[Http] 波次可回传 orderCode=%s", orderCode.toLocal8Bit().data());
-    });
+    connect(m_pWaveMgr, &WaveManager::waveReadyToReport, this, &HttpServer::waveReadyToReport);
 
     LogCenter::Instance()->wcs_run_log_warn(true, "[Http] HttpServer已创建");
 }
@@ -142,143 +44,210 @@ HttpServer::~HttpServer()
     m_pWorker->wait(3000);
 }
 
-bool HttpServer::start(int externalPort, int internalPort)
+bool HttpServer::start(int port)
 {
-    // 启动解析线程
     m_pWorker->start();
 
-    // 启动外部HTTP Server (WMS推送端口)
-    m_pExtServer = IHttpServerPtr(new IHttpServer(m_handler));
-    if (!m_pExtServer->Start("0.0.0.0", externalPort))
+    // HP-Socket 模式 + Demo验证: Start(LPCTSTR, port)
+    if (!m_pServer->Start(_T("0.0.0.0"), port))
     {
         LogCenter::Instance()->wcs_run_log_warn(false,
-            QString("[Http] 外部端口启动失败 port=%1").arg(externalPort));
-        return false;
-    }
-
-    // 启动内部HTTP Server (WCSApp查询端口)
-    m_pIntServer = IHttpServerPtr(new IHttpServer(m_handler));
-    if (!m_pIntServer->Start("127.0.0.1", internalPort))
-    {
-        LogCenter::Instance()->wcs_run_log_warn(false,
-            QString("[Http] 内部端口启动失败 port=%1").arg(internalPort));
-        m_pExtServer->Stop();
+            QString("[Http] 启动失败 port=%1 err=%2").arg(port).arg((int)::GetLastError()));
         return false;
     }
 
     LogCenter::Instance()->wcs_run_log_warn(true,
-        QString("[Http] 服务已启动 WMS端口=%1 内部端口=%2").arg(externalPort).arg(internalPort));
-
-    emit serverStarted(externalPort, internalPort);
+        QString("[Http] 服务已启动 port=%1").arg(port));
+    emit serverStarted(port);
     return true;
 }
 
 void HttpServer::stop()
 {
-    if (m_pExtServer) { m_pExtServer->Stop(); m_pExtServer.reset(); }
-    if (m_pIntServer) { m_pIntServer->Stop(); m_pIntServer.reset(); }
+    if (m_pServer && m_pServer->HasStarted())
+    {
+        m_pServer->Stop();
+    }
+    m_pServer.Reset();
     emit serverStopped();
 }
 
 // ============================================================================
-// 请求处理
+// CHttpServerListener 回调
+// ============================================================================
+
+EnHttpParseResult HttpServer::OnRequestLine(IHttpServer* pSender, CONNID dwConnID,
+                                             LPCSTR lpszMethod, LPCSTR lpszUrl)
+{
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    ConnState& st = m_connStates[dwConnID];
+    st.method = QString::fromUtf8(lpszMethod);
+    QString full = QString::fromUtf8(lpszUrl);
+    int q = full.indexOf('?');
+    st.path = (q >= 0) ? full.left(q) : full;
+    st.queryString = (q >= 0) ? full.mid(q + 1) : QString();
+    return HPR_OK;
+}
+
+EnHttpParseResult HttpServer::OnBody(IHttpServer* pSender, CONNID dwConnID,
+                                      const BYTE* pData, int iLength)
+{
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    m_connStates[dwConnID].body.append((const char*)pData, iLength);
+    return HPR_OK;
+}
+
+EnHttpParseResult HttpServer::OnMessageComplete(IHttpServer* pSender, CONNID dwConnID)
+{
+    ConnState state;
+    {
+        std::lock_guard<std::mutex> lock(m_connMutex);
+        auto it = m_connStates.find(dwConnID);
+        if (it != m_connStates.end()) state = it.value();
+    }
+    processRequest(pSender, dwConnID, state);
+    return HPR_OK;
+}
+
+EnHandleResult HttpServer::OnClose(ITcpServer* pSender, CONNID dwConnID,
+                                    EnSocketOperation, int)
+{
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    m_connStates.remove(dwConnID);
+    return HR_OK;
+}
+
+// ============================================================================
+// 请求分发
+// ============================================================================
+
+void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState& st)
+{
+    if (st.path == "/api/DispatchSortingCommand/InsertWaveInfo" && st.method == "POST")
+    {
+        if (m_pQueue->size() >= 3)
+        {
+            sendJsonResponse(pSender, dwConnID, errResponse("服务器繁忙", 503), 503);
+        }
+        else if (st.body.isEmpty())
+        {
+            sendJsonResponse(pSender, dwConnID, errResponse("Body为空"));
+        }
+        else
+        {
+            WaveTask task;
+            task.rawBody  = st.body;
+            task.recvTime = QDateTime::currentMSecsSinceEpoch();
+            m_pQueue->push(task);
+            sendJsonResponse(pSender, dwConnID, okResponse("accepted"));
+            WCS_INFO("[Http] WMS入队 len=%d queue=%d", st.body.size(), m_pQueue->size());
+        }
+        return;
+    }
+
+    if (st.path == "/api/query" && st.method == "GET")
+    {
+        QUrlQuery q(st.queryString);
+        sendJsonResponse(pSender, dwConnID, handleQuery(q.queryItemValue("code").trimmed()));
+        return;
+    }
+
+    if (st.path == "/api/markSorted" && st.method == "POST")
+    {
+        QJsonDocument d = QJsonDocument::fromJson(st.body);
+        sendJsonResponse(pSender, dwConnID, handleMarkSorted(d.object()));
+        return;
+    }
+
+    if (st.path == "/api/markException" && st.method == "POST")
+    {
+        QJsonDocument d = QJsonDocument::fromJson(st.body);
+        sendJsonResponse(pSender, dwConnID, handleMarkException(d.object()));
+        return;
+    }
+
+    if (st.path == "/api/waveStatus" && st.method == "GET")
+    {
+        sendJsonResponse(pSender, dwConnID, handleWaveStatus());
+        return;
+    }
+
+    sendJsonResponse(pSender, dwConnID, errResponse("Not Found", 404), 404);
+}
+
+// ============================================================================
+// 业务处理
 // ============================================================================
 
 QJsonObject HttpServer::handleQuery(const QString& code)
 {
-    if (code.isEmpty())
-        return errResponse("缺少code参数");
-
-    GridEntry entry = m_pWaveMgr->getGrid(code);
-    if (entry.gridNum.isEmpty())
-    {
-        m_pWaveMgr->markException(code);
-        return errResponse("未找到格口映射");
-    }
-
-    // 处理同品多格口：取第一个
-    QString grid = entry.gridNum;
-    if (grid.contains(','))
-        grid = grid.split(',').first().trimmed();
-
-    QJsonObject resp;
-    resp["success"]   = true;
-    resp["grid"]      = grid;
-    resp["gridType"]  = entry.gridType;
-    resp["gridCount"] = entry.gridCount;
-    resp["orderCode"] = m_pWaveMgr->orderCode();
-    return resp;
+    if (code.isEmpty()) return errResponse("缺少code参数");
+    GridEntry e = m_pWaveMgr->getGrid(code);
+    if (e.gridNum.isEmpty()) { m_pWaveMgr->markException(code); return errResponse("未找到格口映射"); }
+    QString g = e.gridNum;
+    if (g.contains(',')) g = g.split(',').first().trimmed();
+    QJsonObject r;
+    r["success"]=true; r["grid"]=g; r["gridType"]=e.gridType;
+    r["gridCount"]=e.gridCount; r["orderCode"]=m_pWaveMgr->orderCode();
+    return r;
 }
 
 QJsonObject HttpServer::handleMarkSorted(const QJsonObject& req)
 {
-    QString code = req["code"].toString().trimmed();
-    if (code.isEmpty())
-        return errResponse("缺少code字段");
-
-    m_pWaveMgr->markSorted(code);
-
-    QJsonObject resp;
-    resp["success"]      = true;
-    resp["waveComplete"]  = m_pWaveMgr->isWaveComplete();
-    resp["orderCode"]     = m_pWaveMgr->orderCode();
-    return resp;
+    QString c = req["code"].toString().trimmed();
+    if (c.isEmpty()) return errResponse("缺少code");
+    m_pWaveMgr->markSorted(c);
+    QJsonObject r;
+    r["success"]=true; r["waveComplete"]=m_pWaveMgr->isWaveComplete();
+    r["orderCode"]=m_pWaveMgr->orderCode();
+    return r;
 }
 
 QJsonObject HttpServer::handleMarkException(const QJsonObject& req)
 {
-    QString code = req["code"].toString().trimmed();
-    if (code.isEmpty())
-        return errResponse("缺少code字段");
-
-    m_pWaveMgr->markException(code);
-
-    QJsonObject resp;
-    resp["success"]      = true;
-    resp["waveComplete"]  = m_pWaveMgr->isWaveComplete();
-    resp["orderCode"]     = m_pWaveMgr->orderCode();
-    return resp;
+    QString c = req["code"].toString().trimmed();
+    if (c.isEmpty()) return errResponse("缺少code");
+    m_pWaveMgr->markException(c);
+    QJsonObject r;
+    r["success"]=true; r["waveComplete"]=m_pWaveMgr->isWaveComplete();
+    r["orderCode"]=m_pWaveMgr->orderCode();
+    return r;
 }
 
 QJsonObject HttpServer::handleWaveStatus()
 {
-    WaveSnapshot snap = m_pWaveMgr->snapshot();
-
-    QJsonObject resp;
-    resp["success"]         = true;
-    resp["orderCode"]       = snap.orderCode;
-    resp["waveStatus"]      = snap.waveStatus;
-    resp["statusText"]      = snap.statusText;
-    resp["orderQty"]        = snap.orderQty;
-    resp["skuCount"]        = snap.skuCount;
-    resp["sortedCount"]     = snap.sortedCount;
-    resp["exceptionCount"]  = snap.exceptionCount;
-    resp["totalRecv"]       = snap.totalRecv;
-    resp["sumLocation"]     = snap.sumLocation;
-    resp["elapsedSec"]      = snap.elapsedSec;
-    return resp;
+    WaveSnapshot s = m_pWaveMgr->snapshot();
+    QJsonObject r;
+    r["success"]=true; r["orderCode"]=s.orderCode; r["waveStatus"]=s.waveStatus;
+    r["statusText"]=s.statusText; r["orderQty"]=s.orderQty; r["skuCount"]=s.skuCount;
+    r["sortedCount"]=s.sortedCount; r["exceptionCount"]=s.exceptionCount;
+    r["totalRecv"]=s.totalRecv; r["sumLocation"]=s.sumLocation; r["elapsedSec"]=s.elapsedSec;
+    return r;
 }
 
-// ============================================================================
-// 响应辅助
-// ============================================================================
+void HttpServer::sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
+                                   const QJsonObject& json, USHORT status)
+{
+    QByteArray d = QJsonDocument(json).toJson(QJsonDocument::Compact);
+    THeader h[1];
+    h[0].name = "Content-Type";
+    h[0].value = "application/json; charset=UTF-8";
+    pSender->SendResponse(dwConnID, status, nullptr, h, 1, (const BYTE*)d.constData(), d.length());
+}
 
 QJsonObject HttpServer::okResponse(const QString& data)
 {
-    QJsonObject resp;
-    resp["resultCode"]   = "0";
-    resp["success"]      = true;
-    resp["resultData"]   = data;
-    resp["resultTime"]   = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzzz");
-    return resp;
+    QJsonObject r;
+    r["resultCode"]="0"; r["success"]=true; r["resultData"]=data;
+    r["resultTime"]=QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzzz");
+    return r;
 }
 
 QJsonObject HttpServer::errResponse(const QString& msg, int code)
 {
-    QJsonObject resp;
-    resp["resultCode"]   = QString::number(code);
-    resp["success"]      = false;
-    resp["errorMsg"]     = msg;
-    resp["resultTime"]   = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzzz");
-    return resp;
+    QJsonObject r;
+    r["resultCode"]=QString::number(code); r["success"]=false;
+    r["errorMsg"]=msg;
+    r["resultTime"]=QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzzz");
+    return r;
 }

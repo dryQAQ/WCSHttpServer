@@ -17,7 +17,7 @@ public:
     void stop();
 
 signals:
-    void waveParsed(const QString& orderCode, int skuCount, int orderQty, qint64 elapsedMs);
+    void waveParsed(const QString& orderCode, int skuCount, int orderQty, qint64 elapsedMs, const QSet<QString>& recvSet);
     void parseError(const QString& errorMsg);
 
 protected:

@@ -1,16 +1,17 @@
 #pragma once
 // ============================================================================
-// HttpClient.h — HP-Socket HTTP Client（异步回传WMS）
-// 异步回调模式，不阻塞调用线程，超时/失败入重试队列
+// HttpClient.h — HTTP回传客户端（使用 QNetworkAccessManager）
+//
+// 使用 QNetworkAccessManager 作为成员变量（遵循 project_memory 约束）
+// 同步模式：QEventLoop + QTimer 超时
 // ============================================================================
 
 #include <QObject>
-#include <QTimer>
-#include "HPSocket.h"
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QString>
 
-class WaveManager;
-
-class HttpClient : public QObject, public IHttpClientHandler
+class HttpClient : public QObject
 {
     Q_OBJECT
 public:
@@ -21,19 +22,15 @@ public:
     void setAppkey(const QString& k) { m_appkey = k; }
     void setTimeout(int ms)          { m_timeoutMs = ms; }
 
-    // 异步回传波次完结
+    // 回传波次完结（同步，2秒超时）
     int sendWaveComplete(const QString& orderCode, int sumLocation);
 
 signals:
     void reportResult(const QString& orderCode, bool success, const QString& body);
 
-protected:
-    EnHandleResult OnResponse(IHttpClient* pSender, CHttpResponse* pResp, int iSeq) override;
-    EnHandleResult OnError(IHttpClient* pSender, int iErrorCode, int iSeq) override;
-
 private:
+    QNetworkAccessManager* m_pNetworkMgr;
     QString m_url;
     QString m_appkey;
     int     m_timeoutMs = 2000;
-    QMap<int, QString> m_seqOrderCode;  // seq → orderCode
 };

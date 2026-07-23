@@ -70,6 +70,7 @@ public:
 
     // ──── 波次数据设置（解析完成后调用）────
     void setWaveData(const QString& orderCode, int orderQty, int skuCount);
+    void setRecvSet(const QSet<QString>& set);
 
     // ──── 分拣状态（线程安全）────
     void markSorted(const QString& code);
@@ -80,10 +81,12 @@ public:
 
     // ──── 波次判定 ────
     bool isWaveComplete() const;
+    bool checkWaveCompleteLocked() const;
 
     // ──── 状态查询 ────
     WaveSnapshot snapshot() const;
-    std::atomic<int>& status() { return m_waveStatus; }
+    int status() const { return m_waveStatus.load(); }
+    bool setState(int newStatus);
     QString orderCode() const { return m_orderCode; }
     int     totalRecv() const;
     int     sorted() const;

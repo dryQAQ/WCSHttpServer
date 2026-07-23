@@ -1,8 +1,7 @@
 #pragma once
 // ============================================================================
 // MainWindow.h — WMS退货HTTP服务主窗口
-// 参考WCSApp的FrmMainV2 UI风格，包含：
-//   服务状态指示 | 波次信息面板 | 实时日志 | 配置管理
+// 包含：服务状态指示 | 波次信息面板 | 实时日志 | 配置管理
 // ============================================================================
 
 #include <QMainWindow>
@@ -54,8 +53,7 @@ private:
     // 服务控制区
     QPushButton* m_btnStartStop   = nullptr;
     QLabel*      m_lblServerStatus = nullptr;
-    QLabel*      m_lblWmsPort      = nullptr;
-    QLabel*      m_lblInternalPort = nullptr;
+    QLabel*      m_lblPort         = nullptr;
 
     // 波次面板
     QLabel*      m_lblWaveCode    = nullptr;
@@ -70,7 +68,6 @@ private:
 
     // 配置区
     QSpinBox*    m_spinWmsPort     = nullptr;
-    QSpinBox*    m_spinInternalPort = nullptr;
     QLineEdit*   m_editFeedbackUrl = nullptr;
     QLineEdit*   m_editAppkey      = nullptr;
     QCheckBox*   m_chkTestEnv      = nullptr;

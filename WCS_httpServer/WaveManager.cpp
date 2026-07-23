@@ -1,5 +1,6 @@
 #include "WaveManager.h"
 #include "log_center.h"
+#include "hlog1.h"
 
 WaveManager::WaveManager(GridBuffer* pBuffer, QObject* parent)
     : QObject(parent), m_pBuffer(pBuffer)
@@ -17,47 +18,80 @@ void WaveManager::setWaveData(const QString& orderCode, int orderQty, int skuCou
 
     m_orderCode = orderCode;
     m_orderQty  = orderQty;
-    m_waveStatus = WAVE_RECEIVED;
     m_waveStartTime = QDateTime::currentDateTime();
     m_bSortingStarted = false;
 
     WCS_INFO("[WaveMgr] 波次注册 orderCode=%s qty=%d SKU=%d",
         orderCode.toLocal8Bit().data(), orderQty, skuCount);
+    setState(WAVE_RECEIVED);
     emit waveReceived(orderCode, skuCount);
-    emit waveStatusChanged(WAVE_RECEIVED);
+}
+
+void WaveManager::setRecvSet(const QSet<QString>& set)
+{
+    std::unique_lock<std::mutex> lock(m_lock);
+    m_setCodeRecv = set;
+    WCS_INFO("[WaveMgr] 接收inco集合 size=%d", m_setCodeRecv.size());
 }
 
 void WaveManager::markSorted(const QString& code)
 {
-    std::unique_lock<std::mutex> lock(m_lock);
+    bool complete = false;
 
-    m_setCodeSorted.insert(code);
-    m_setCodeProcessing.remove(code);
-    m_mapCodeRetry.remove(code);
-
-    if (!m_bSortingStarted)
     {
-        m_bSortingStarted = true;
-        m_waveStatus = WAVE_SORTING;
-        WCS_INFO("[WaveMgr] 波次分拣开始 orderCode=%s", m_orderCode.toLocal8Bit().data());
-        emit waveSortingStarted(m_orderCode);
-        emit waveStatusChanged(WAVE_SORTING);
+        std::unique_lock<std::mutex> lock(m_lock);
+
+        m_setCodeSorted.insert(code);
+        m_setCodeProcessing.remove(code);
+        m_mapCodeRetry.remove(code);
+
+        if (!m_bSortingStarted)
+        {
+            m_bSortingStarted = true;
+            WCS_INFO("[WaveMgr] 波次分拣开始 orderCode=%s", m_orderCode.toLocal8Bit().data());
+            emit waveSortingStarted(m_orderCode);
+            setState(WAVE_SORTING);
+        }
+
+        complete = checkWaveCompleteLocked();
     }
 
     emit codeMarked(code, true);
+    if (complete)
+    {
+        WCS_INFO("[WaveMgr] 波次完成 orderCode=%s sorted=%d exception=%d total=%d",
+            m_orderCode.toLocal8Bit().data(),
+            m_setCodeSorted.size(), m_setCodeException.size(), m_setCodeRecv.size());
+        emit waveReadyToReport(m_orderCode);
+        setState(WAVE_COMPLETING);
+    }
 }
 
 void WaveManager::markException(const QString& code)
 {
-    std::unique_lock<std::mutex> lock(m_lock);
+    bool complete = false;
 
-    m_setCodeException.insert(code);
-    m_setCodeProcessing.remove(code);
+    {
+        std::unique_lock<std::mutex> lock(m_lock);
 
-    int retry = m_mapCodeRetry.value(code, 0) + 1;
-    m_mapCodeRetry[code] = retry;
+        m_setCodeException.insert(code);
+        m_setCodeProcessing.remove(code);
+
+        int retry = m_mapCodeRetry.value(code, 0) + 1;
+        m_mapCodeRetry[code] = retry;
+
+        complete = checkWaveCompleteLocked();
+    }
 
     emit codeMarked(code, false);
+    if (complete)
+    {
+        WCS_INFO("[WaveMgr] 波次完成(异常) orderCode=%s sorted=%d exception=%d total=%d",
+            m_orderCode.toLocal8Bit().data(),
+            m_setCodeSorted.size(), m_setCodeException.size(), m_setCodeRecv.size());
+        emit waveReadyToReport(m_orderCode);
+        setState(WAVE_COMPLETING);
+    }
 }
 
 bool WaveManager::isSorted(const QString& code) const
@@ -81,7 +115,11 @@ int WaveManager::retryCount(const QString& code) const
 bool WaveManager::isWaveComplete() const
 {
     std::unique_lock<std::mutex> lock(m_lock);
+    return checkWaveCompleteLocked();
+}
 
+bool WaveManager::checkWaveCompleteLocked() const
+{
     int total = m_setCodeRecv.size();
     int done  = m_setCodeSorted.size() + m_setCodeException.size();
     if (total > 0 && done >= total)
@@ -118,6 +156,45 @@ WaveSnapshot WaveManager::snapshot() const
     return snap;
 }
 
+bool WaveManager::setState(int newStatus)
+{
+    int current = m_waveStatus.load();
+
+    bool allowed = false;
+    switch (current)
+    {
+    case WAVE_IDLE:
+        allowed = (newStatus == WAVE_RECEIVED);
+        break;
+    case WAVE_RECEIVED:
+        allowed = (newStatus == WAVE_SORTING || newStatus == WAVE_CLEANED);
+        break;
+    case WAVE_SORTING:
+        allowed = (newStatus == WAVE_COMPLETING || newStatus == WAVE_ERROR);
+        break;
+    case WAVE_COMPLETING:
+        allowed = (newStatus == WAVE_CLEANED || newStatus == WAVE_ERROR);
+        break;
+    case WAVE_CLEANED:
+        allowed = (newStatus == WAVE_RECEIVED);
+        break;
+    case WAVE_ERROR:
+        allowed = (newStatus == WAVE_CLEANED);
+        break;
+    }
+
+    if (allowed)
+    {
+        m_waveStatus.store(newStatus);
+        WCS_INFO("[WaveMgr] 状态转换 %d -> %d", current, newStatus);
+        emit waveStatusChanged(newStatus);
+        return true;
+    }
+
+    WCS_INFO("[WaveMgr] 状态转换拒绝 %d -> %d", current, newStatus);
+    return false;
+}
+
 int WaveManager::totalRecv() const
 {
     std::unique_lock<std::mutex> lock(m_lock);
@@ -151,7 +228,7 @@ void WaveManager::clearWave()
     m_setCodeProcessing.clear();
     m_orderCode.clear();
     m_orderQty = 0;
-    m_waveStatus = WAVE_CLEANED;
     m_bSortingStarted = false;
     WCS_INFO("[WaveMgr] 波次已清理");
+    setState(WAVE_CLEANED);
 }

@@ -1,4 +1,5 @@
 #include "ParseWorker.h"
+#include "hlog1.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -89,6 +90,6 @@ void ParseWorker::run()
             QString("[Parse] orderCode=%1 items=%2 SKU=%3 elapsed=%4ms")
                 .arg(orderCode).arg(items.size()).arg(newMap->size()).arg(elapsed));
 
-        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed);
+        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed, recvSet);
     }
 }

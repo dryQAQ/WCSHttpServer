@@ -3,15 +3,18 @@
 // DoubleBuffer.h — 双缓冲无锁读取Map
 //
 // 写入线程: ParseWorker 在 m_pBackup 上构建新数据，完成后原子交换
-// 读取线程: WCSApp查询 / 内部状态查询，通过 load() 无锁读取 m_pActive
+// 读取线程: API查询 / 内部状态查询，通过 load() 无锁读取 m_pActive
 // 零锁竞争，零延迟，适合高频读取场景（分拣扫描）
+//
+// 内存管理: 使用 std::deque 存储待删除的旧Map指针和时间戳，
+//           在 prepareSwap 时自动清理过期（>5秒）的指针
 // ============================================================================
 
 #include <QMap>
 #include <QString>
-#include <QTimer>
 #include <atomic>
-#include <memory>
+#include <deque>
+#include <chrono>
 
 // ──── 格口映射条目 ────
 struct GridEntry
@@ -21,13 +24,28 @@ struct GridEntry
     int     gridCount = 0;
 };
 
+// ──── 待删除指针记录 ────
+template<typename T>
+struct PendingDelete
+{
+    T* ptr;
+    std::chrono::steady_clock::time_point deleteTime;
+    PendingDelete(T* p) : ptr(p), deleteTime(std::chrono::steady_clock::now()) {}
+};
+
 // ──── 双缓冲无锁Map ────
 template<typename K, typename V>
 class DoubleBuffer
 {
 public:
     DoubleBuffer() : m_pActive(nullptr) {}
-    ~DoubleBuffer() { delete m_pActive.load(); }
+    ~DoubleBuffer()
+    {
+        delete m_pActive.load();
+        std::lock_guard<std::mutex> lock(m_deleteMutex);
+        for (auto& pd : m_pendingDeletes)
+            delete pd.ptr;
+    }
 
     // ──── 读操作（无锁，任意线程安全）────
     V get(const K& key, const V& defaultValue = V()) const
@@ -78,11 +96,14 @@ public:
     // 在 m_pBackup 上构建完毕后调用 swap 原子切换
     void prepareSwap(QMap<K, V>* newMap)
     {
+        cleanupOldMaps();
+
         QMap<K, V>* old = m_pActive.exchange(newMap, std::memory_order_acq_rel);
-        // 延迟释放旧Map：5000ms确保所有并发读取完成
+        // 将旧Map加入待删除队列，5秒后清理
         if (old)
         {
-            QTimer::singleShot(5000, [old]() { delete old; });
+            std::lock_guard<std::mutex> lock(m_deleteMutex);
+            m_pendingDeletes.emplace_back(old);
         }
     }
 
@@ -93,7 +114,30 @@ public:
     }
 
 private:
+    // 清理过期（>5秒）的旧Map指针
+    void cleanupOldMaps()
+    {
+        std::lock_guard<std::mutex> lock(m_deleteMutex);
+        auto now = std::chrono::steady_clock::now();
+        auto it = m_pendingDeletes.begin();
+        while (it != m_pendingDeletes.end())
+        {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->deleteTime);
+            if (elapsed.count() >= 5)
+            {
+                delete it->ptr;
+                it = m_pendingDeletes.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
     std::atomic<QMap<K, V>*> m_pActive;
+    std::deque<PendingDelete<QMap<K, V>>> m_pendingDeletes;
+    std::mutex m_deleteMutex;
 };
 
 // ──── 类型别名 ────
