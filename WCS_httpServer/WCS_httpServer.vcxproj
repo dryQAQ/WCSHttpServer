@@ -59,8 +59,8 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <LibraryPath>D:\Qt\5.15.2\msvc2019_64\lib;D:\WCS\WCSApp\WCS_httpServer\lib;$(LibraryPath)</LibraryPath>
-    <OutDir>..\release_WcsHttpServer</OutDir>
-    <IncludePath>D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;D:\WCS\WCSApp\WCS_httpServer\include\hlog;$(IncludePath)</IncludePath>
+    <OutDir>..\release_WcsHttpServer\</OutDir>
+    <IncludePath>D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\log4cxx;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
@@ -75,7 +75,7 @@
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
-      <AdditionalIncludeDirectories>..\..\inc\HPSocket;..\..\inc\hlog;..\..\wcsapps;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\inc\HPSocket;..\..\inc\hlog;..\..\wcsapps;..\include\snap7;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>HPSOCKET_STATIC_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -92,13 +92,13 @@
       <DebugInformationFormat>None</DebugInformationFormat>
       <Optimization>MaxSpeed</Optimization>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-      <AdditionalIncludeDirectories>D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;D:\WCS\WCSApp\WCS_httpServer\include\snap7;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>HPSocket_U.lib;hlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>HPSocket_U.lib;hlog.lib;log4cxx.lib;snap7.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -111,6 +111,11 @@
     <ClCompile Include="log_center.cpp" />
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="ParseWorker.cpp" />
+    <ClCompile Include="PlcManager.cpp" />
+    <ClCompile Include="SiemensPLC.cpp" />
+    <ClCompile Include="..\include\snap7\snap7.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="WaveManager.cpp" />
     <ClCompile Include="WCS_httpServer.cpp" />
     <ClCompile Include="main.cpp" />
@@ -120,10 +125,16 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DoubleBuffer.h" />
+    <QtMoc Include="LifecycleLogger.h" />
     <QtMoc Include="log_center.h" />
+    <ClInclude Include="define.h" />
+    <ClInclude Include="SiemensPLC.h" />
+    <ClInclude Include="..\include\snap7\snap7.h" />
     <ClInclude Include="TaskQueue.h" />
+    <ClInclude Include="ThreadPool.h" />
     <QtMoc Include="WaveManager.h" />
     <QtMoc Include="ParseWorker.h" />
+    <QtMoc Include="PlcManager.h" />
     <QtMoc Include="MainWindow.h" />
     <QtMoc Include="HttpServer.h" />
     <QtMoc Include="HttpClient.h" />

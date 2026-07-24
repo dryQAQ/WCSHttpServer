@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QString>
+#include "define.h"
 
 struct AppConfig
 {
@@ -20,10 +21,10 @@ struct AppConfig
 
     // ──── 波次配置 ────
     int     waveTimeoutMin = 0;        // 波次超时(分钟, 0=不超时)
-    int     maxRetryCount  = 3;        // 最大重试次数
+    int     maxRetryCount  = WAVE_MAX_RETRY;        // 最大重试次数
 
     // ──── 日志 ────
-    int     logRetainDays  = 30;       // 日志保留天数
+    int     logRetainDays  = LOG_RETAIN_DAYS;       // 日志保留天数
 
     bool loadFromFile(const QString& path = "./config/http_server.xml");
     bool saveToFile(const QString& path = "./config/http_server.xml") const;

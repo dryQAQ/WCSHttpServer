@@ -1,8 +1,12 @@
 #pragma once
 // ============================================================================
 // ParseWorker.h — 后台JSON解析线程
-// 从TaskQueue取任务 → 解析大JSON → 构建新Map → 原子交换到DoubleBuffer
-// 低优先级运行，绝不抢占PLC/扫描线程
+//
+// 职责：
+//   从 TaskQueue 阻塞等待取任务 → 解析 WMS 推送的大 JSON
+//   → 构建 QMap<inco, GridEntry> → 原子交换到 DoubleBuffer
+//
+// 低优先级运行（QThread::LowPriority），绝不抢占 PLC/扫描线程的 CPU 时间
 // ============================================================================
 
 #include <QThread>
@@ -17,14 +21,22 @@ public:
     void stop();
 
 signals:
-    void waveParsed(const QString& orderCode, int skuCount, int orderQty, qint64 elapsedMs, const QSet<QString>& recvSet);
+    // 波次解析完成信号
+    // orderCode:  波次号
+    // skuCount:   WMS推送的SKU种类数（去重后）
+    // orderQty:   波次总件数
+    // elapsedMs:  解析耗时(ms)
+    // recvSet:    波次包含的所有inco集合（用于波次完结判定）
+    void waveParsed(const QString& orderCode, int skuCount, int orderQty,
+                    qint64 elapsedMs, const QSet<QString>& recvSet);
+    // 解析异常信号
     void parseError(const QString& errorMsg);
 
 protected:
     void run() override;
 
 private:
-    TaskQueue*   m_pQueue;
-    GridBuffer*  m_pBuffer;
-    bool         m_bRunning = true;
+    TaskQueue*   m_pQueue;           // 任务队列（输入源）
+    GridBuffer*  m_pBuffer;           // DoubleBuffer（输出目标）
+    bool         m_bRunning = true;   // 线程运行标志，stop()时置false
 };

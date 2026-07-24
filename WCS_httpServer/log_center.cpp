@@ -3,6 +3,7 @@
 #include "hlog1.h"
 #include <QTimer>
 #include <QDateTime>
+#include "define.h"
 
 
 void LogCenter::Onsig_upload_run(bool b, QString msg)
@@ -23,7 +24,7 @@ void LogCenter::Onsig_upload_run(bool b, QString msg)
 
         m_UploadText->moveCursor(QTextCursor::End);
 
-        if (m_UploadText->toPlainText().size() > 100000)
+        if (m_UploadText->toPlainText().size() > LOG_MAX_TEXT_SIZE)
         {
             m_UploadText->selectAll();
             m_UploadText->clear();
@@ -119,7 +120,7 @@ void LogCenter::Onsig_plc(bool b, QString msg)
 
         m_plcText->moveCursor(QTextCursor::End);
 
-        if (m_plcText->toPlainText().size() > 100000)
+        if (m_plcText->toPlainText().size() > LOG_MAX_TEXT_SIZE)
         {
             m_plcText->selectAll();
             m_plcText->clear();

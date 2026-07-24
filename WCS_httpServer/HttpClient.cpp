@@ -4,9 +4,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDateTime>
-#include <QEventLoop>
-#include <QTimer>
 #include <QNetworkRequest>
+
+// HTTP 服务专用日志宏
+#ifndef HTTP_INFO
+#define HTTP_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "HTTP", "\t" fmt, ##__VA_ARGS__)
+#define HTTP_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "HTTP", "\t" fmt, ##__VA_ARGS__)
+#define HTTP_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "HTTP", "\t" fmt, ##__VA_ARGS__)
+#endif
 
 HttpClient::HttpClient(QObject* parent)
     : QObject(parent)
@@ -14,48 +19,82 @@ HttpClient::HttpClient(QObject* parent)
     m_pNetworkMgr = new QNetworkAccessManager(this);
 }
 
-HttpClient::~HttpClient() {}
-
-int HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
+HttpClient::~HttpClient()
 {
+    // 取消所有进行中的请求
+    for (auto it = m_pending.begin(); it != m_pending.end(); ++it)
+    {
+        if (it->timer)  { it->timer->stop(); delete it->timer; }
+        if (it->reply)  { it->reply->abort(); it->reply->deleteLater(); }
+    }
+    m_pending.clear();
+}
+
+void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
+{
+    // ★ 空URL防护：避免QNetworkAccessManager::post崩溃
+    if (m_url.isEmpty())
+    {
+        HTTP_ERROR("回传URL为空，跳过 orderCode=%s", orderCode.toLocal8Bit().data());
+        LogCenter::Instance()->wcs_run_log_warn(false,
+            QString("[Report] 回传URL为空 orderCode=%1").arg(orderCode));
+        emit reportResult(orderCode, false, "URL is empty");
+        return;
+    }
+
+    HTTP_INFO("回传开始 orderCode=%s sumLocation=%d", orderCode.toLocal8Bit().data(), sumLocation);
+    LogCenter::Instance()->wcs_run_log_warn(true,
+        QString("[Report] 开始回传 orderCode=%1 sumLocation=%2").arg(orderCode).arg(sumLocation));
+
+    // ──── 构造回传 JSON（格式由WMS接口文档定义）────
     QJsonObject head;
-    head["orderCode"]     = orderCode;
-    head["orderType"]     = "02";
-    head["sumLocation"]   = QString::number(sumLocation);
-    head["operuserDate"]  = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    head["operuserCode"]  = "admin";
-    head["operuserName"]  = "管理员";
+    head["orderCode"]     = orderCode;                                               // 波次号
+    head["orderType"]     = "02";                                                     // 业务类型：02=退货分类
+    head["sumLocation"]   = QString::number(sumLocation);                            // 使用的格口总数
+    head["operuserDate"]  = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"); // 操作时间
+    head["operuserCode"]  = "admin";                                                  // 操作人编码（固定值，WMS接口要求）
+    head["operuserName"]  = QString::fromUtf8("\u7ba1\u7406\u5458");                 // 操作人名称=管理员（固定值，WMS接口要求）
 
     QJsonObject req;
     req["head"] = head;
     QByteArray postData = QJsonDocument(req).toJson(QJsonDocument::Compact);
 
-
     QUrl url(m_url);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
-    request.setRawHeader("AppKey", m_appkey.toUtf8());
-
-    QTimer timer;
-    timer.setSingleShot(true);
-    timer.setInterval(m_timeoutMs);
-    timer.start();
+    request.setRawHeader("AppKey", m_appkey.toUtf8());  // WMS鉴权Header
 
     QNetworkReply* reply = m_pNetworkMgr->post(request, postData);
 
-    QEventLoop loop;
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    loop.exec();
+    // ──── 超时定时器：单次触发，到时触发 onReplyTimeout() ────
+    QTimer* timer = new QTimer(this);
+    timer->setSingleShot(true);
+    timer->setInterval(m_timeoutMs);  // 默认3000ms
 
-    if (!reply->isFinished())
-    {
-        reply->abort();
-        reply->deleteLater();
-        WCS_INFO("[Report] 超时 orderCode=%s", orderCode.toLocal8Bit().data());
-        emit reportResult(orderCode, false, QString());
-        return -1;
-    }
+    PendingRequest pr;
+    pr.reply       = reply;
+    pr.timer       = timer;
+    pr.orderCode   = orderCode;
+    pr.sumLocation = sumLocation;
+    m_pending.insert(reply, pr);
+
+    // 连接信号（异步，不阻塞主线程）
+    connect(reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
+    connect(timer, &QTimer::timeout, this, &HttpClient::onReplyTimeout);
+
+    timer->start();
+}
+
+void HttpClient::onReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    auto it = m_pending.find(reply);
+    if (it == m_pending.end()) return;
+
+    PendingRequest& pr = it.value();
+    if (pr.timer) { pr.timer->stop(); pr.timer->deleteLater(); pr.timer = nullptr; }  // 取消超时定时器
 
     QByteArray respBody = reply->readAll();
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -64,12 +103,45 @@ int HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
     QJsonDocument doc = QJsonDocument::fromJson(respBody);
     bool success = doc.object()["success"].toBool(false);
 
-    WCS_INFO("[Report] 回传 orderCode=%s status=%d success=%d",
-        orderCode.toLocal8Bit().data(), statusCode, success);
+    HTTP_INFO("回传完成 orderCode=%s status=%d success=%d",
+        pr.orderCode.toLocal8Bit().data(), statusCode, success);
     LogCenter::Instance()->wcs_run_log_warn(success,
-        QString("[Report] orderCode=%1 success=%2 body=%3")
-            .arg(orderCode).arg(success).arg(QString::fromUtf8(respBody).left(200)));
+        QString("[Report] orderCode=%1 success=%2 status=%3 body=%4")
+            .arg(pr.orderCode).arg(success).arg(statusCode)
+            .arg(QString::fromUtf8(respBody).left(200)));  // 截断200字符，防止日志过长
 
-    emit reportResult(orderCode, success, QString::fromUtf8(respBody));
-    return success ? 0 : -1;
+    emit reportResult(pr.orderCode, success, QString::fromUtf8(respBody));
+    m_pending.erase(it);
+}
+
+void HttpClient::onReplyTimeout()
+{
+    QTimer* timer = qobject_cast<QTimer*>(sender());
+    if (!timer) return;
+
+    // 查找超时定时器对应的 PendingRequest
+    for (auto it = m_pending.begin(); it != m_pending.end(); ++it)
+    {
+        if (it->timer == timer)
+        {
+            PendingRequest& pr = it.value();
+            HTTP_WARN("回传超时 orderCode=%s timeout=%dms",
+                pr.orderCode.toLocal8Bit().data(), m_timeoutMs);
+            LogCenter::Instance()->wcs_run_log_warn(false,
+                QString("[Report] 回传超时 orderCode=%1 timeout=%2ms")
+                    .arg(pr.orderCode).arg(m_timeoutMs));
+
+            // ★ 关键修复：先断开 finished 信号再 abort
+            //   防止 onReplyFinished 在 abort 时同步触发导致双重 erase
+            if (pr.reply) {
+                disconnect(pr.reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
+                pr.reply->abort();
+                pr.reply->deleteLater();
+            }
+            pr.timer->deleteLater();
+            emit reportResult(pr.orderCode, false, QString());
+            m_pending.erase(it);
+            break;
+        }
+    }
 }

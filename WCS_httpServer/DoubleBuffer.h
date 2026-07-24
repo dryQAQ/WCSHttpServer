@@ -12,9 +12,11 @@
 
 #include <QMap>
 #include <QString>
-#include <atomic>
+#include <QSet>
 #include <deque>
 #include <chrono>
+#include <atomic>
+#include "define.h"
 
 // ──── 格口映射条目 ────
 struct GridEntry
@@ -123,7 +125,7 @@ private:
         while (it != m_pendingDeletes.end())
         {
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->deleteTime);
-            if (elapsed.count() >= 5)
+            if (elapsed.count() >= DOUBLE_BUFFER_CLEANUP_S)
             {
                 delete it->ptr;
                 it = m_pendingDeletes.erase(it);

@@ -1,15 +1,20 @@
 #pragma once
 // ============================================================================
-// HttpClient.h — HTTP回传客户端（使用 QNetworkAccessManager）
+// HttpClient.h — HTTP回传客户端（异步模式）
 //
-// 使用 QNetworkAccessManager 作为成员变量（遵循 project_memory 约束）
-// 同步模式：QEventLoop + QTimer 超时
+// 使用 QNetworkAccessManager 作为成员变量（遵循 project_memory 约束：
+//   栈变量会导致 QTimer 子对象提前析构，造成崩溃）
+// 异步模式：QNetworkReply::finished 信号驱动，QTimer 超时保护
 // ============================================================================
 
 #include <QObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QTimer>
+#include <QMap>
 #include <QString>
+
+#include "define.h"
 
 class HttpClient : public QObject
 {
@@ -18,19 +23,48 @@ public:
     explicit HttpClient(QObject* parent = nullptr);
     ~HttpClient();
 
-    void setUrl(const QString& url)  { m_url = url; }
-    void setAppkey(const QString& k) { m_appkey = k; }
-    void setTimeout(int ms)          { m_timeoutMs = ms; }
+    // ──── 配置 ────
+    void setUrl(const QString& url)  { m_url = url; }        // WMS回传接口地址
+    void setAppkey(const QString& k) { m_appkey = k; }        // WMS认证AppKey（HTTP Header）
+    void setTimeout(int ms)          { m_timeoutMs = ms; }    // 回传超时(ms)，默认HTTP_TIMEOUT_MS=3000
 
-    // 回传波次完结（同步，2秒超时）
-    int sendWaveComplete(const QString& orderCode, int sumLocation);
+    // ──── 业务 ────
+    // 回传波次完结通知到WMS（异步，不阻塞主线程）
+    // orderCode: 波次号
+    // sumLocation: 使用的格口总数（去重后）
+    void sendWaveComplete(const QString& orderCode, int sumLocation);
 
 signals:
+    // 回传结果通知
+    // orderCode: 波次号
+    // success:   回传是否成功（HTTP 200 + body.success==true）
+    // body:      WMS返回的原始响应体（失败时为空）
     void reportResult(const QString& orderCode, bool success, const QString& body);
 
+private slots:
+    void onReplyFinished();  // QNetworkReply::finished 回调
+    void onReplyTimeout();    // QTimer::timeout 回调（超时保护）
+
 private:
+    // ★ 必须为成员变量：QNetworkAccessManager 作为 parent 管理 QNetworkReply 和 QTimer，
+    //    避免函数返回后子对象被提前析构导致信号触发时崩溃
     QNetworkAccessManager* m_pNetworkMgr;
-    QString m_url;
-    QString m_appkey;
-    int     m_timeoutMs = 2000;
+
+    // ──── 配置成员 ────
+    QString m_url;              // WMS回传目标URL
+    QString m_appkey;           // WMS认证AppKey（放入HTTP Header: AppKey=xxx）
+    int     m_timeoutMs = HTTP_TIMEOUT_MS;  // 超时时间(ms)，默认3000
+
+    // ──── 请求追踪 ────
+    // 跟踪进行中的异步请求，用于超时处理和响应匹配
+    struct PendingRequest {
+        QNetworkReply* reply;       // Qt网络回复对象（finished信号宿主）
+        QTimer*        timer;       // 超时定时器（单次触发）
+        QString        orderCode;   // 波次号（用于回调时标识是哪个波次）
+        int            sumLocation;  // 格口总数（用于日志）
+    };
+    // ★ reply → PendingRequest 映射：
+    //    当 onReplyFinished 或 onReplyTimeout 触发时，通过 sender() 获取 reply/timer，
+    //    再从此映射中查找对应的 PendingRequest 以获取波次信息
+    QMap<QNetworkReply*, PendingRequest> m_pending;
 };

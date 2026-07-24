@@ -37,15 +37,27 @@ void WaveManager::setRecvSet(const QSet<QString>& set)
 void WaveManager::markSorted(const QString& code)
 {
     bool complete = false;
+    bool alreadyReported = false;
 
     {
         std::unique_lock<std::mutex> lock(m_lock);
+
+        // 快速路径：波次已回传，跳过所有检查，仅记录状态
+        if (m_bReported.load(std::memory_order_relaxed))
+        {
+            m_setCodeSorted.insert(code);
+            m_setCodeProcessing.remove(code);
+            m_mapCodeRetry.remove(code);
+            lock.unlock();
+            emit codeMarked(code, true);
+            return;
+        }
 
         m_setCodeSorted.insert(code);
         m_setCodeProcessing.remove(code);
         m_mapCodeRetry.remove(code);
 
-        if (!m_bSortingStarted)
+        if (!m_bSortingStarted && !m_orderCode.isEmpty())
         {
             m_bSortingStarted = true;
             WCS_INFO("[WaveMgr] 波次分拣开始 orderCode=%s", m_orderCode.toLocal8Bit().data());
@@ -54,10 +66,16 @@ void WaveManager::markSorted(const QString& code)
         }
 
         complete = checkWaveCompleteLocked();
+        if (complete)
+        {
+            // ★ 关键修复：exchange 在锁内执行，与 checkWaveCompleteLocked 原子化
+            // 消除 TOCTOU 竞态：防止多线程同时通过快速路径检查后重复触发状态转换
+            alreadyReported = m_bReported.exchange(true);
+        }
     }
 
     emit codeMarked(code, true);
-    if (complete)
+    if (complete && !alreadyReported)
     {
         WCS_INFO("[WaveMgr] 波次完成 orderCode=%s sorted=%d exception=%d total=%d",
             m_orderCode.toLocal8Bit().data(),
@@ -70,9 +88,22 @@ void WaveManager::markSorted(const QString& code)
 void WaveManager::markException(const QString& code)
 {
     bool complete = false;
+    bool alreadyReported = false;
 
     {
         std::unique_lock<std::mutex> lock(m_lock);
+
+        // 快速路径：波次已回传，跳过所有检查，仅记录状态
+        if (m_bReported.load(std::memory_order_relaxed))
+        {
+            m_setCodeException.insert(code);
+            m_setCodeProcessing.remove(code);
+            int retry = m_mapCodeRetry.value(code, 0) + 1;
+            m_mapCodeRetry[code] = retry;
+            lock.unlock();
+            emit codeMarked(code, false);
+            return;
+        }
 
         m_setCodeException.insert(code);
         m_setCodeProcessing.remove(code);
@@ -81,10 +112,15 @@ void WaveManager::markException(const QString& code)
         m_mapCodeRetry[code] = retry;
 
         complete = checkWaveCompleteLocked();
+        if (complete)
+        {
+            // ★ 关键修复：exchange 在锁内执行，与 checkWaveCompleteLocked 原子化
+            alreadyReported = m_bReported.exchange(true);
+        }
     }
 
     emit codeMarked(code, false);
-    if (complete)
+    if (complete && !alreadyReported)
     {
         WCS_INFO("[WaveMgr] 波次完成(异常) orderCode=%s sorted=%d exception=%d total=%d",
             m_orderCode.toLocal8Bit().data(),
@@ -191,7 +227,7 @@ bool WaveManager::setState(int newStatus)
         return true;
     }
 
-    WCS_INFO("[WaveMgr] 状态转换拒绝 %d -> %d", current, newStatus);
+    WCS_WARN("[WaveMgr] 状态转换拒绝 %d -> %d", current, newStatus);
     return false;
 }
 
@@ -229,6 +265,7 @@ void WaveManager::clearWave()
     m_orderCode.clear();
     m_orderQty = 0;
     m_bSortingStarted = false;
+    m_bReported.store(false);
     WCS_INFO("[WaveMgr] 波次已清理");
     setState(WAVE_CLEANED);
 }

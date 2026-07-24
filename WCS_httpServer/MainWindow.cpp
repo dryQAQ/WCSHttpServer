@@ -2,6 +2,7 @@
 #include "ConfigManager.h"
 #include "log_center.h"
 #include "hlog1.h"
+#include "define.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -15,7 +16,7 @@
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("WMS退货HTTP服务 V1.0");
+    setWindowTitle("WMS退货HTTP服务 -- 默鑫 V1.0");
     resize(960, 720);
     setMinimumSize(800, 600);
 
@@ -75,9 +76,11 @@ void MainWindow::setupUI()
         "border-radius: 4px; padding: 6px 16px; }"
         "QPushButton:hover { background-color: #45a049; }");
 
-    m_lblServerStatus = new QLabel("● 已停止");
+    m_lblServerStatus = new QLabel(QCoreApplication::translate("MainWindow", "● 已停止"));
     m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
     m_lblPort = new QLabel("端口: 8191");
+    m_lblPlcStatus = new QLabel(QCoreApplication::translate("MainWindow", "PLC: 等待连接"));
+    m_lblPlcStatus->setStyleSheet("font-size: 13px; color: #888;");
 
     serverLayout->addWidget(m_btnStartStop);
     serverLayout->addWidget(m_lblServerStatus);
@@ -85,10 +88,33 @@ void MainWindow::setupUI()
     serverLayout->addWidget(m_lblPort);
 
     // ═══════════════════════════════════════════
+    // 第二行：PLC直连状态面板
+    // ═══════════════════════════════════════════
+    QGroupBox* grpPlc = new QGroupBox(QCoreApplication::translate("MainWindow", "PLC直连状态"));
+    QHBoxLayout* plcLayout = new QHBoxLayout(grpPlc);
+
+    m_lblPlcConnCount = new QLabel("--");
+    m_lblPlcConnCount->setStyleSheet("font-size: 13px; color: #2196F3; font-weight: bold;");
+    m_lblPlcSendRecv = new QLabel("--");
+    m_lblPlcSendRecv->setStyleSheet("font-size: 13px; color: #2196F3;");
+    m_lblPlcUptime = new QLabel("--");
+    m_lblPlcUptime->setStyleSheet("font-size: 13px; color: #2196F3;");
+
+    plcLayout->addWidget(m_lblPlcStatus);
+    plcLayout->addWidget(new QLabel("|"));
+    plcLayout->addWidget(m_lblPlcConnCount);
+    plcLayout->addWidget(new QLabel("|"));
+    plcLayout->addWidget(m_lblPlcSendRecv);
+    plcLayout->addWidget(new QLabel("|"));
+    plcLayout->addWidget(m_lblPlcUptime);
+    plcLayout->addStretch();
+
+    // ═══════════════════════════════════════════
     // 第二行：波次信息面板
     // ═══════════════════════════════════════════
     QGroupBox* grpWave = new QGroupBox("波次信息");
     QGridLayout* waveLayout = new QGridLayout(grpWave);
+    //grpWave->setFixedHeight(9 * 30);
 
     auto makeLabel = [](const QString& title) {
         QLabel* label = new QLabel(title);
@@ -154,7 +180,7 @@ void MainWindow::setupUI()
 
     m_txtLog = new QTextEdit();
     m_txtLog->setReadOnly(true);
-    m_txtLog->document()->setMaximumBlockCount(5000);
+    m_txtLog->document()->setMaximumBlockCount(LOG_MAX_BLOCK_COUNT);
     m_txtLog->setStyleSheet("font-family: Consolas, 'Microsoft YaHei'; font-size: 12px;");
 
     QPushButton* btnClearLog = new QPushButton("清空日志");
@@ -167,6 +193,7 @@ void MainWindow::setupUI()
     // 组装布局
     // ═══════════════════════════════════════════
     mainLayout->addWidget(grpServer);
+    mainLayout->addWidget(grpPlc);
     mainLayout->addWidget(grpWave);
     mainLayout->addWidget(grpConfig);
     mainLayout->addWidget(grpLog, 1); // 日志区占剩余空间
@@ -206,21 +233,29 @@ void MainWindow::onStartStop()
         if (m_pServer) m_pServer->stop();
         m_pServer = nullptr;
         m_pClient = nullptr;
+        m_pPlcMgr = nullptr;
         m_bRunning = false;
 
-        m_btnStartStop->setText("启动服务");
+        m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "启动服务"));
         m_btnStartStop->setStyleSheet(
             "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
             "border-radius: 4px; padding: 6px 16px; }"
             "QPushButton:hover { background-color: #45a049; }");
-        m_lblServerStatus->setText("● 已停止");
+        m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 已停止"));
         m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
+        m_lblPlcStatus->setText(QCoreApplication::translate("MainWindow", "PLC: 等待连接"));
+        m_lblPlcStatus->setStyleSheet("font-size: 13px; color: #888;");
+        m_lblPlcConnCount->setText("--");
+        m_lblPlcConnCount->setStyleSheet("font-size: 13px; color: #888;");
+        m_lblPlcSendRecv->setText("--");
+        m_lblPlcUptime->setText("--");
         appendLog("服务已手动停止");
     }
     else
     {
         m_pServer = new HttpServer(this);
         m_pClient = new HttpClient(this);
+        m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
 
         AppConfig& cfg = ConfigManager::instance()->config();
         m_pClient->setUrl(cfg.activeFeedbackUrl());
@@ -249,6 +284,32 @@ void MainWindow::onStartStop()
                 appendLog(QString("自动回传波次 %1 sumLocation=%2").arg(orderCode).arg(sumLocation));
                 m_pClient->sendWaveComplete(orderCode, sumLocation);
             });
+
+            // ★ 连接HttpServer日志信号到UI日志区
+            connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
+
+            // ★ 连接PLC状态信号到UI
+            if (m_pPlcMgr)
+            {
+                connect(m_pPlcMgr, &PlcManager::plcConnected, this, [this](const QString& ip, int port) {
+                    updatePlcPanel();
+                    appendLog(QString("[PLC] 已连接 %1:%2").arg(ip).arg(port));
+                });
+                connect(m_pPlcMgr, &PlcManager::plcDisconnected, this, [this](const QString& ip, int port) {
+                    updatePlcPanel();
+                    appendLog(QString("[PLC] 断开连接 %1:%2").arg(ip).arg(port), true);
+                });
+                connect(m_pPlcMgr, &PlcManager::plcFeedbackReceived, this,
+                    [this](const QString& code, const QString& grid, const QString& car) {
+                        appendLog(QString("[PLC] 反馈落格 code=%1 → grid=%2 car=%3").arg(code).arg(grid).arg(car));
+                    });
+                connect(m_pPlcMgr, &PlcManager::plcBatchStart, this, [this]() {
+                    appendLog("[PLC] 批次开始");
+                });
+                connect(m_pPlcMgr, &PlcManager::plcBatchStop, this, [this]() {
+                    appendLog("[PLC] 批次停止");
+                });
+            }
         }
         else
         {
@@ -264,6 +325,7 @@ void MainWindow::onRefreshTimer()
     if (m_bRunning && m_pServer && m_pServer->waveManager())
     {
         updateWavePanel();
+        updatePlcPanel();
     }
 }
 
@@ -292,6 +354,59 @@ void MainWindow::updateWavePanel()
         m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #4CAF50;");
     else
         m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #2196F3;");
+}
+
+void MainWindow::updatePlcPanel()
+{
+    if (!m_pPlcMgr) return;
+
+    PlcStats s = m_pPlcMgr->stats();
+
+    if (s.running && s.clientCount > 0)
+    {
+        // PLC已连接
+        m_lblPlcStatus->setText(QString("● %1:%2 已连接")
+            .arg(s.lastIp.isEmpty() ? "?" : s.lastIp).arg(s.port));
+        m_lblPlcStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
+        m_lblPlcConnCount->setText(QString("客户端: %1").arg(s.clientCount));
+        m_lblPlcConnCount->setStyleSheet("font-size: 13px; color: #2196F3; font-weight: bold;");
+    }
+    else if (s.running)
+    {
+        // PLC服务运行中但无客户端连接
+        m_lblPlcStatus->setText(QString("● 监听中 :%1").arg(s.port));
+        m_lblPlcStatus->setStyleSheet("font-size: 13px; color: #FF9800; font-weight: bold;");
+        m_lblPlcConnCount->setText(QCoreApplication::translate("MainWindow", "等待PLC连接"));
+        m_lblPlcConnCount->setStyleSheet("font-size: 13px; color: #888;");
+    }
+    else
+    {
+        // PLC未启动
+        m_lblPlcStatus->setText(QCoreApplication::translate("MainWindow", "● PLC未启动"));
+        m_lblPlcStatus->setStyleSheet("font-size: 13px; color: #f44336;");
+        m_lblPlcConnCount->setText("--");
+        m_lblPlcConnCount->setStyleSheet("font-size: 13px; color: #888;");
+    }
+
+    // 收发统计
+    m_lblPlcSendRecv->setText(QString("发送: %1 | 接收: %2 | 错误: %3")
+        .arg(s.sendCount).arg(s.recvCount).arg(s.sendErrCount));
+
+    // 运行时间
+    if (s.uptimeSec > 0)
+    {
+        int h = (int)(s.uptimeSec / 3600);
+        int m = (int)((s.uptimeSec % 3600) / 60);
+        int sec = (int)(s.uptimeSec % 60);
+        if (h > 0)
+            m_lblPlcUptime->setText(QString("运行: %1h%2m%3s").arg(h).arg(m).arg(sec));
+        else
+            m_lblPlcUptime->setText(QString("运行: %1m%2s").arg(m).arg(sec));
+    }
+    else
+    {
+        m_lblPlcUptime->setText("--");
+    }
 }
 
 void MainWindow::onManualReport()

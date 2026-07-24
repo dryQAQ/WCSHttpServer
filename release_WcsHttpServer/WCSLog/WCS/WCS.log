@@ -1,0 +1,818 @@
+2026-07-23 14:01:42.402 [0x0000a56c] INFO  WCS - 	[Parse] orderCode=STRESS_140142 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 14:01:42.405 [0x000060b8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_140142 qty=100 SKU=100
+2026-07-23 14:01:42.405 [0x000060b8] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 14:01:42.405 [0x000060b8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 14:01:44.704 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_140142
+2026-07-23 14:01:44.705 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 14:01:59.905 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=69 exception=31 total=100
+2026-07-23 14:01:59.905 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 14:01:59.928 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=31 total=100
+2026-07-23 14:01:59.928 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:01:59.947 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=69 exception=31 total=100
+2026-07-23 14:01:59.947 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:01:59.969 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=31 total=100
+2026-07-23 14:01:59.969 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:01:59.993 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=31 total=100
+2026-07-23 14:01:59.993 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.011 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=69 exception=31 total=100
+2026-07-23 14:02:00.011 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.037 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.037 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.075 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.075 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.101 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.101 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.160 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.160 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.181 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.181 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.217 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.217 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.299 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.299 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.353 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.353 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.393 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.393 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.414 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.414 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.430 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.431 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.460 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=69 exception=32 total=100
+2026-07-23 14:02:00.460 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.493 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=32 total=100
+2026-07-23 14:02:00.493 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.529 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=32 total=100
+2026-07-23 14:02:00.529 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.548 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=32 total=100
+2026-07-23 14:02:00.548 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.599 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=32 total=100
+2026-07-23 14:02:00.599 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.766 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=32 total=100
+2026-07-23 14:02:00.766 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.804 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=32 total=100
+2026-07-23 14:02:00.804 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.845 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=70 exception=33 total=100
+2026-07-23 14:02:00.845 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.866 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=70 exception=33 total=100
+2026-07-23 14:02:00.866 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.892 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=70 exception=33 total=100
+2026-07-23 14:02:00.892 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:00.950 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=33 total=100
+2026-07-23 14:02:00.950 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.006 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=33 total=100
+2026-07-23 14:02:01.007 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.025 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=70 exception=34 total=100
+2026-07-23 14:02:01.025 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.043 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=70 exception=34 total=100
+2026-07-23 14:02:01.043 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.063 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=70 exception=34 total=100
+2026-07-23 14:02:01.063 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.110 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=34 total=100
+2026-07-23 14:02:01.110 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.130 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=34 total=100
+2026-07-23 14:02:01.131 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.150 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=34 total=100
+2026-07-23 14:02:01.151 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.168 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=70 exception=34 total=100
+2026-07-23 14:02:01.168 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.267 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=71 exception=34 total=100
+2026-07-23 14:02:01.267 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.302 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=71 exception=34 total=100
+2026-07-23 14:02:01.302 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.407 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=72 exception=34 total=100
+2026-07-23 14:02:01.407 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.427 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=72 exception=34 total=100
+2026-07-23 14:02:01.427 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.519 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=34 total=100
+2026-07-23 14:02:01.519 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.552 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=34 total=100
+2026-07-23 14:02:01.552 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.577 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=35 total=100
+2026-07-23 14:02:01.577 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.600 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=35 total=100
+2026-07-23 14:02:01.600 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.701 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:01.701 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.725 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:01.725 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.747 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:01.747 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.833 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:01.833 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:01.866 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:01.866 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.020 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:02.021 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.043 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:02.043 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.074 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:02.074 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.104 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:02.104 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.161 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140142 sorted=72 exception=36 total=100
+2026-07-23 14:02:02.161 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.181 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=73 exception=36 total=100
+2026-07-23 14:02:02.181 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.203 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=74 exception=36 total=100
+2026-07-23 14:02:02.203 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.228 [0x0000c024] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=74 exception=36 total=100
+2026-07-23 14:02:02.228 [0x0000c024] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.247 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=74 exception=36 total=100
+2026-07-23 14:02:02.247 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.266 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=74 exception=36 total=100
+2026-07-23 14:02:02.266 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.285 [0x00003368] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=74 exception=36 total=100
+2026-07-23 14:02:02.285 [0x00003368] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:02:02.304 [0x0000ae74] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140142 sorted=74 exception=36 total=100
+2026-07-23 14:02:02.304 [0x0000ae74] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:07.117 [0x00003f00] INFO  WCS - 	[Parse] orderCode=STRESS_140507 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 14:05:07.118 [0x0000c660] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_140507 qty=100 SKU=100
+2026-07-23 14:05:07.118 [0x0000c660] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 14:05:07.118 [0x0000c660] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 14:05:09.336 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_140507
+2026-07-23 14:05:09.336 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 14:05:24.337 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=27 total=100
+2026-07-23 14:05:24.337 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 14:05:24.371 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=27 total=100
+2026-07-23 14:05:24.371 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.401 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=27 total=100
+2026-07-23 14:05:24.401 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.428 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.428 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.459 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.459 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.488 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.488 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.531 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.531 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.563 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.563 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.585 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.585 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.703 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.703 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.751 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.751 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.818 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.818 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.927 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=28 total=100
+2026-07-23 14:05:24.927 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:24.969 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=73 exception=29 total=100
+2026-07-23 14:05:24.969 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.029 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=29 total=100
+2026-07-23 14:05:25.029 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.117 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=73 exception=29 total=100
+2026-07-23 14:05:25.117 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.151 [0x000088d4] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=73 exception=29 total=100
+2026-07-23 14:05:25.151 [0x000088d4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.174 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=29 total=100
+2026-07-23 14:05:25.174 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.290 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=29 total=100
+2026-07-23 14:05:25.290 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.411 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=73 exception=29 total=100
+2026-07-23 14:05:25.411 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.731 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=73 exception=30 total=100
+2026-07-23 14:05:25.731 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.759 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=74 exception=30 total=100
+2026-07-23 14:05:25.760 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.837 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=74 exception=30 total=100
+2026-07-23 14:05:25.837 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.908 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=74 exception=30 total=100
+2026-07-23 14:05:25.908 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.972 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=30 total=100
+2026-07-23 14:05:25.972 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:25.995 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=30 total=100
+2026-07-23 14:05:25.995 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.044 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=31 total=100
+2026-07-23 14:05:26.044 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.070 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=31 total=100
+2026-07-23 14:05:26.070 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.163 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=31 total=100
+2026-07-23 14:05:26.163 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.186 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=32 total=100
+2026-07-23 14:05:26.186 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.245 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=32 total=100
+2026-07-23 14:05:26.245 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.267 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=32 total=100
+2026-07-23 14:05:26.267 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.286 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.286 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.324 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.324 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.359 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.359 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.378 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.378 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.420 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.420 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.438 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.438 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.468 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.468 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.531 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=33 total=100
+2026-07-23 14:05:26.531 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.553 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=34 total=100
+2026-07-23 14:05:26.553 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.585 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=34 total=100
+2026-07-23 14:05:26.585 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.699 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=34 total=100
+2026-07-23 14:05:26.699 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.734 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=35 total=100
+2026-07-23 14:05:26.735 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.766 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=75 exception=35 total=100
+2026-07-23 14:05:26.766 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.784 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=35 total=100
+2026-07-23 14:05:26.784 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.823 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=35 total=100
+2026-07-23 14:05:26.823 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.873 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=35 total=100
+2026-07-23 14:05:26.873 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.912 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=75 exception=35 total=100
+2026-07-23 14:05:26.912 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.963 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=76 exception=35 total=100
+2026-07-23 14:05:26.963 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:26.996 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=76 exception=35 total=100
+2026-07-23 14:05:26.996 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.057 [0x0000923c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=76 exception=36 total=100
+2026-07-23 14:05:27.057 [0x0000923c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.098 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=76 exception=36 total=100
+2026-07-23 14:05:27.098 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.117 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=76 exception=36 total=100
+2026-07-23 14:05:27.117 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.150 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=76 exception=36 total=100
+2026-07-23 14:05:27.150 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.171 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=76 exception=36 total=100
+2026-07-23 14:05:27.171 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.204 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=76 exception=36 total=100
+2026-07-23 14:05:27.204 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.263 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=76 exception=37 total=100
+2026-07-23 14:05:27.263 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.317 [0x00009ac0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=76 exception=37 total=100
+2026-07-23 14:05:27.317 [0x00009ac0] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.337 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_140507 sorted=76 exception=38 total=100
+2026-07-23 14:05:27.337 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.366 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=76 exception=38 total=100
+2026-07-23 14:05:27.366 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:05:27.394 [0x00002f4c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_140507 sorted=76 exception=38 total=100
+2026-07-23 14:05:27.394 [0x00002f4c] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:08:53.825 [0x00005810] INFO  WCS - 	[Parse] orderCode=BURST_140853 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 14:08:53.827 [0x0000c08c] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=BURST_140853 qty=100 SKU=100
+2026-07-23 14:08:53.827 [0x0000c08c] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 14:08:53.827 [0x0000c08c] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 14:12:45.892 [0x00005810] INFO  WCS - 	[Parse] orderCode=STRESS_141245 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 14:12:45.905 [0x0000c08c] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=BURST_140853 status=1
+2026-07-23 14:12:45.905 [0x0000c08c] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-07-23 14:12:45.905 [0x0000c08c] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 4
+2026-07-23 14:12:45.905 [0x0000c08c] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_141245 qty=100 SKU=100
+2026-07-23 14:12:45.905 [0x0000c08c] INFO  WCS - 	[WaveMgr] 状态转换 4 -> 1
+2026-07-23 14:12:45.905 [0x0000c08c] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 14:12:48.401 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_141245
+2026-07-23 14:12:48.401 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 14:13:02.041 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.041 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 14:13:02.066 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.066 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.100 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.100 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.120 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.120 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.141 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.141 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.169 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.169 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.198 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.198 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.224 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.224 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.244 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.244 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.266 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.266 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.293 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=31 total=100
+2026-07-23 14:13:02.293 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.316 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=69 exception=32 total=100
+2026-07-23 14:13:02.316 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.360 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=69 exception=32 total=100
+2026-07-23 14:13:02.360 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.378 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=69 exception=32 total=100
+2026-07-23 14:13:02.378 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.433 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.433 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.462 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.462 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.484 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.484 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.547 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.547 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.608 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.608 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.700 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.700 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.724 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.724 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.752 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.752 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.776 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.776 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.805 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=32 total=100
+2026-07-23 14:13:02.805 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.828 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=70 exception=33 total=100
+2026-07-23 14:13:02.828 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.859 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=33 total=100
+2026-07-23 14:13:02.859 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.882 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=33 total=100
+2026-07-23 14:13:02.882 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.905 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=33 total=100
+2026-07-23 14:13:02.905 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:02.981 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=70 exception=33 total=100
+2026-07-23 14:13:02.981 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.008 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=33 total=100
+2026-07-23 14:13:03.008 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.042 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=70 exception=33 total=100
+2026-07-23 14:13:03.042 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.071 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.071 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.111 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.111 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.138 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.138 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.167 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.167 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.192 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.192 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.232 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.232 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.255 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.255 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.283 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.283 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.383 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=71 exception=33 total=100
+2026-07-23 14:13:03.383 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.403 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=33 total=100
+2026-07-23 14:13:03.403 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.458 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=33 total=100
+2026-07-23 14:13:03.458 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.524 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=33 total=100
+2026-07-23 14:13:03.524 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.578 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=33 total=100
+2026-07-23 14:13:03.578 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.650 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=72 exception=34 total=100
+2026-07-23 14:13:03.650 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.690 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=34 total=100
+2026-07-23 14:13:03.690 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.720 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=72 exception=34 total=100
+2026-07-23 14:13:03.720 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.752 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=72 exception=34 total=100
+2026-07-23 14:13:03.752 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.775 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=72 exception=34 total=100
+2026-07-23 14:13:03.775 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.813 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=34 total=100
+2026-07-23 14:13:03.813 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.835 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.835 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.861 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.861 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.878 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.880 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.901 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.901 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.926 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.926 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.947 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.947 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.971 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.971 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:03.994 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:03.994 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:04.019 [0x00008190] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:04.019 [0x00008190] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:04.043 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=72 exception=35 total=100
+2026-07-23 14:13:04.043 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:04.082 [0x0000ca70] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=73 exception=35 total=100
+2026-07-23 14:13:04.082 [0x0000ca70] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:13:04.137 [0x00009dc4] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_141245 sorted=73 exception=35 total=100
+2026-07-23 14:13:04.137 [0x00009dc4] INFO  WCS - 	[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 14:22:49.609 [0x000047e4] INFO  WCS - 	[Parse] orderCode=STRESS_142249 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 14:22:49.611 [0x00008ab8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_142249 qty=100 SKU=100
+2026-07-23 14:22:49.611 [0x00008ab8] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 14:22:49.611 [0x00008ab8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 14:22:52.024 [0x0000aee4] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_142249
+2026-07-23 14:22:52.024 [0x0000aee4] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 14:40:26.311 [0x00008ab8] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 14:54:06.840 [0x00006230] INFO  WCS - 	[Parse] orderCode=STRESS_145406 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 14:54:06.841 [0x00007ac4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_145406 qty=100 SKU=100
+2026-07-23 14:54:06.841 [0x00007ac4] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 14:54:06.841 [0x00007ac4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 14:54:09.177 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_145406
+2026-07-23 14:54:09.177 [0x00009db0] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 14:54:21.887 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_145406 sorted=68 exception=32 total=100
+2026-07-23 14:54:21.887 [0x0000268c] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 14:54:21.912 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=68 exception=32 total=100
+2026-07-23 14:54:21.965 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:21.998 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.126 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.146 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.166 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.193 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.217 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.382 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.440 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.475 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.537 [0x0000acfc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=68 exception=33 total=100
+2026-07-23 14:54:22.559 [0x0000acfc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=69 exception=33 total=100
+2026-07-23 14:54:22.593 [0x0000acfc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=69 exception=33 total=100
+2026-07-23 14:54:22.614 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=69 exception=33 total=100
+2026-07-23 14:54:22.642 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=69 exception=33 total=100
+2026-07-23 14:54:22.680 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=69 exception=33 total=100
+2026-07-23 14:54:22.684 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=69 exception=33 total=100
+2026-07-23 14:54:22.705 [0x0000acfc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=70 exception=33 total=100
+2026-07-23 14:54:22.790 [0x0000acfc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=70 exception=33 total=100
+2026-07-23 14:54:22.823 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=70 exception=33 total=100
+2026-07-23 14:54:22.844 [0x0000acfc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=71 exception=33 total=100
+2026-07-23 14:54:22.891 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=71 exception=33 total=100
+2026-07-23 14:54:22.932 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=71 exception=33 total=100
+2026-07-23 14:54:22.986 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=71 exception=33 total=100
+2026-07-23 14:54:23.041 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=71 exception=33 total=100
+2026-07-23 14:54:23.101 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=71 exception=33 total=100
+2026-07-23 14:54:23.200 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=71 exception=34 total=100
+2026-07-23 14:54:23.216 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=72 exception=34 total=100
+2026-07-23 14:54:23.234 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=72 exception=35 total=100
+2026-07-23 14:54:23.269 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=72 exception=35 total=100
+2026-07-23 14:54:23.295 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=72 exception=35 total=100
+2026-07-23 14:54:23.329 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=72 exception=35 total=100
+2026-07-23 14:54:23.348 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=72 exception=35 total=100
+2026-07-23 14:54:23.393 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=73 exception=35 total=100
+2026-07-23 14:54:23.411 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=73 exception=35 total=100
+2026-07-23 14:54:23.431 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=73 exception=35 total=100
+2026-07-23 14:54:23.464 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=73 exception=35 total=100
+2026-07-23 14:54:23.488 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=73 exception=35 total=100
+2026-07-23 14:54:23.506 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=74 exception=35 total=100
+2026-07-23 14:54:23.560 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=35 total=100
+2026-07-23 14:54:23.579 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=35 total=100
+2026-07-23 14:54:23.598 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=35 total=100
+2026-07-23 14:54:23.621 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=35 total=100
+2026-07-23 14:54:23.646 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.683 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.701 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.717 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.736 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.780 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.875 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.942 [0x00009db0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:23.964 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:24.007 [0x0000afc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:24.032 [0x0000afc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:24.058 [0x0000c684] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:24.084 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=75 exception=36 total=100
+2026-07-23 14:54:24.101 [0x0000afc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=76 exception=36 total=100
+2026-07-23 14:54:27.529 [0x00009e20] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=76 exception=36 total=100
+2026-07-23 14:54:27.530 [0x000094b4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=76 exception=37 total=100
+2026-07-23 14:54:27.530 [0x0000268c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=76 exception=37 total=100
+2026-07-23 14:54:27.530 [0x00009da8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_145406 sorted=76 exception=38 total=100
+2026-07-23 14:54:27.531 [0x0000afc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=76 exception=38 total=100
+2026-07-23 14:54:27.531 [0x0000c038] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_145406 sorted=76 exception=38 total=100
+2026-07-23 15:04:22.723 [0x00005f20] INFO  WCS - 	[Parse] orderCode=STRESS_150422 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 15:04:22.725 [0x00006b00] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_150422 qty=100 SKU=100
+2026-07-23 15:04:22.725 [0x00006b00] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 15:04:22.725 [0x00006b00] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 15:04:24.965 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_150422
+2026-07-23 15:04:24.965 [0x0000bac0] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 15:04:34.714 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_150422 sorted=66 exception=34 total=100
+2026-07-23 15:04:34.714 [0x0000ba00] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 15:04:34.737 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=67 exception=34 total=100
+2026-07-23 15:04:34.759 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=67 exception=34 total=100
+2026-07-23 15:04:34.794 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=67 exception=34 total=100
+2026-07-23 15:04:34.869 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=67 exception=34 total=100
+2026-07-23 15:04:34.901 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=67 exception=34 total=100
+2026-07-23 15:04:34.930 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=67 exception=34 total=100
+2026-07-23 15:04:34.965 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=67 exception=34 total=100
+2026-07-23 15:04:34.988 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=68 exception=34 total=100
+2026-07-23 15:04:35.011 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=68 exception=34 total=100
+2026-07-23 15:04:35.033 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=68 exception=34 total=100
+2026-07-23 15:04:35.095 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=68 exception=34 total=100
+2026-07-23 15:04:35.125 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=68 exception=34 total=100
+2026-07-23 15:04:35.148 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=69 exception=34 total=100
+2026-07-23 15:04:35.170 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=69 exception=35 total=100
+2026-07-23 15:04:35.238 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=69 exception=35 total=100
+2026-07-23 15:04:35.287 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=69 exception=35 total=100
+2026-07-23 15:04:35.391 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=69 exception=35 total=100
+2026-07-23 15:04:35.444 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=70 exception=35 total=100
+2026-07-23 15:04:35.499 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=35 total=100
+2026-07-23 15:04:35.557 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=35 total=100
+2026-07-23 15:04:35.578 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=71 exception=36 total=100
+2026-07-23 15:04:35.609 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=71 exception=36 total=100
+2026-07-23 15:04:35.639 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=36 total=100
+2026-07-23 15:04:35.657 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=36 total=100
+2026-07-23 15:04:35.700 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=36 total=100
+2026-07-23 15:04:35.727 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.758 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.780 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.839 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.871 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.916 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.922 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.947 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:35.968 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:36.033 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=71 exception=37 total=100
+2026-07-23 15:04:36.073 [0x00009780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.203 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.234 [0x00009780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.263 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.286 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.319 [0x00009780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.390 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.453 [0x00009780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.475 [0x00009780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=37 total=100
+2026-07-23 15:04:36.521 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:36.625 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:36.696 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:36.748 [0x00009780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:36.781 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:36.866 [0x00002968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:36.916 [0x00009780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:37.016 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:37.057 [0x0000ba00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=38 total=100
+2026-07-23 15:04:40.579 [0x000084f8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=39 total=100
+2026-07-23 15:04:40.579 [0x0000bac0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150422 sorted=72 exception=39 total=100
+2026-07-23 15:04:40.579 [0x0000a0c0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=39 total=100
+2026-07-23 15:04:40.580 [0x00003bf8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150422 sorted=72 exception=39 total=100
+2026-07-23 15:05:14.053 [0x0000b810] INFO  WCS - 	[Parse] orderCode=STRESS_150513 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 15:05:14.054 [0x00000eec] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_150513 qty=100 SKU=100
+2026-07-23 15:05:14.054 [0x00000eec] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 15:05:14.054 [0x00000eec] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 15:05:16.359 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_150513
+2026-07-23 15:05:16.359 [0x0000b100] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 15:05:26.721 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_150513 sorted=64 exception=36 total=100
+2026-07-23 15:05:26.721 [0x00005fa0] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 15:05:26.749 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=64 exception=36 total=100
+2026-07-23 15:05:26.784 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=64 exception=36 total=100
+2026-07-23 15:05:26.805 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=64 exception=36 total=100
+2026-07-23 15:05:26.828 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=65 exception=36 total=100
+2026-07-23 15:05:26.855 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=66 exception=36 total=100
+2026-07-23 15:05:26.876 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=66 exception=36 total=100
+2026-07-23 15:05:26.903 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=66 exception=36 total=100
+2026-07-23 15:05:26.931 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=66 exception=36 total=100
+2026-07-23 15:05:26.953 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=66 exception=36 total=100
+2026-07-23 15:05:26.976 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=66 exception=37 total=100
+2026-07-23 15:05:27.018 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=37 total=100
+2026-07-23 15:05:27.037 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=37 total=100
+2026-07-23 15:05:27.059 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=67 exception=37 total=100
+2026-07-23 15:05:27.079 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=37 total=100
+2026-07-23 15:05:27.108 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=37 total=100
+2026-07-23 15:05:27.186 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=67 exception=38 total=100
+2026-07-23 15:05:27.323 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=38 total=100
+2026-07-23 15:05:27.397 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=38 total=100
+2026-07-23 15:05:27.460 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.491 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.532 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.571 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.613 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.641 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.667 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.684 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.706 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.734 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.870 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.939 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.960 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:27.992 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:28.019 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=67 exception=39 total=100
+2026-07-23 15:05:28.047 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=68 exception=39 total=100
+2026-07-23 15:05:28.071 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=68 exception=40 total=100
+2026-07-23 15:05:28.137 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=68 exception=41 total=100
+2026-07-23 15:05:28.168 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=68 exception=41 total=100
+2026-07-23 15:05:28.190 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=68 exception=41 total=100
+2026-07-23 15:05:28.211 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=68 exception=41 total=100
+2026-07-23 15:05:28.232 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=69 exception=41 total=100
+2026-07-23 15:05:28.287 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=70 exception=41 total=100
+2026-07-23 15:05:28.337 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=70 exception=41 total=100
+2026-07-23 15:05:28.359 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=70 exception=41 total=100
+2026-07-23 15:05:28.379 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=71 exception=41 total=100
+2026-07-23 15:05:28.437 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=71 exception=41 total=100
+2026-07-23 15:05:28.487 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=71 exception=41 total=100
+2026-07-23 15:05:28.536 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=72 exception=41 total=100
+2026-07-23 15:05:28.580 [0x00000a34] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=72 exception=42 total=100
+2026-07-23 15:05:28.617 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=72 exception=42 total=100
+2026-07-23 15:05:28.656 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=72 exception=43 total=100
+2026-07-23 15:05:28.689 [0x00005fa0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=72 exception=43 total=100
+2026-07-23 15:05:28.757 [0x0000b100] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=72 exception=43 total=100
+2026-07-23 15:05:28.841 [0x0000a04c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=73 exception=43 total=100
+2026-07-23 15:05:28.867 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=74 exception=43 total=100
+2026-07-23 15:05:28.906 [0x0000a04c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=74 exception=43 total=100
+2026-07-23 15:05:28.939 [0x0000a04c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=74 exception=43 total=100
+2026-07-23 15:05:28.969 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=75 exception=43 total=100
+2026-07-23 15:05:32.341 [0x000074a4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=75 exception=43 total=100
+2026-07-23 15:05:32.341 [0x00008ee0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=75 exception=43 total=100
+2026-07-23 15:05:32.341 [0x00009d1c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_150513 sorted=75 exception=43 total=100
+2026-07-23 15:05:32.341 [0x000078a4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=75 exception=43 total=100
+2026-07-23 15:05:32.341 [0x0000c70c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_150513 sorted=75 exception=44 total=100
+2026-07-23 15:05:33.971 [0x00007180] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=
+2026-07-23 15:05:33.971 [0x00007180] WARN  WCS - <212>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 0 -> 2
+2026-07-23 15:31:05.989 [0x00004fd8] INFO  WCS - 	[Parse] orderCode=STRESS_153105 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 15:31:05.990 [0x00009c30] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_153105 qty=100 SKU=100
+2026-07-23 15:31:05.990 [0x00009c30] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 15:31:05.990 [0x00009c30] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 15:31:08.213 [0x000036fc] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_153105
+2026-07-23 15:31:08.213 [0x000036fc] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 15:31:22.919 [0x00008b04] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:22.919 [0x00008b04] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 15:31:22.987 [0x00009264] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.009 [0x0000bff8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.040 [0x00007974] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.061 [0x00005350] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.083 [0x00000d08] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.101 [0x00007df8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.121 [0x0000c8fc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.161 [0x00002774] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.180 [0x0000b5d8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.206 [0x00005bf0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.224 [0x00008db8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.306 [0x0000a6f4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.339 [0x000092f0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.631 [0x0000a3d0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.663 [0x00003050] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.689 [0x000097c8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.708 [0x000098d8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.726 [0x00007e0c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=75 exception=25 total=100
+2026-07-23 15:31:23.767 [0x000083ac] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=76 exception=25 total=100
+2026-07-23 15:31:23.785 [0x00009bd0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=76 exception=25 total=100
+2026-07-23 15:31:23.821 [0x0000a3b4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=76 exception=25 total=100
+2026-07-23 15:31:23.865 [0x0000bd3c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=76 exception=25 total=100
+2026-07-23 15:31:23.902 [0x0000549c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=77 exception=25 total=100
+2026-07-23 15:31:23.925 [0x0000c2c4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=77 exception=25 total=100
+2026-07-23 15:31:24.046 [0x0000b550] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=77 exception=25 total=100
+2026-07-23 15:31:24.074 [0x0000aac4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=77 exception=25 total=100
+2026-07-23 15:31:24.100 [0x000081b4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=77 exception=25 total=100
+2026-07-23 15:31:24.126 [0x0000be44] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.160 [0x00006d00] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.185 [0x0000c8d4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.211 [0x00009f48] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.242 [0x000054cc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.283 [0x0000c48c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.312 [0x000036fc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.340 [0x000096f4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.548 [0x00005350] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.684 [0x000094e4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=25 total=100
+2026-07-23 15:31:24.713 [0x0000c4c0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153105 sorted=78 exception=26 total=100
+2026-07-23 15:31:24.735 [0x0000a6f4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=26 total=100
+2026-07-23 15:31:24.765 [0x000092f0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153105 sorted=78 exception=26 total=100
+2026-07-23 15:31:24.784 [0x000067c4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=26 total=100
+2026-07-23 15:31:24.886 [0x00003a3c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=26 total=100
+2026-07-23 15:31:24.904 [0x0000c780] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:24.951 [0x0000af9c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.015 [0x00007b10] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.036 [0x0000a7ac] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.062 [0x0000a05c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.086 [0x0000a3d0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.135 [0x000098d8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.202 [0x000083ac] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.228 [0x0000a880] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=78 exception=27 total=100
+2026-07-23 15:31:25.249 [0x0000a3b4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=79 exception=27 total=100
+2026-07-23 15:31:28.870 [0x000012f4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=79 exception=27 total=100
+2026-07-23 15:31:28.870 [0x0000549c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=79 exception=27 total=100
+2026-07-23 15:31:28.870 [0x00002dc4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=79 exception=27 total=100
+2026-07-23 15:31:28.872 [0x0000360c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153105 sorted=80 exception=27 total=100
+2026-07-23 15:32:47.597 [0x00003268] INFO  WCS - 	[Parse] orderCode=BURST_153247 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 15:32:47.600 [0x0000a888] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=BURST_153247 qty=100 SKU=100
+2026-07-23 15:32:47.600 [0x0000a888] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 15:32:47.600 [0x0000a888] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 15:34:42.256 [0x00003268] INFO  WCS - 	[Parse] orderCode=STRESS_153442 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 15:34:42.269 [0x0000a888] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=BURST_153247 status=1
+2026-07-23 15:34:42.269 [0x0000a888] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-07-23 15:34:42.269 [0x0000a888] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 4
+2026-07-23 15:34:42.269 [0x0000a888] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_153442 qty=100 SKU=100
+2026-07-23 15:34:42.269 [0x0000a888] INFO  WCS - 	[WaveMgr] 状态转换 4 -> 1
+2026-07-23 15:34:42.269 [0x0000a888] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 15:34:44.614 [0x0000c228] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_153442
+2026-07-23 15:34:44.614 [0x0000c228] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 15:34:56.835 [0x0000b880] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_153442 sorted=64 exception=36 total=100
+2026-07-23 15:34:56.835 [0x0000b880] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 15:34:56.866 [0x0000c968] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=64 exception=36 total=100
+2026-07-23 15:34:56.903 [0x00000b58] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=64 exception=36 total=100
+2026-07-23 15:34:56.932 [0x00005558] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=64 exception=36 total=100
+2026-07-23 15:34:56.965 [0x00005804] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=64 exception=36 total=100
+2026-07-23 15:34:57.000 [0x00003440] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=64 exception=36 total=100
+2026-07-23 15:34:57.036 [0x00007174] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=65 exception=36 total=100
+2026-07-23 15:34:57.123 [0x0000366c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.196 [0x0000c438] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.218 [0x0000cbf0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.277 [0x000059c4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.368 [0x0000ab8c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.397 [0x00007424] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.424 [0x0000befc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.544 [0x00006304] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=66 exception=36 total=100
+2026-07-23 15:34:57.571 [0x00002c40] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=67 exception=36 total=100
+2026-07-23 15:34:57.608 [0x00007ba0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=67 exception=36 total=100
+2026-07-23 15:34:57.746 [0x00008d30] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=67 exception=36 total=100
+2026-07-23 15:34:57.796 [0x0000624c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=67 exception=36 total=100
+2026-07-23 15:34:57.819 [0x000090e4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=67 exception=37 total=100
+2026-07-23 15:34:57.848 [0x0000c6d0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=67 exception=37 total=100
+2026-07-23 15:34:57.921 [0x00006254] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=68 exception=37 total=100
+2026-07-23 15:34:57.971 [0x00009950] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=68 exception=37 total=100
+2026-07-23 15:34:57.994 [0x0000c1b4] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=68 exception=37 total=100
+2026-07-23 15:34:58.016 [0x000045a0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=68 exception=37 total=100
+2026-07-23 15:34:58.037 [0x00004edc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=68 exception=37 total=100
+2026-07-23 15:34:58.064 [0x000069f0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=68 exception=37 total=100
+2026-07-23 15:34:58.100 [0x0000c3d0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=68 exception=37 total=100
+2026-07-23 15:34:58.158 [0x0000096c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.196 [0x00002004] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.241 [0x00009d24] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.266 [0x00007f90] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.306 [0x000010d8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.336 [0x0000b120] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.362 [0x00008fc8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.402 [0x00008e54] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.484 [0x00005804] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.511 [0x000056e8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.569 [0x00007174] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.602 [0x0000ba1c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.626 [0x0000366c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=69 exception=37 total=100
+2026-07-23 15:34:58.650 [0x0000b468] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=69 exception=38 total=100
+2026-07-23 15:34:58.673 [0x00002d48] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=70 exception=38 total=100
+2026-07-23 15:34:58.698 [0x0000be18] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=70 exception=38 total=100
+2026-07-23 15:34:58.724 [0x0000c1c0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=70 exception=38 total=100
+2026-07-23 15:34:58.769 [0x0000675c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=70 exception=38 total=100
+2026-07-23 15:34:58.831 [0x000019c0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=70 exception=38 total=100
+2026-07-23 15:34:58.852 [0x00009424] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=70 exception=38 total=100
+2026-07-23 15:34:58.888 [0x0000b76c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:58.944 [0x0000befc] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:58.992 [0x00005020] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:59.029 [0x00000a0c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:59.049 [0x00006304] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:59.072 [0x00002c40] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:59.137 [0x0000ba30] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:59.200 [0x00009a40] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=38 total=100
+2026-07-23 15:34:59.222 [0x0000c330] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=71 exception=39 total=100
+2026-07-23 15:34:59.241 [0x0000ca1c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过异常) orderCode=STRESS_153442 sorted=71 exception=39 total=100
+2026-07-23 15:34:59.262 [0x0000347c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=39 total=100
+2026-07-23 15:35:02.710 [0x0000624c] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=39 total=100
+2026-07-23 15:35:02.711 [0x0000c6d0] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=39 total=100
+2026-07-23 15:35:02.712 [0x0000b7d8] INFO  WCS - 	[WaveMgr] 波次已完成(已回传，跳过) orderCode=STRESS_153442 sorted=71 exception=39 total=100
+2026-07-23 17:08:27.269 [0x00009120] INFO  WCS - 	[Parse] orderCode=STRESS_170827 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 17:08:27.270 [0x0000413c] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_170827 qty=100 SKU=100
+2026-07-23 17:08:27.270 [0x0000413c] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 17:08:27.270 [0x0000413c] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 17:08:29.593 [0x00006d58] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_170827
+2026-07-23 17:08:29.593 [0x00006d58] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 17:08:39.622 [0x0000413c] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 17:08:41.466 [0x0000ae98] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_170827 sorted=69 exception=31 total=100
+2026-07-23 17:08:41.466 [0x0000ae98] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3 -> 3
+2026-07-23 17:23:04.960 [0x00009218] INFO  WCS - 	[Parse] orderCode=BURST_172304 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 17:23:04.963 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=BURST_172304 qty=100 SKU=100
+2026-07-23 17:23:04.963 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 17:23:04.963 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 17:26:19.929 [0x00009218] INFO  WCS - 	[Parse] orderCode=STRESS_172619 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 17:26:19.938 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=BURST_172304 status=1
+2026-07-23 17:26:19.938 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-07-23 17:26:19.938 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 4
+2026-07-23 17:26:19.938 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_172619 qty=100 SKU=100
+2026-07-23 17:26:19.938 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 状态转换 4 -> 1
+2026-07-23 17:26:19.938 [0x0000b5a8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 17:26:22.186 [0x00007308] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_172619
+2026-07-23 17:26:22.186 [0x00007308] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 17:26:33.505 [0x00008cc0] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=STRESS_172619 sorted=71 exception=29 total=100
+2026-07-23 17:26:33.505 [0x00008cc0] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3
+2026-07-23 19:12:07.240 [0x00001ff8] INFO  WCS - 	[Parse] orderCode=BURST_191207 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 19:12:07.242 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=BURST_191207 qty=100 SKU=100
+2026-07-23 19:12:07.242 [0x000016b0] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 19:12:07.242 [0x000016b0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 19:20:10.402 [0x0000155c] INFO  WCS - 	[Parse] orderCode=PROD_W1_192010 items=200 SKU=200 qty=200 elapsed=0ms
+2026-07-23 19:20:10.403 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PROD_W1_192010 qty=200 SKU=200
+2026-07-23 19:20:10.403 [0x000016b0] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 19:20:10.403 [0x000016b0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=200
+2026-07-23 19:20:12.763 [0x0000867c] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=PROD_W1_192010
+2026-07-23 19:20:12.763 [0x0000867c] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 19:20:26.915 [0x0000155c] INFO  WCS - 	[Parse] orderCode=PROD_W2_192026 items=200 SKU=200 qty=200 elapsed=0ms
+2026-07-23 19:20:26.916 [0x000016b0] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PROD_W1_192010 status=2
+2026-07-23 19:20:26.916 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-07-23 19:20:26.916 [0x000016b0] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 4
+2026-07-23 19:20:26.916 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PROD_W2_192026 qty=200 SKU=200
+2026-07-23 19:20:26.916 [0x000016b0] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 1
+2026-07-23 19:20:26.916 [0x000016b0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=200
+2026-07-23 19:20:29.173 [0x00005df4] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=PROD_W2_192026
+2026-07-23 19:20:29.173 [0x00005df4] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 2
+2026-07-23 19:20:43.211 [0x0000155c] INFO  WCS - 	[Parse] orderCode=PROD_W3_192043 items=200 SKU=200 qty=200 elapsed=1ms
+2026-07-23 19:20:43.212 [0x000016b0] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PROD_W2_192026 status=2
+2026-07-23 19:20:43.212 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-07-23 19:20:43.212 [0x000016b0] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 4
+2026-07-23 19:20:43.212 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PROD_W3_192043 qty=200 SKU=200
+2026-07-23 19:20:43.212 [0x000016b0] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 1
+2026-07-23 19:20:43.212 [0x000016b0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=200
+2026-07-23 19:20:45.470 [0x00005df4] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=PROD_W3_192043
+2026-07-23 19:20:45.470 [0x00005df4] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 2
+2026-07-23 19:21:43.993 [0x0000155c] INFO  WCS - 	[Parse] orderCode=BURST_192143 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 19:21:43.994 [0x000016b0] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PROD_W3_192043 status=2
+2026-07-23 19:21:43.994 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-07-23 19:21:43.994 [0x000016b0] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 4
+2026-07-23 19:21:43.994 [0x000016b0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=BURST_192143 qty=100 SKU=100
+2026-07-23 19:21:43.994 [0x000016b0] WARN  WCS - <230>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 2 -> 1
+2026-07-23 19:21:43.994 [0x000016b0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 21:46:27.049 [0x00003f3c] INFO  WCS - 	[Parse] orderCode=STRESS_214626 items=100 SKU=100 qty=100 elapsed=0ms
+2026-07-23 21:46:27.050 [0x0000b3e0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=STRESS_214626 qty=100 SKU=100
+2026-07-23 21:46:27.050 [0x0000b3e0] INFO  WCS - 	[WaveMgr] 状态转换 0 -> 1
+2026-07-23 21:46:27.050 [0x0000b3e0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=100
+2026-07-23 21:46:29.386 [0x000066bc] INFO  WCS - 	[WaveMgr] 波次分拣开始 orderCode=STRESS_214626
+2026-07-23 21:46:29.386 [0x000066bc] INFO  WCS - 	[WaveMgr] 状态转换 1 -> 2
+2026-07-23 21:46:48.303 [0x00001a98] INFO  WCS - 	[WaveMgr] 波次完成(异常) orderCode=STRESS_214626 sorted=72 exception=28 total=100
+2026-07-23 21:46:48.303 [0x00001a98] INFO  WCS - 	[WaveMgr] 状态转换 2 -> 3

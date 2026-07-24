@@ -72,11 +72,13 @@ bool ConfigManager::load()
 
     if (!QFile::exists(configPath))
     {
-        // 创建默认配置文件
-        m_config.feedbackTestUrl = "http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs";
-        m_config.feedbackUrl     = "http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs";
-        m_config.appkeyTest      = "dz_bxh_wcs_cs";
-        m_config.appkey          = "dz_bxh_wcs_zs";
+        // 创建默认配置文件（首次运行或配置文件丢失时）
+        // ──── WMS回传地址 ────
+        m_config.feedbackTestUrl = "http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs";  // WMS测试环境回传接口
+        m_config.feedbackUrl     = "http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs"; // WMS正式环境回传接口
+        // ──── WMS认证AppKey ────
+        m_config.appkeyTest      = "dz_bxh_wcs_cs";  // 测试环境AppKey
+        m_config.appkey          = "dz_bxh_wcs_zs";  // 正式环境AppKey
         m_config.saveToFile(configPath);
         return true;
     }
