@@ -1,21 +1,23 @@
 // ============================================================================
-// WMS退货HTTP服务 — 独立应用程序入口
+// WMS退货分拣HTTP服务 — 独立应用程序入口
 //
 // 单端口架构:
 //   8191: 对外接收WMS推送及提供查询API
-//        (POST /api/.../InsertWaveInfo, GET /api/query,
-//         POST /api/markSorted, POST /api/markException, GET /api/waveStatus)
+//
+// 有效API接口（仅WMS系统调用）:
+//   POST /api/DispatchSortingCommand/InsertWaveInfo          — WMS推送波次数据（含条码-格口映射）
+//   POST /api/DispatchSortingCommand/BindingLatticePort      — WMS绑定容器号到格口
+//   POST /api/DispatchSortingCommand/InsertWaveIn            — WMS退货任务取消
 //
 // 日志系统:
-//   hlog (log4cxx) → ./log/WCS/WCS.log            (WCS_INFO)
-//                   → ./log/HTTP/http.log          (HTTP_INFO)
-//                   → ./log/Run/run.log            (LOG_INFO)
-//                   → ./log/PLC/PLC.log            (PLC_INFO)
-//                   → ./log/LIFECYCLE/lifecycle.log (LIFE_LOG)
-//                   → ./log/JT/JT.log              (JT_INFO)
-//                   → ./log/DataBase/data.log      (Data_INFO)
-//                   → ./log/Image/data.log         (ImageSave_INFO)
-//                   → ./log/PLCWarn/PLCWarn.log    (PLCWarn_INFO)
+//   hlog (log4cxx) → ./log/WCS/WCS.log  (WCS_INFO)
+//                   → ./log/HTTP/http.log (HTTP_INFO)
+//                   → ./log/Run/run.log              (LOG_INFO)
+//                   → ./log/PLC/PLC.log              (PLC_INFO)
+//                   → ./log/LIFECYCLE/lifecycle.log   (LIFE_LOG)
+// ============================================================================
+//                   → ./log/Image/data.log            (ImageSave_INFO)
+//                   → ./log/PLCWarn/PLCWarn.log        (PLCWarn_INFO)
 // ============================================================================
 
 #include <QApplication>

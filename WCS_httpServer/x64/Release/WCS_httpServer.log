@@ -1,0 +1,38 @@
+﻿  Reading Qt configuration (D:/Qt/5.15.2/msvc2019_64/bin/qmake)
+  uic WCS_httpServer.ui
+  rcc WCS_httpServer.qrc
+  moc WCS_httpServer.h
+  moc ConfigManager.h
+  moc LifecycleLogger.h
+  moc log_center.h
+  moc WaveManager.h
+  moc ParseWorker.h
+   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
+  moc PlcManager.h
+  moc MainWindow.h
+  moc HttpServer.h
+  moc HttpClient.h
+  ConfigManager.cpp
+  HttpClient.cpp
+  HttpServer.cpp
+  log_center.cpp
+  MainWindow.cpp
+  ParseWorker.cpp
+  PlcManager.cpp
+  SiemensPLC.cpp
+  snap7.cpp
+  WaveManager.cpp
+  WCS_httpServer.cpp
+  main.cpp
+  qrc_WCS_httpServer.cpp
+  moc_WCS_httpServer.cpp
+  moc_ConfigManager.cpp
+  moc_LifecycleLogger.cpp
+  moc_log_center.cpp
+  moc_WaveManager.cpp
+  moc_ParseWorker.cpp
+  moc_PlcManager.cpp
+  moc_MainWindow.cpp
+  moc_HttpServer.cpp
+  moc_HttpClient.cpp
+  WCS_httpServer.vcxproj -> D:\WCS\WCSApp\WCS_httpServer\release_WcsHttpServer\WCS_httpServer.exe

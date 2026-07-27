@@ -26,6 +26,8 @@
 #include <QSpinBox>
 #include <QLineEdit>
 #include <QCheckBox>
+#include <QAtomicInteger>
+#include <QMutex>
 #include "HttpServer.h"
 #include "HttpClient.h"
 #include "PlcManager.h"
@@ -48,13 +50,14 @@ private slots:
     void onSaveConfig();      // 保存配置到XML
     void onClearLog();        // 清空日志窗口
     void onRefreshTimer();    // 每秒定时刷新UI
+    void flushLogBuffer();    // 定时批量刷新日志到UI（防高频卡死）
 
 private:
     void setupUI();           // 构建所有UI控件
     void setupConnections();  // 连接信号槽
     void applyConfig();       // 从ConfigManager读取配置填充UI
     void appendLog(const QString& msg, bool isError = false);  // 追加日志到窗口
-    void updateStatusBar();   // 更新顶部状态条
+    //void updateStatusBar();   // 更新顶部状态条
     void updateWavePanel();   // 更新波次信息面板
     void updatePlcPanel();    // 刷新PLC状态面板（连接数/收发统计/运行时间）
 
@@ -67,12 +70,30 @@ private:
     QPushButton* m_btnStartStop    = nullptr;  // 启动/停止按钮
     QLabel*      m_lblServerStatus = nullptr;  // 服务状态指示（●运行中/○已停止）
     QLabel*      m_lblPort         = nullptr;  // 监听端口显示
-    QLabel*      m_lblPlcStatus    = nullptr;  // PLC连接状态文字
 
-    // ──── PLC状态面板 UI ────
-    QLabel*      m_lblPlcConnCount = nullptr;  // PLC连接客户端数量
-    QLabel*      m_lblPlcSendRecv  = nullptr;  // 发送/接收计数
-    QLabel*      m_lblPlcUptime    = nullptr;  // PLC服务运行时长
+    // ──── TCP 连接状态 UI ────
+    QLabel*      m_lblTcpStatus    = nullptr;  // TCP连接状态
+    QLabel*      m_lblTcpIp        = nullptr;  // TCP客户端IP
+    QLabel*      m_lblTcpUptime    = nullptr;  // 运行时长
+    QLabel*      m_lblTcpSend      = nullptr;  // TCP发送统计
+    QLabel*      m_lblTcpSendErr   = nullptr;  // TCP发送失败统计
+    QLabel*      m_lblTcpRecv      = nullptr;  // TCP接收统计
+    QLabel*      m_lblTcpConnCount = nullptr;  // TCP客户端连接数
+
+    // ──── S7 连接状态 UI ────
+    QLabel*      m_lblS7Status     = nullptr;  // S7连接状态
+    QLabel*      m_lblS7Ip         = nullptr;  // S7 PLC IP
+    QLabel*      m_lblS7Send       = nullptr;  // S7发送统计
+    QLabel*      m_lblS7SendErr    = nullptr;  // S7发送失败统计
+    QLabel*      m_lblS7LockGrids  = nullptr;  // S7锁格数量
+
+    // ──── 最近数据 UI ────
+    QLabel*      m_lblLastSendCode = nullptr;  // 最近发送条码
+    QLabel*      m_lblLastSendGrid = nullptr;  // 最近发送格口
+    QLabel*      m_lblLastSendTime = nullptr;  // 最近发送时间
+    QLabel*      m_lblLastRecvCode = nullptr;  // 最近接收条码
+    QLabel*      m_lblLastRecvGrid = nullptr;  // 最近接收格口
+    QLabel*      m_lblLastRecvTime = nullptr;  // 最近接收时间
 
     // ──── 波次面板 UI ────
     QLabel*      m_lblWaveCode     = nullptr;  // 当前波次号
@@ -91,9 +112,15 @@ private:
     QLineEdit*   m_editAppkey      = nullptr;  // AppKey编辑框
     QCheckBox*   m_chkTestEnv      = nullptr;  // 测试环境复选框
     QSpinBox*    m_spinTimeout     = nullptr;  // 波次超时设置（分钟）
+    QPushButton* m_btnSave         = nullptr;  // 保存配置按钮
 
     // ──── 日志区 ────
     QTextEdit*   m_txtLog = nullptr;           // 运行日志文本框
+
+    // ──── 日志缓冲（防高频卡死） ────
+    QStringList  m_logBuffer;                  // 日志消息缓冲队列
+    QMutex       m_logMutex;                   // 缓冲队列互斥锁（备而不用，当前appendLog在主线程）
+    QTimer*      m_logFlushTimer = nullptr;    // 日志刷新定时器（100ms，批量刷新）
 
     // ──── 定时器 ────
     QTimer*      m_timerRefresh = nullptr;     // UI刷新定时器（每秒）
@@ -101,4 +128,5 @@ private:
     // ──── 状态 ────
     bool         m_bRunning = false;           // 服务运行状态
     int          m_reportRetryCount = 0;       // 手动回传重试计数（预留，当前未使用）
+    QAtomicInteger<qint64> m_plcFeedbackCount{0}; // ★ PLC反馈计数（无锁，高并发安全）
 };

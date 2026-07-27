@@ -1,0 +1,31 @@
+QMAKE_CXX.QT_COMPILER_STDCXX = 199711L
+QMAKE_CXX.QMAKE_MSC_VER = 1929
+QMAKE_CXX.QMAKE_MSC_FULL_VER = 192930159
+QMAKE_CXX.COMPILER_MACROS = \
+    QT_COMPILER_STDCXX \
+    QMAKE_MSC_VER \
+    QMAKE_MSC_FULL_VER
+QMAKE_CXX.INCDIRS = \
+    D:\\WCS\\WCSApp\\WCS_httpServer\\include\\HPSocket \
+    D:\\WCS\\WCSApp\\WCS_httpServer\\include\\hlog \
+    D:\\WCS\\WCSApp\\WCS_httpServer\\include\\log4cxx \
+    D:\\vs2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include \
+    D:\\vs2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\atlmfc\\include \
+    D:\\vs2019\\Community\\VC\\Auxiliary\\VS\\include \
+    "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\ucrt" \
+    D:\\vs2019\\Community\\VC\\Auxiliary\\VS\\UnitTest\\include \
+    "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\um" \
+    "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared" \
+    "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\winrt" \
+    "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\cppwinrt" \
+    "C:\\Program Files (x86)\\Windows Kits\\NETFXSDK\\4.8\\Include\\um"
+QMAKE_CXX.LIBDIRS = \
+    D:\\Qt\\5.15.2\\msvc2019_64\\lib \
+    D:\\WCS\\WCSApp\\WCS_httpServer\\lib \
+    D:\\vs2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\lib\\x64 \
+    D:\\vs2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\atlmfc\\lib\\x64 \
+    D:\\vs2019\\Community\\VC\\Auxiliary\\VS\\lib\\x64 \
+    "C:\\Program Files (x86)\\Windows Kits\\10\\lib\\10.0.22621.0\\ucrt\\x64" \
+    D:\\vs2019\\Community\\VC\\Auxiliary\\VS\\UnitTest\\lib \
+    "C:\\Program Files (x86)\\Windows Kits\\10\\lib\\10.0.22621.0\\um\\x64" \
+    "C:\\Program Files (x86)\\Windows Kits\\NETFXSDK\\4.8\\lib\\um\\x64"

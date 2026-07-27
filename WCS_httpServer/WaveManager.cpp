@@ -178,7 +178,18 @@ WaveSnapshot WaveManager::snapshot() const
     snap.orderQty      = m_orderQty;
     snap.waveStatus    = m_waveStatus;
     snap.statusText    = WaveSnapshot::statusToString(m_waveStatus);
-    snap.skuCount      = m_pBuffer->size();
+
+    // 优先从 GridEntry 读取批次信息（与条码查询结果一致）
+    const QMap<QString, GridEntry>* pMap = m_pBuffer->activeMap();
+    if (pMap && !pMap->isEmpty())
+    {
+        snap.skuCount = pMap->constBegin().value().skuCount;
+    }
+    else
+    {
+        snap.skuCount = m_pBuffer->size();
+    }
+
     snap.sumLocation   = sumLocation();
 
     {

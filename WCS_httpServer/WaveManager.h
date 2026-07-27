@@ -57,13 +57,13 @@ struct WaveSnapshot
     static QString statusToString(int s)
     {
         switch (s) {
-        case WAVE_IDLE:       return QString::fromUtf8("\u7a7a\u95f2");      // 空闲
-        case WAVE_RECEIVED:   return QString::fromUtf8("\u5df2\u63a5\u6536"); // 已接收
-        case WAVE_SORTING:    return QString::fromUtf8("\u5206\u62e3\u4e2d"); // 分拣中
-        case WAVE_COMPLETING: return QString::fromUtf8("\u56de\u4f20\u4e2d"); // 回传中
-        case WAVE_CLEANED:    return QString::fromUtf8("\u5df2\u5b8c\u6210"); // 已完成
-        case WAVE_ERROR:      return QString::fromUtf8("\u5f02\u5e38");       // 异常
-        default:              return QString::fromUtf8("\u672a\u77e5");       // 未知
+        case WAVE_IDLE:       return QString::fromUtf8("空闲");       // 空闲
+        case WAVE_RECEIVED:   return QString::fromUtf8("已接收");     // 已接收
+        case WAVE_SORTING:    return QString::fromUtf8("分拣中");     // 分拣中
+        case WAVE_COMPLETING: return QString::fromUtf8("回传中");     // 回传中
+        case WAVE_CLEANED:    return QString::fromUtf8("已完成");     // 已完成
+        case WAVE_ERROR:      return QString::fromUtf8("异常");       // 异常
+        default:              return QString::fromUtf8("未知");       // 未知
         }
     }
 };
@@ -78,6 +78,18 @@ public:
     GridEntry getGrid(const QString& code) const { return m_pBuffer->get(code); }
     bool      contains(const QString& code) const { return m_pBuffer->contains(code); }
     int       gridCount() const { return m_pBuffer->size(); }
+
+    // 获取波次中所有条码列表（快照诊断用）
+    QStringList allCodes() const
+    {
+        QStringList codes;
+        const QMap<QString, GridEntry>* pMap = m_pBuffer->activeMap();
+        if (pMap) {
+            for (auto it = pMap->constBegin(); it != pMap->constEnd(); ++it)
+                codes.append(it.key());
+        }
+        return codes;
+    }
 
     // ──── 波次数据设置（ParseWorker解析完成后调用）────
     void setWaveData(const QString& orderCode, int orderQty, int skuCount);

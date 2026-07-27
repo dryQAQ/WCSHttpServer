@@ -48,12 +48,12 @@ void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
 
     // ──── 构造回传 JSON（格式由WMS接口文档定义）────
     QJsonObject head;
-    head["orderCode"]     = orderCode;                                               // 波次号
-    head["orderType"]     = "02";                                                     // 业务类型：02=退货分类
-    head["sumLocation"]   = QString::number(sumLocation);                            // 使用的格口总数
-    head["operuserDate"]  = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"); // 操作时间
-    head["operuserCode"]  = "admin";                                                  // 操作人编码（固定值，WMS接口要求）
-    head["operuserName"]  = QString::fromUtf8("\u7ba1\u7406\u5458");                 // 操作人名称=管理员（固定值，WMS接口要求）
+    head["orderCode"]     = orderCode;                                    // 波次号
+    head["orderType"]     = WMS_ORDER_TYPE;                              // 业务类型（define.h: 02=退货分类）
+    head["sumLocation"]   = QString::number(sumLocation);                // 使用的格口总数
+    head["operuserDate"]  = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    head["operuserCode"]  = WMS_OPERUSER_CODE;                           // 操作人编码（define.h）
+    head["operuserName"]  = QString::fromUtf8(WMS_OPERUSER_NAME);        // 操作人名称（define.h）
 
     QJsonObject req;
     req["head"] = head;

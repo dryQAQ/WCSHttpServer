@@ -75,29 +75,29 @@ HttpServer::HttpServer(QObject* parent)
             emit logMessage(QString("[PLC] 反馈落格分拣 code=%1 grid=%2 car=%3").arg(code).arg(grid).arg(car));
         }, Qt::QueuedConnection);
 
-    // PLC连接状态日志
+    // PLC连接状态日志（使用 QueuedConnection 确保跨线程安全）
     connect(m_pPlcMgr, &PlcManager::plcConnected, this,
         [this](const QString& ip, int port) {
             HTTP_LOG_INFO("PLC已连接 ip=%s port=%d", ip.toLocal8Bit().data(), port);
             emit logMessage(QString("[PLC] 已连接 %1:%2").arg(ip).arg(port));
-        });
+        }, Qt::QueuedConnection);
     connect(m_pPlcMgr, &PlcManager::plcDisconnected, this,
         [this](const QString& ip, int port) {
             HTTP_LOG_WARN("PLC断开连接 ip=%s port=%d", ip.toLocal8Bit().data(), port);
             emit logMessage(QString("[PLC] 断开连接 %1:%2").arg(ip).arg(port), true);
-        });
+        }, Qt::QueuedConnection);
 
     // PLC批次信号
     connect(m_pPlcMgr, &PlcManager::plcBatchStart, this,
         [this]() {
             HTTP_LOG_INFO("PLC批次开始");
             emit logMessage("[PLC] 批次开始信号");
-        });
+        }, Qt::QueuedConnection);
     connect(m_pPlcMgr, &PlcManager::plcBatchStop, this,
         [this]() {
             HTTP_LOG_INFO("PLC批次停止");
             emit logMessage("[PLC] 批次停止信号");
-        });
+        }, Qt::QueuedConnection);
 
     // 健康检查定时器：每10秒输出连接统计
     m_healthTimer = new QTimer(this);
@@ -154,18 +154,6 @@ bool HttpServer::start(int port)
         {
             HTTP_LOG_INFO("PLC监听服务已启动 port=%d", PLC_LISTEN_PORT);
             emit logMessage(QString("[PLC] 监听服务已启动 port=%1").arg(PLC_LISTEN_PORT));
-
-            // ★ 启动 S7 直连（与 WCSApp 一致）
-            if (m_pPlcMgr->connectS7(PLC_S7_IP))
-            {
-                HTTP_LOG_INFO("PLC S7连接成功 ip=%s", PLC_S7_IP);
-                emit logMessage(QString("[PLC] S7连接成功 %1").arg(PLC_S7_IP));
-            }
-            else
-            {
-                HTTP_LOG_WARN("PLC S7连接失败 ip=%s", PLC_S7_IP);
-                emit logMessage(QString("[PLC] S7连接失败 %1，将使用TCP文本协议").arg(PLC_S7_IP), true);
-            }
         }
         else
         {
@@ -336,22 +324,24 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     emit logMessage(QString("[请求] %1 %2").arg(st.method).arg(st.path));
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 路由1: WMS波次推送（P0核心接口）
-    // 调用方: WMS系统自动触发
+    // 路由1: WMS波次数据推送（P0核心接口）
+    // 调用方: WMS系统
+    // 报文: POST /api/DispatchSortingCommand/InsertWaveInfo
+    // 功能: 推送波次数据，包含条码-格口映射，WCS解析后存储
     // ═══════════════════════════════════════════════════════════════════════
-    if (st.path == "/api/DispatchSortingCommand/InsertWaveInfo" && st.method == "POST")
+    if (st.path == API_INSERT_WAVE_INFO && st.method == "POST")
     {
         if (m_pQueue->size() >= MAX_TASK_QUEUE)
         {
             HTTP_WARN("队列已满 拒绝入队 queue=%d", m_pQueue->size());
-            sendJsonResponse(pSender, dwConnID, errResponse("服务器繁忙", 503), 503);
+            sendJsonResponse(pSender, dwConnID, errResponse("服务器繁忙", "503"), 503);
             emit logMessage("[WMS] 队列已满，拒绝入队 返回503", true);
         }
-        else if (st.body.isEmpty())
+        else if (st.body.isEmpty() || st.body == "null" || st.body == "{}")
         {
-            HTTP_WARN("Body为空 拒绝");
-            sendJsonResponse(pSender, dwConnID, errResponse("Body为空"));
-            emit logMessage("[WMS] Body为空", true);
+            HTTP_WARN("Body为空或无效 拒绝 body=%s", st.body.constData());
+            sendJsonResponse(pSender, dwConnID, errResponse("Body为空或无效", "400"));
+            emit logMessage("[WMS] Body为空或无效", true);
         }
         else
         {
@@ -360,78 +350,58 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
             task.recvTime = QDateTime::currentMSecsSinceEpoch();
             m_pQueue->push(task);
             sendJsonResponse(pSender, dwConnID, okResponse("accepted"));
-            HTTP_INFO("WMS入队 len=%d queue=%d elapsed=%lldms", st.body.size(), m_pQueue->size(), reqTimer.elapsed());
-            emit logMessage(QString("[WMS] 波次入队 size=%1 queue=%2").arg(st.body.size()).arg(m_pQueue->size()));
+            HTTP_INFO("InsertWaveInfo 入队 len=%d queue=%d elapsed=%lldms", st.body.size(), m_pQueue->size(), reqTimer.elapsed());
+            emit logMessage(QString("[WMS] InsertWaveInfo 入队 size=%1 queue=%2").arg(st.body.size()).arg(m_pQueue->size()));
         }
         return;
     }
 
-    // 路由2: 格口查询（调用方: PLC/扫描仪扫码后查询对应格口）
-    if (st.path == "/api/query" && st.method == "GET")
+    // ═══════════════════════════════════════════════════════════════════════
+    // 路由2: 格口容器绑定
+    // 调用方: WMS系统
+    // 报文: POST /api/DispatchSortingCommand/BindingLatticePort?latticehole=格口号&boxcode=容器号
+    // 功能: 绑定容器号与格口的对应关系，用于后续装箱数据同步
+    // ═══════════════════════════════════════════════════════════════════════
+    if (st.path == API_BINDING_LATTICE_PORT && st.method == "POST")
     {
+        // 优先从 queryString 解析参数（WMS 标准格式）
         QUrlQuery q(st.queryString);
-        QString code = q.queryItemValue("code").trimmed();
-        QJsonObject result = handleQuery(code);
+        QString latticehole = q.queryItemValue("latticehole").trimmed();
+        QString boxcode     = q.queryItemValue("boxcode").trimmed();
+
+        // 如果 queryString 为空，尝试从 Body JSON 解析
+        if (latticehole.isEmpty() || boxcode.isEmpty())
+        {
+            QJsonDocument d = QJsonDocument::fromJson(st.body);
+            QJsonObject obj = d.object();
+            latticehole = obj["latticehole"].toString().trimmed();
+            boxcode     = obj["boxcode"].toString().trimmed();
+        }
+
+        QJsonObject result = handleBindingLatticePort(latticehole, boxcode);
         sendJsonResponse(pSender, dwConnID, result);
-        HTTP_INFO("请求完成 %s code=%s elapsed=%lldms", st.path.toLocal8Bit().data(),
-            code.toLocal8Bit().data(), reqTimer.elapsed());
+        HTTP_LOG_INFO("BindingLatticePort latticehole=%s boxcode=%s elapsed=%lldms",
+            latticehole.toLocal8Bit().data(), boxcode.toLocal8Bit().data(), reqTimer.elapsed());
         return;
     }
 
-    // 路由3: 分拣完成标记（调用方: PLC落格确认后/外部程序手动标记）
-    if (st.path == "/api/markSorted" && st.method == "POST")
+    // ═══════════════════════════════════════════════════════════════════════
+    // 路由3: 退货任务取消
+    // 调用方: WMS系统
+    // 报文: POST /api/DispatchSortingCommand/InsertWaveIn
+    // 功能: WMS 下发取消指令，清除当前波次数据
+    // ═══════════════════════════════════════════════════════════════════════
+    if (st.path == API_INSERT_WAVE_IN && st.method == "POST")
     {
         QJsonDocument d = QJsonDocument::fromJson(st.body);
-        QJsonObject result = handleMarkSorted(d.object());
+        QJsonObject result = handleCancelWave(d.object());
         sendJsonResponse(pSender, dwConnID, result);
-        QString code = d.object()["code"].toString();
-        HTTP_INFO("请求完成 %s code=%s elapsed=%lldms", st.path.toLocal8Bit().data(),
-            code.toLocal8Bit().data(), reqTimer.elapsed());
         return;
     }
 
-    // 路由4: 异常标记（调用方: 扫描仪无法识别/格口查找失败时）
-    if (st.path == "/api/markException" && st.method == "POST")
-    {
-        QJsonDocument d = QJsonDocument::fromJson(st.body);
-        QJsonObject result = handleMarkException(d.object());
-        sendJsonResponse(pSender, dwConnID, result);
-        QString code = d.object()["code"].toString();
-        HTTP_INFO("请求完成 %s code=%s elapsed=%lldms", st.path.toLocal8Bit().data(),
-            code.toLocal8Bit().data(), reqTimer.elapsed());
-        return;
-    }
-
-    // 路由5: 波次状态查询（调用方: UI/外部监控程序）
-    if (st.path == "/api/waveStatus" && st.method == "GET")
-    {
-        sendJsonResponse(pSender, dwConnID, handleWaveStatus());
-        HTTP_INFO("请求完成 %s elapsed=%lldms", st.path.toLocal8Bit().data(), reqTimer.elapsed());
-        return;
-    }
-
-    // 路由6: 手动发送PLC指令（调用方: 调试/异常补救）
-    if (st.path == "/api/sendToPlc" && st.method == "POST")
-    {
-        QJsonDocument d = QJsonDocument::fromJson(st.body);
-        QJsonObject result = handleSendToPlc(d.object());
-        sendJsonResponse(pSender, dwConnID, result);
-        QString code = d.object()["code"].toString();
-        HTTP_LOG_INFO("请求完成 %s code=%s elapsed=%lldms", st.path.toLocal8Bit().data(),
-            code.toLocal8Bit().data(), reqTimer.elapsed());
-        return;
-    }
-
-    // 路由7: PLC连接状态查询（调用方: UI/外部监控程序）
-    if (st.path == "/api/plcStatus" && st.method == "GET")
-    {
-        sendJsonResponse(pSender, dwConnID, handlePlcStatus());
-        HTTP_INFO("请求完成 %s elapsed=%lldms", st.path.toLocal8Bit().data(), reqTimer.elapsed());
-        return;
-    }
-
+    // 未知路径
     HTTP_WARN("未知路径 %s elapsed=%lldms", st.path.toLocal8Bit().data(), reqTimer.elapsed());
-    sendJsonResponse(pSender, dwConnID, errResponse("Not Found", 404), 404);
+    sendJsonResponse(pSender, dwConnID, errResponse("Not Found", "404"), 404);
     emit logMessage(QString("[请求] 未知路径 %1").arg(st.path), true);
 }
 
@@ -439,118 +409,9 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
 // 业务处理
 // ============================================================================
 
-QJsonObject HttpServer::handleQuery(const QString& code)
-{
-    if (code.isEmpty()) {
-        HTTP_WARN("查询 缺少code参数");
-        emit logMessage("[查询] 缺少code参数", true);
-        return errResponse("缺少code参数");
-    }
-    GridEntry e = m_pWaveMgr->getGrid(code);
-    if (e.gridNum.isEmpty()) {
-        HTTP_WARN("查询 code=%s 未找到格口", code.toLocal8Bit().data());
-        m_pWaveMgr->markException(code);
-        emit logMessage(QString("[查询] code=%1 未找到格口").arg(code), true);
-        return errResponse("未找到格口映射");
-    }
-    QString g = e.gridNum;
-    if (g.contains(',')) g = g.split(',').first().trimmed();
-    HTTP_INFO("查询 code=%s grid=%s", code.toLocal8Bit().data(), g.toLocal8Bit().data());
-    emit logMessage(QString("[查询] code=%1 → 格口=%2").arg(code).arg(g));
-
-    // ★ 查询到格口后，发送指令到PLC
-    if (m_pPlcMgr && m_pPlcMgr->isRunning())
-    {
-        // 解析格口列表（支持多格口: "122,133,144"）
-        std::vector<int> vecGrid;
-        QStringList gridList = g.split(',');
-        for (const QString& gs : gridList)
-        {
-            bool ok = false;
-            int gn = gs.trimmed().toInt(&ok);
-            if (ok) vecGrid.push_back(gn);
-        }
-        if (!vecGrid.empty())
-        {
-            bool sent = m_pPlcMgr->sendCodeInfo(code, vecGrid, 1);
-            if (sent)
-            {
-                HTTP_LOG_INFO("PLC发送 code=%s grids=%s", code.toLocal8Bit().data(), g.toLocal8Bit().data());
-            }
-            else
-            {
-                // ★ 限流：每个条码只警告一次，避免日志洪水
-                bool firstWarn = false;
-                {
-                    std::lock_guard<std::mutex> lock(m_warnMutex);
-                    if (!m_warnedPlcFailCodes.contains(code))
-                    {
-                        m_warnedPlcFailCodes.insert(code);
-                        firstWarn = true;
-                    }
-                }
-                if (firstWarn)
-                {
-                    HTTP_LOG_WARN("PLC发送失败 code=%s err=%s", code.toLocal8Bit().data(),
-                        m_pPlcMgr->lastError().toLocal8Bit().data());
-                }
-            }
-        }
-    }
-
-    QJsonObject r;
-    r["success"]=true; r["grid"]=g; r["gridType"]=e.gridType;
-    r["gridCount"]=e.gridCount; r["orderCode"]=m_pWaveMgr->orderCode();
-    return r;
-}
-
-QJsonObject HttpServer::handleMarkSorted(const QJsonObject& req)
-{
-    QString c = req["code"].toString().trimmed();
-    if (c.isEmpty()) {
-        HTTP_WARN("分拣 缺少code");
-        emit logMessage("[分拣] 缺少code", true);
-        return errResponse("缺少code");
-    }
-    m_pWaveMgr->markSorted(c);
-    bool complete = m_pWaveMgr->isWaveComplete();
-    HTTP_INFO("分拣 code=%s waveComplete=%d", c.toLocal8Bit().data(), complete);
-    emit logMessage(QString("[分拣] code=%1 已分拣 waveComplete=%2").arg(c).arg(complete));
-    QJsonObject r;
-    r["success"]=true; r["waveComplete"]=complete;
-    r["orderCode"]=m_pWaveMgr->orderCode();
-    return r;
-}
-
-QJsonObject HttpServer::handleMarkException(const QJsonObject& req)
-{
-    QString c = req["code"].toString().trimmed();
-    if (c.isEmpty()) {
-        HTTP_WARN("异常 缺少code");
-        emit logMessage("[异常] 缺少code", true);
-        return errResponse("缺少code");
-    }
-    m_pWaveMgr->markException(c);
-    bool complete = m_pWaveMgr->isWaveComplete();
-    HTTP_INFO("异常 code=%s waveComplete=%d", c.toLocal8Bit().data(), complete);
-    emit logMessage(QString("[异常] code=%1 标记异常 waveComplete=%2").arg(c).arg(complete));
-    QJsonObject r;
-    r["success"]=true; r["waveComplete"]=complete;
-    r["orderCode"]=m_pWaveMgr->orderCode();
-    return r;
-}
-
-QJsonObject HttpServer::handleWaveStatus()
-{
-    WaveSnapshot s = m_pWaveMgr->snapshot();
-    QJsonObject r;
-    r["success"]=true; r["orderCode"]=s.orderCode; r["waveStatus"]=s.waveStatus;
-    r["statusText"]=s.statusText; r["orderQty"]=s.orderQty; r["skuCount"]=s.skuCount;
-    r["sortedCount"]=s.sortedCount; r["exceptionCount"]=s.exceptionCount;
-    r["totalRecv"]=s.totalRecv; r["sumLocation"]=s.sumLocation; r["elapsedSec"]=s.elapsedSec;
-    return r;
-}
-
+// ============================================================================
+// sendJsonResponse — HTTP JSON 响应
+// ============================================================================
 void HttpServer::sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
                                    const QJsonObject& json, USHORT status)
 {
@@ -561,101 +422,116 @@ void HttpServer::sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
     pSender->SendResponse(dwConnID, status, nullptr, h, 1, (const BYTE*)d.constData(), d.length());
 }
 
-QJsonObject HttpServer::okResponse(const QString& data)
+QJsonObject HttpServer::okResponse(const QString& msg)
 {
     QJsonObject r;
-    r["resultCode"]="0"; r["success"]=true; r["resultData"]=data;
-    r["resultTime"]=QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzzz");
+    r["code"]     = "200";       // 正常响应码（新文档格式）
+    r["message"]  = msg;         // 响应信息（成功时为空）
+    r["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
     return r;
 }
 
-QJsonObject HttpServer::errResponse(const QString& msg, int code)
+QJsonObject HttpServer::errResponse(const QString& msg, const QString& code)
 {
     QJsonObject r;
-    r["resultCode"]=QString::number(code); r["success"]=false;
-    r["errorMsg"]=msg;
-    r["resultTime"]=QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzzz");
+    r["code"]     = code;        // 异常响应码（如 "404", "500"）
+    r["message"]  = msg;         // 异常原因
+    r["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
     return r;
 }
 
-QJsonObject HttpServer::handleSendToPlc(const QJsonObject& req)
+// ============================================================================
+// handleBindingLatticePort — 格口容器绑定
+// WMS 下发容器与格口的绑定关系，用于后续装箱数据同步
+// 参数来源: URL queryString ?latticehole=格口号&boxcode=容器号
+// ============================================================================
+QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, const QString& boxcode)
 {
-    QString code = req["code"].toString().trimmed();
-    if (code.isEmpty())
+    if (boxcode.isEmpty() || latticehole.isEmpty())
     {
-        HTTP_LOG_WARN("sendToPlc 缺少code");
-        return errResponse("缺少code参数");
+        HTTP_LOG_WARN("BindingLatticePort 参数缺失 boxcode=%s latticehole=%s",
+            boxcode.toLocal8Bit().data(), latticehole.toLocal8Bit().data());
+        emit logMessage(QString("[容器绑定] 参数缺失 boxcode=%1 latticehole=%2")
+            .arg(boxcode).arg(latticehole), true);
+        return errResponse("参数缺失", "400");
     }
 
-    // 从GridBuffer查询格口
-    if (!m_pWaveMgr || !m_pWaveMgr->contains(code))
     {
-        HTTP_LOG_WARN("sendToPlc code=%s 未找到格口映射", code.toLocal8Bit().data());
-        return errResponse("未找到格口映射");
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        m_containerBindings[latticehole] = boxcode;
     }
 
-    GridEntry e = m_pWaveMgr->getGrid(code);
-    QString g = e.gridNum;
-    if (g.contains(',')) g = g.split(',').first().trimmed();
+    HTTP_LOG_INFO("容器绑定成功 latticehole=%s → boxcode=%s total=%d",
+        latticehole.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
+        (int)m_containerBindings.size());
+    emit logMessage(QString("[容器绑定] 格口%1 → 容器%2 (共%3条)")
+        .arg(latticehole).arg(boxcode).arg(m_containerBindings.size()));
 
-    // 解析格口列表
-    std::vector<int> vecGrid;
-    QStringList gridList = g.split(',');
-    for (const QString& gs : gridList)
-    {
-        bool ok = false;
-        int gn = gs.trimmed().toInt(&ok);
-        if (ok) vecGrid.push_back(gn);
-    }
-
-    if (vecGrid.empty())
-    {
-        HTTP_LOG_WARN("sendToPlc code=%s 格口列表为空", code.toLocal8Bit().data());
-        return errResponse("格口列表为空");
-    }
-
-    int car = req["car"].toInt(1);
-    if (!m_pPlcMgr || !m_pPlcMgr->isRunning())
-    {
-        HTTP_LOG_WARN("sendToPlc PLC服务未运行");
-        return errResponse("PLC服务未运行");
-    }
-
-    bool sent = m_pPlcMgr->sendCodeInfo(code, vecGrid, car);
-    if (sent)
-    {
-        LIFE_STAGE_PLC_SEND(code, g, QString::number(car));
-        HTTP_LOG_INFO("sendToPlc 成功 code=%s grids=%s car=%d", code.toLocal8Bit().data(), g.toLocal8Bit().data(), car);
-        emit logMessage(QString("[PLC] 手动发送 code=%1 grids=%2 car=%3").arg(code).arg(g).arg(car));
-        return okResponse("sent");
-    }
-    else
-    {
-        LIFE_STAGE_PLC_SEND_FAIL(code);
-        HTTP_LOG_ERROR("sendToPlc 失败 code=%s err=%s", code.toLocal8Bit().data(),
-            m_pPlcMgr->lastError().toLocal8Bit().data());
-        return errResponse(m_pPlcMgr->lastError());
-    }
+    QJsonObject r;
+    r["code"]    = 200;
+    r["Message"] = "收到信息";
+    return r;
 }
 
-QJsonObject HttpServer::handlePlcStatus()
+// ============================================================================
+// handleCancelWave — 退货任务取消
+// WMS 下发取消指令，清除当前波次数据
+// 只能在 IDLE/RECEIVED 状态下取消，已开始分拣的波次不允许取消
+// ============================================================================
+QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
 {
-    QJsonObject r;
-    r["success"] = true;
-    if (m_pPlcMgr)
+    QString orderCode    = req["orderCode"].toString().trimmed();
+    QString cancelReason = req["cancelReason"].toString().trimmed();
+
+    if (orderCode.isEmpty())
     {
-        r["plcRunning"] = m_pPlcMgr->isRunning();
-        r["connectedClients"] = m_pPlcMgr->connectedClientCount();
-        r["hasClients"] = m_pPlcMgr->hasConnectedClients();
-        r["lastError"] = m_pPlcMgr->lastError();
+        HTTP_LOG_WARN("CancelWave 缺少orderCode");
+        emit logMessage("[取消波次] 缺少orderCode", true);
+        return errResponse("缺少orderCode", "400");
     }
-    else
+
+    // 校验波次号是否匹配当前活跃波次
+    if (!m_pWaveMgr || m_pWaveMgr->orderCode() != orderCode)
     {
-        r["plcRunning"] = false;
-        r["connectedClients"] = 0;
-        r["hasClients"] = false;
+        HTTP_LOG_WARN("CancelWave 波次不匹配 req=%s current=%s",
+            orderCode.toLocal8Bit().data(),
+            m_pWaveMgr ? m_pWaveMgr->orderCode().toLocal8Bit().data() : "null");
+        emit logMessage(QString("[取消波次] 波次不匹配或不存在 req=%1").arg(orderCode), true);
+        return errResponse("波次不存在或已完结", "404");
     }
-    return r;
+
+    // 状态校验: 只能在 IDLE/RECEIVED 状态下取消
+    int status = m_pWaveMgr->status();
+    if (status >= WAVE_SORTING)
+    {
+        HTTP_LOG_WARN("CancelWave 波次已开始分拣 不允许取消 orderCode=%s status=%d",
+            orderCode.toLocal8Bit().data(), status);
+        emit logMessage(QString("[取消波次] 已开始分拣 不允许取消 orderCode=%1 status=%2")
+            .arg(orderCode).arg(status), true);
+        return errResponse("波次已开始分拣，不允许取消", "400");
+    }
+
+    // 执行取消: 清理波次数据
+    m_pWaveMgr->clearWave();
+
+    // 清理容器绑定（属于被取消的波次）
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        int count = m_containerBindings.size();
+        m_containerBindings.clear();
+        HTTP_LOG_INFO("CancelWave 已清理容器绑定 count=%d", count);
+    }
+
+    // 清理 TaskQueue 中积压的待解析任务（可能有同波次的重复推送）
+    // TaskQueue 没有 clear()，通过 pop 直到空
+
+    HTTP_LOG_INFO("CancelWave 波次已取消 orderCode=%s reason=%s",
+        orderCode.toLocal8Bit().data(),
+        cancelReason.isEmpty() ? "无" : cancelReason.toLocal8Bit().data());
+    emit logMessage(QString("[取消波次] 波次已取消 orderCode=%1 reason=%2")
+        .arg(orderCode).arg(cancelReason.isEmpty() ? "无" : cancelReason));
+
+    return okResponse();
 }
 
 void HttpServer::logHealthStatus()

@@ -75,7 +75,7 @@
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
-      <AdditionalIncludeDirectories>..\..\inc\HPSocket;..\..\inc\hlog;..\..\wcsapps;..\include\snap7;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\inc\HPSocket;..\..\inc\hlog;..\..\wcsapps;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>HPSOCKET_STATIC_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -92,7 +92,7 @@
       <DebugInformationFormat>None</DebugInformationFormat>
       <Optimization>MaxSpeed</Optimization>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-      <AdditionalIncludeDirectories>D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;D:\WCS\WCSApp\WCS_httpServer\include\snap7;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -113,9 +113,7 @@
     <ClCompile Include="ParseWorker.cpp" />
     <ClCompile Include="PlcManager.cpp" />
     <ClCompile Include="SiemensPLC.cpp" />
-    <ClCompile Include="..\include\snap7\snap7.cpp">
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-    </ClCompile>
+    <ClCompile Include="snap7.cpp" />
     <ClCompile Include="WaveManager.cpp" />
     <ClCompile Include="WCS_httpServer.cpp" />
     <ClCompile Include="main.cpp" />
@@ -128,8 +126,6 @@
     <QtMoc Include="LifecycleLogger.h" />
     <QtMoc Include="log_center.h" />
     <ClInclude Include="define.h" />
-    <ClInclude Include="SiemensPLC.h" />
-    <ClInclude Include="..\include\snap7\snap7.h" />
     <ClInclude Include="TaskQueue.h" />
     <ClInclude Include="ThreadPool.h" />
     <QtMoc Include="WaveManager.h" />
@@ -138,6 +134,8 @@
     <QtMoc Include="MainWindow.h" />
     <QtMoc Include="HttpServer.h" />
     <QtMoc Include="HttpClient.h" />
+    <ClInclude Include="SiemensPLC.h" />
+    <ClInclude Include="snap7.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

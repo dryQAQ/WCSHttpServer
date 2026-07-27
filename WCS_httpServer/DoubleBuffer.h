@@ -19,11 +19,20 @@
 #include "define.h"
 
 // ──── 格口映射条目 ────
+// 通过条码一次查询即可获得：
+//   ① 格口信息：落格位置、格口属性、格口件数
+//   ② 批次信息：所属批次号、批次总件数、SKU种类数
 struct GridEntry
 {
+    // ── 格口信息 ──
     QString gridNum;        // 格口号（同品多格口则逗号分隔，如 "1,2,3"）
     QString gridType = "普通格口";
     int     gridCount = 0;
+
+    // ── 批次信息 ──
+    QString orderCode;      // 批次号（所属波次）
+    int     orderQty  = 0;  // 该批次总件数
+    int     skuCount  = 0;  // 该批次SKU种类数
 };
 
 // ──── 待删除指针记录 ────

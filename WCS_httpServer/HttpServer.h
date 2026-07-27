@@ -57,10 +57,10 @@ signals:
     void serverStarted(int port);
     void serverStopped();
     void waveReadyToReport(const QString& orderCode);
-    void logMessage(const QString& msg, bool isError = false);  // 通知UI刷新日志
+    void logMessage(const QString& msg, bool isError = false);
 
 protected:
-    // CHttpServerListener 回调（只重写需要的）
+    // CHttpServerListener 回调
     EnHttpParseResult OnRequestLine(IHttpServer* pSender, CONNID dwConnID,
                                      LPCSTR lpszMethod, LPCSTR lpszUrl) override;
     EnHttpParseResult OnBody(IHttpServer* pSender, CONNID dwConnID,
@@ -76,17 +76,13 @@ protected:
 
 private:
     void processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState& state);
-    QJsonObject handleQuery(const QString& code);
-    QJsonObject handleMarkSorted(const QJsonObject& req);
-    QJsonObject handleMarkException(const QJsonObject& req);
-    QJsonObject handleWaveStatus();
-    QJsonObject handleSendToPlc(const QJsonObject& req);  // PLC发送接口
-    QJsonObject handlePlcStatus();                         // PLC状态查询
+    QJsonObject handleBindingLatticePort(const QString& latticehole, const QString& boxcode); // 格口容器绑定
+    QJsonObject handleCancelWave(const QJsonObject& req);                           // 退货任务取消
     void sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
                           const QJsonObject& json, USHORT status = 200);
-    QJsonObject okResponse(const QString& data = "accepted");
-    QJsonObject errResponse(const QString& msg, int code = -1);
-    void logHealthStatus();   // 周期性健康检查
+    QJsonObject okResponse(const QString& msg = "");
+    QJsonObject errResponse(const QString& msg, const QString& code = "500");
+    void logHealthStatus();
 
     // HP-Socket 模式: m_pServer(this)
     CHttpServerPtr m_pServer;
@@ -94,23 +90,27 @@ private:
     GridBuffer*    m_pBuffer  = nullptr;
     WaveManager*   m_pWaveMgr = nullptr;
     ParseWorker*   m_pWorker  = nullptr;
-    PlcManager*    m_pPlcMgr  = nullptr;  // PLC直连管理器
+    PlcManager*    m_pPlcMgr  = nullptr;
 
-    // ──── 业务线程池（参考WCSApp架构）────
-    Hanchine::ThreadPool* m_pBusinessPool = nullptr;  // 查询/分拣/异常处理
+    // ──── 业务线程池 ────
+    Hanchine::ThreadPool* m_pBusinessPool = nullptr;
 
     QMap<CONNID, ConnState> m_connStates;
-    QMap<CONNID, qint64>    m_connAcceptTime;   // 连接接受时间戳(ms)
+    QMap<CONNID, qint64>    m_connAcceptTime;
     std::mutex              m_connMutex;
 
-    // ──── 连接统计（用于诊断连接池耗尽问题）────
-    std::atomic<int64_t>    m_acceptCount{0};    // 累计接受连接数
-    std::atomic<int64_t>    m_closeCount{0};     // 累计关闭连接数
-    std::atomic<int64_t>    m_requestCount{0};   // 累计请求数
-    std::atomic<int>        m_activeConns{0};     // 当前活跃连接数
-    QTimer*                 m_healthTimer = nullptr;  // 健康检查定时器
+    // ──── 连接统计 ────
+    std::atomic<int64_t>    m_acceptCount{0};
+    std::atomic<int64_t>    m_closeCount{0};
+    std::atomic<int64_t>    m_requestCount{0};
+    std::atomic<int>        m_activeConns{0};
+    QTimer*                 m_healthTimer = nullptr;
 
     // ──── PLC发送失败日志限流 ────
-    QSet<QString>           m_warnedPlcFailCodes;  // 已警告过的条码（每波次重置）
-    std::mutex              m_warnMutex;           // 保护m_warnedPlcFailCodes
+    QSet<QString>           m_warnedPlcFailCodes;
+    std::mutex              m_warnMutex;
+
+    // ──── 格口容器绑定 ────
+    QMap<QString, QString>  m_containerBindings;  // latticehole(格口号) → boxcode(容器号)
+    std::mutex              m_containerMutex;     // 保护 m_containerBindings
 };

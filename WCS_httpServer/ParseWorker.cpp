@@ -75,8 +75,19 @@ void ParseWorker::run()
                 entry.gridNum   = gridNum;
                 entry.gridType  = gridType.isEmpty() ? "普通格口" : gridType;
                 entry.gridCount = gridNumber;
+                // 批次信息：每个条码都关联到所属批次
+                entry.orderCode = orderCode;
+                entry.orderQty  = orderQty;
+                entry.skuCount  = 0;  // 循环结束后统一回填
                 newMap->insert(inco, entry);
             }
+        }
+
+        // 回填 SKU 种类数到每个条目（去重后的条码种类数）
+        int skuCount = newMap->size();
+        for (auto it = newMap->begin(); it != newMap->end(); ++it)
+        {
+            it.value().skuCount = skuCount;
         }
 
         // 原子交换
