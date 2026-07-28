@@ -35,6 +35,7 @@ struct ConnState
     QString    method;
     QString    path;
     QString    queryString;
+    QString    rawHost;         // ★ Host 头原始值（用于重建完整 URL: http://{Host}{path}?{query}）
 };
 
 class HttpServer : public QObject, public CHttpServerListener
@@ -53,11 +54,36 @@ public:
     WaveManager* waveManager() { return m_pWaveMgr; }
     PlcManager*  plcManager()  { return m_pPlcMgr; }
 
+    // 获取容器绑定快照（线程安全拷贝）
+    QMap<QString, QString> getContainerBindings() const {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        return m_containerBindings;
+    }
+
+    // 加载容器绑定（从配置文件恢复，线程安全）
+    void loadContainerBindings(const QMap<QString, QString>& bindings) {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        m_containerBindings = bindings;
+    }
+
+    // 检查所有格口是否已绑定容器（线程安全）
+    bool areAllBindingsComplete() const {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        return (int)m_containerBindings.size() >= BINDING_SLOT_COUNT;
+    }
+
+    // 获取已绑定数量（线程安全）
+    int boundCount() const {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        return m_containerBindings.size();
+    }
+
 signals:
     void serverStarted(int port);
     void serverStopped();
     void waveReadyToReport(const QString& orderCode);
     void logMessage(const QString& msg, bool isError = false);
+    void bindingUpdated();  // 容器绑定变更通知
 
 protected:
     // CHttpServerListener 回调
@@ -112,5 +138,5 @@ private:
 
     // ──── 格口容器绑定 ────
     QMap<QString, QString>  m_containerBindings;  // latticehole(格口号) → boxcode(容器号)
-    std::mutex              m_containerMutex;     // 保护 m_containerBindings
+    mutable std::mutex       m_containerMutex;     // 保护 m_containerBindings（const方法中需加锁）
 };

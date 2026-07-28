@@ -8,6 +8,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QMap>
 #include "define.h"
 
 struct AppConfig
@@ -28,6 +29,9 @@ struct AppConfig
 
     // ──── 日志 ────
     int     logRetainDays     = LOG_RETAIN_DAYS;          // 日志保留天数
+
+    // ──── 容器绑定（持久化，格口号→容器号）────
+    QMap<QString, QString> containerBindings;
 
     bool loadFromFile(const QString& path = CONFIG_FILE);
     bool saveToFile(const QString& path = CONFIG_FILE) const;

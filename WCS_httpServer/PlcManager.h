@@ -253,6 +253,5 @@ private:
     QTimer*       m_feedbackBatchTimer = nullptr; // 批量刷新定时器（100ms间隔）
     std::mutex    m_feedbackBatchMutex;           // 保护批量反馈队列
     QVector<PlcFeedbackEntry> m_feedbackBatchBuffer; // 批量反馈缓冲区
-    static constexpr int FEEDBACK_BATCH_INTERVAL_MS = 100; // 批量刷新间隔
-    static constexpr int FEEDBACK_BATCH_MAX_SIZE   = 200;  // 缓冲区上限（防止内存暴涨）
+    // FEEDBACK_BATCH 常量已统一移至 define.h: PLC_FEEDBACK_BATCH_INTERVAL_MS / PLC_FEEDBACK_BATCH_MAX_SIZE
 };

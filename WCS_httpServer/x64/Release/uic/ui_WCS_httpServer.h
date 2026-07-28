@@ -76,7 +76,6 @@ public:
     QLabel *label_9;
     QSpacerItem *horizontalSpacer_5;
     QLabel *label_10;
-    QPushButton *pushButton_2;
     QSpacerItem *horizontalSpacer_14;
     QGroupBox *groupBox_3;
     QVBoxLayout *verticalLayout_6;
@@ -358,11 +357,6 @@ public:
 
         verticalLayout_2->addLayout(verticalLayout);
 
-        pushButton_2 = new QPushButton(groupBox_2);
-        pushButton_2->setObjectName(QString::fromUtf8("pushButton_2"));
-
-        verticalLayout_2->addWidget(pushButton_2);
-
 
         horizontalLayout_10->addLayout(verticalLayout_2);
 
@@ -560,7 +554,6 @@ public:
         label_8->setText(QCoreApplication::translate("WCS_httpServerClass", "\346\263\242\346\254\241\345\217\267", nullptr));
         label_9->setText(QCoreApplication::translate("WCS_httpServerClass", "\344\270\212\346\263\242\346\254\241\357\274\232", nullptr));
         label_10->setText(QCoreApplication::translate("WCS_httpServerClass", "\346\263\242\346\254\241\345\217\267", nullptr));
-        pushButton_2->setText(QCoreApplication::translate("WCS_httpServerClass", "\346\211\213\345\212\250\345\233\236\344\274\240", nullptr));
         groupBox_3->setTitle(QCoreApplication::translate("WCS_httpServerClass", "\350\277\220\350\241\214\346\227\245\345\277\227", nullptr));
         pushButton_4->setText(QCoreApplication::translate("WCS_httpServerClass", "\346\270\205\347\251\272\346\227\245\345\277\227", nullptr));
         groupBox_4->setTitle(QCoreApplication::translate("WCS_httpServerClass", "\351\205\215\347\275\256", nullptr));

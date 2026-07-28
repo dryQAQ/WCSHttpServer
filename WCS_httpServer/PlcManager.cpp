@@ -78,7 +78,7 @@ bool PlcManager::start(const char* ip, int port)
         m_feedbackBatchTimer->setTimerType(Qt::PreciseTimer);
         connect(m_feedbackBatchTimer, &QTimer::timeout, this, &PlcManager::flushFeedbackBatch);
     }
-    m_feedbackBatchTimer->start(FEEDBACK_BATCH_INTERVAL_MS);
+    m_feedbackBatchTimer->start(PLC_FEEDBACK_BATCH_INTERVAL_MS);
 
     PLC_LOG_INFO("PLC服务已启动 port=%d 等待PLC连接...", m_plcConfig.port);
     return true;
@@ -627,7 +627,7 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
             // ★ 添加到批量缓冲区（供UI日志批量刷新，减少UI线程压力）
             {
                 std::lock_guard<std::mutex> lock(m_feedbackBatchMutex);
-                if (m_feedbackBatchBuffer.size() < FEEDBACK_BATCH_MAX_SIZE)
+                if (m_feedbackBatchBuffer.size() < PLC_FEEDBACK_BATCH_MAX_SIZE)
                 {
                     PlcFeedbackEntry entry;
                     entry.code       = code;

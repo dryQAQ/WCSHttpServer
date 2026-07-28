@@ -51,7 +51,7 @@ void LogCenter::Onsig_test_Log(QString msg)
 
         m_test_Window->moveCursor(QTextCursor::End);
 
-        if (m_test_Window->toPlainText().size() > 100000)
+        if (m_test_Window->toPlainText().size() > LOG_MAX_TEXT_SIZE)
         {
             m_test_Window->selectAll();
             m_test_Window->clear();
@@ -86,7 +86,7 @@ void LogCenter::Onsig_log_warn(bool b, QString msg)
 
         m_runText->moveCursor(QTextCursor::End);
 
-        if (m_runText->toPlainText().size() > 100000)
+        if (m_runText->toPlainText().size() > LOG_MAX_TEXT_SIZE)
         {
             m_runText->selectAll();
             m_runText->clear();

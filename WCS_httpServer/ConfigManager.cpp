@@ -32,6 +32,15 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "waveTimeoutMin") waveTimeoutMin = xml.readElementText().toInt();
         else if (name == "maxRetryCount")  maxRetryCount = xml.readElementText().toInt();
         else if (name == "logRetainDays")  logRetainDays = xml.readElementText().toInt();
+        else if (name == "binding")
+        {
+            // 容器绑定: <binding grid="00001">BOX001</binding>
+            // 格口号保留前置 0，与 WMS 发送格式一致
+            QString g = xml.attributes().value("grid").toString();
+            QString box = xml.readElementText();
+            if (!g.isEmpty() && !box.isEmpty())
+                containerBindings[g] = box;
+        }
     }
     file.close();
     return !xml.hasError();
@@ -58,6 +67,17 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("waveTimeoutMin",   QString::number(waveTimeoutMin));
     xml.writeTextElement("maxRetryCount",    QString::number(maxRetryCount));
     xml.writeTextElement("logRetainDays",    QString::number(logRetainDays));
+
+    // ──── 容器绑定 ────
+    QMapIterator<QString, QString> it(containerBindings);
+    while (it.hasNext())
+    {
+        it.next();
+        xml.writeStartElement("binding");
+        xml.writeAttribute("grid", it.key());
+        xml.writeCharacters(it.value());
+        xml.writeEndElement();
+    }
 
     xml.writeEndElement();
     xml.writeEndDocument();

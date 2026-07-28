@@ -212,6 +212,23 @@ EnHttpParseResult HttpServer::OnMessageComplete(IHttpServer* pSender, CONNID dwC
         if (it != m_connStates.end()) state = it.value();
     }
 
+    // ★ 提取 Host 头（用于重建完整原始 URL）
+    {
+        THeader headers[64];
+        DWORD dwCount = sizeof(headers) / sizeof(headers[0]);
+        if (pSender->GetAllHeaders(dwConnID, headers, dwCount))
+        {
+            for (DWORD i = 0; i < dwCount; ++i)
+            {
+                if (headers[i].name && _stricmp(headers[i].name, "Host") == 0)
+                {
+                    state.rawHost = QString::fromUtf8(headers[i].value);
+                    break;
+                }
+            }
+        }
+    }
+
     // ──── 异步化：offload到业务线程池，HP-Socket worker立即返回 ────
     // 参考WCSApp架构：CtrlMain将业务逻辑提交到线程池，避免阻塞I/O线程
     // SendResponse 在 HP-Socket 中是线程安全的
@@ -253,16 +270,16 @@ EnHandleResult HttpServer::OnAccept(ITcpServer* pSender, CONNID dwConnID, UINT_P
     }
 
     // ──── 日志滤重阈值 ────
-    // 每100个连接输出一次统计（避免日志洪水）
-    // active > 50 时额外输出（连接数偏高，提前关注）
-    if (total % 100 == 0 || active > 50)
+    // 每 CONN_LOG_THROTTLE_INTERVAL 个连接输出一次统计（避免日志洪水）
+    // active > CONN_ACTIVE_WARN_THRESHOLD 时额外输出（连接数偏高，提前关注）
+    if (total % CONN_LOG_THROTTLE_INTERVAL == 0 || active > CONN_ACTIVE_WARN_THRESHOLD)
     {
         HTTP_INFO("连接接受 conn=%llu totalAccept=%lld active=%d",
             (unsigned long long)dwConnID, total, active);
     }
 
-    // active > 100 时输出警告（连接数偏高，可能存在连接泄漏或异常流量）
-    if (active > 100)
+    // active > CONN_ACTIVE_HIGH_THRESHOLD 时输出警告（连接数偏高，可能存在连接泄漏或异常流量）
+    if (active > CONN_ACTIVE_HIGH_THRESHOLD)
     {
         HTTP_WARN("连接数偏高 conn=%llu active=%d totalAccept=%lld",
             (unsigned long long)dwConnID, active, total);
@@ -319,8 +336,28 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
 
     int64_t reqNum = m_requestCount.fetch_add(1) + 1;
 
-    HTTP_INFO("请求 %s %s body=%d conn=%llu req#=%lld", st.method.toLocal8Bit().data(),
-        st.path.toLocal8Bit().data(), st.body.size(), (unsigned long long)dwConnID, reqNum);
+    // ★ 原始报文：重建 WMS 发送的完整 URL 字符串
+    {
+        QString fullUrl = "http://" + st.rawHost + st.path;
+        if (!st.queryString.isEmpty())
+            fullUrl += "?" + st.queryString;
+
+        if (st.body.isEmpty())
+        {
+            HTTP_INFO("[原始报文] %s  req#=%lld", fullUrl.toLocal8Bit().data(), reqNum);
+        }
+        else
+        {
+            // Body 截断显示
+            QByteArray bodyPreview = st.body.left(RAW_REQ_BODY_LOG_LEN);
+            bool truncated = st.body.size() > RAW_REQ_BODY_LOG_LEN;
+            HTTP_INFO("[原始报文] %s  body=%s%s(%d字节)  req#=%lld",
+                fullUrl.toLocal8Bit().data(),
+                bodyPreview.constData(),
+                truncated ? "..." : "",
+                st.body.size(), reqNum);
+        }
+    }
     emit logMessage(QString("[请求] %1 %2").arg(st.method).arg(st.path));
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -331,6 +368,20 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     // ═══════════════════════════════════════════════════════════════════════
     if (st.path == API_INSERT_WAVE_INFO && st.method == "POST")
     {
+        // ★ 前置校验：所有格口必须已绑定容器，否则拒绝波次
+        if (!areAllBindingsComplete())
+        {
+            int bc = boundCount();
+            HTTP_WARN("InsertWaveInfo 容器未全部绑定 bound=%d/%d", bc, BINDING_SLOT_COUNT);
+            emit logMessage(QString("[WMS] 容器未全部绑定 已绑定:%1/%2 拒绝波次").arg(bc).arg(BINDING_SLOT_COUNT), true);
+            QJsonObject err;
+            err["code"]    = "400";
+            err["message"] = QString("容器未全部绑定，已绑定: %1/%2，请等待WMS下发全部容器绑定").arg(bc).arg(BINDING_SLOT_COUNT);
+            err["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+            sendJsonResponse(pSender, dwConnID, err, 400);
+            return;
+        }
+
         if (m_pQueue->size() >= MAX_TASK_QUEUE)
         {
             HTTP_WARN("队列已满 拒绝入队 queue=%d", m_pQueue->size());
@@ -396,6 +447,8 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
         QJsonDocument d = QJsonDocument::fromJson(st.body);
         QJsonObject result = handleCancelWave(d.object());
         sendJsonResponse(pSender, dwConnID, result);
+        HTTP_INFO("InsertWaveIn 退货取消 body=%d elapsed=%lldms", st.body.size(), reqTimer.elapsed());
+        emit logMessage(QString("[WMS] InsertWaveIn 退货取消 elapsed=%1ms").arg(reqTimer.elapsed()));
         return;
     }
 
@@ -453,23 +506,54 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
             boxcode.toLocal8Bit().data(), latticehole.toLocal8Bit().data());
         emit logMessage(QString("[容器绑定] 参数缺失 boxcode=%1 latticehole=%2")
             .arg(boxcode).arg(latticehole), true);
-        return errResponse("参数缺失", "400");
+        return errResponse("参数缺失: latticehole和boxcode均为必填", "400");
+    }
+
+    // ★ 格口号范围校验：必须在 1～BINDING_SLOT_COUNT 范围内
+    bool ok = false;
+    int gridNum = latticehole.toInt(&ok);
+    if (!ok || gridNum < 1 || gridNum > BINDING_SLOT_COUNT)
+    {
+        HTTP_LOG_WARN("BindingLatticePort 格口号越界 latticehole=%s range=1..%d",
+            latticehole.toLocal8Bit().data(), BINDING_SLOT_COUNT);
+        emit logMessage(QString("[容器绑定] 格口号越界 latticehole=%1 (有效范围: 1~%2)")
+            .arg(latticehole).arg(BINDING_SLOT_COUNT), true);
+        QJsonObject r;
+        r["code"]    = "400";
+        r["message"] = QString("格口号越界，有效范围: 1~%1").arg(BINDING_SLOT_COUNT);
+        r["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+        return r;
     }
 
     {
         std::lock_guard<std::mutex> lock(m_containerMutex);
+
+        // ★ 重复绑定告警：同一格口绑定不同容器时记录警告
+        auto it = m_containerBindings.find(latticehole);
+        if (it != m_containerBindings.end() && it.value() != boxcode)
+        {
+            HTTP_LOG_WARN("BindingLatticePort 重复绑定覆盖 latticehole=%s old=%s new=%s",
+                latticehole.toLocal8Bit().data(),
+                it.value().toLocal8Bit().data(),
+                boxcode.toLocal8Bit().data());
+            emit logMessage(QString("[容器绑定] 格口%1 覆盖绑定: %2 → %3")
+                .arg(latticehole).arg(it.value()).arg(boxcode), true);
+        }
+
         m_containerBindings[latticehole] = boxcode;
     }
 
     HTTP_LOG_INFO("容器绑定成功 latticehole=%s → boxcode=%s total=%d",
         latticehole.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
-        (int)m_containerBindings.size());
-    emit logMessage(QString("[容器绑定] 格口%1 → 容器%2 (共%3条)")
-        .arg(latticehole).arg(boxcode).arg(m_containerBindings.size()));
+        boundCount());
+    emit logMessage(QString("[容器绑定] 格口%1 → 容器%2 (共%3/%4)")
+        .arg(latticehole).arg(boxcode).arg(boundCount()).arg(BINDING_SLOT_COUNT));
+    emit bindingUpdated();  // ★ 通知 UI 即时刷新
 
     QJsonObject r;
-    r["code"]    = 200;
-    r["Message"] = "收到信息";
+    r["code"]    = "200";
+    r["message"] = "收到信息";
+    r["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
     return r;
 }
 
@@ -548,16 +632,16 @@ void HttpServer::logHealthStatus()
     HTTP_INFO("健康检查 accept=%lld close=%lld active=%d requests=%lld queue=%d bizPool=%d/%d tasks=%d",
         accept, close, active, request, queueSize, poolIdl, poolThr, poolTask);
 
-    // 活跃连接 > 200 时触发告警（正常场景下不应超过此值，超过可能存在连接池泄漏或异常流量）
-    if (active > 200)
+    // 活跃连接 > CONN_ACTIVE_ALERT_THRESHOLD 时触发告警
+    if (active > CONN_ACTIVE_ALERT_THRESHOLD)
     {
         HTTP_WARN("连接数异常偏高 active=%d accept=%lld close=%lld",
             active, accept, close);
     }
 
-    // 业务线程池满载检测：idle==0 说明所有线程都在工作，pendingTasks > thr×2 说明积压严重
-    // thr×2 阈值：积压任务超过线程数2倍时告警，提示可能需要扩容线程池
-    if (poolIdl == 0 && poolThr > 0 && poolTask > poolThr * 2)
+    // 业务线程池满载检测：idle==0 说明所有线程都在工作
+    // POOL_OVERLOAD_MULTIPLIER 倍数阈值：积压任务超过线程数×N时告警
+    if (poolIdl == 0 && poolThr > 0 && poolTask > poolThr * POOL_OVERLOAD_MULTIPLIER)
     {
         HTTP_WARN("业务线程池满载 idle=%d/%d pendingTasks=%d",
             poolIdl, poolThr, poolTask);

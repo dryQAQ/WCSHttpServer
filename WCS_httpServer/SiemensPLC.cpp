@@ -26,7 +26,7 @@ bool CSiemensPLC::connectTo(const char* ip)
 {
     if (!m_pClient) return false;
 
-    int ret = m_pClient->ConnectTo(ip, 0, 1);
+    int ret = m_pClient->ConnectTo(ip, PLC_S7_RACK, PLC_S7_SLOT);
     if (ret != 0)
     {
         PLC_LOG_ERROR("S7连接失败 ip=%s err=%s", ip, m_pClient->err_(ret).c_str());
@@ -97,7 +97,7 @@ bool CSiemensPLC::writeCodeInfo(const QByteArray& sSend, const std::vector<int>&
 
     // 构建 42 字节数据包（与 WCSApp 完全兼容）
     // DB1 Offset 1000
-    QByteArray dataSend(42, 0x00);
+    QByteArray dataSend(PLC_S7_DB_WRITE_SIZE, 0x00);
     dataSend[0] = 0x7B; // '{'
     dataSend[1] = 0x52; // 'R'
     dataSend[2] = 0x56; // 'V'
@@ -106,10 +106,10 @@ bool CSiemensPLC::writeCodeInfo(const QByteArray& sSend, const std::vector<int>&
     dataSend[5] = 0x01; dataSend[6] = 0x7C; dataSend[7] = 0x02;
     dataSend[8] = 0x7C; dataSend[9] = 0x12;
 
-    // 条码数据 (最多 25 字节)
-    for (int i = 0; i < qMin(sSend.length(), 25); i++)
+    // 条码数据（ASCII，最多 PLC_S7_CODE_MAX_LEN 字节，从 PLC_S7_CODE_OFFSET 开始写入）
+    for (int i = 0; i < qMin(sSend.length(), PLC_S7_CODE_MAX_LEN); i++)
     {
-        dataSend[i + 10] = sSend[i];
+        dataSend[i + PLC_S7_CODE_OFFSET] = sSend[i];
     }
 
     dataSend[35] = 0x7C; // '|'
@@ -120,7 +120,7 @@ bool CSiemensPLC::writeCodeInfo(const QByteArray& sSend, const std::vector<int>&
     dataSend[40] = (uchar)(0x000000FF & (vecGrid.size() > 3 ? vecGrid[3] : 0));
     dataSend[41] = 0x7D; // '}'
 
-    int ret = m_pClient->DBWrite(1, 1000, 42, (void*)dataSend.data());
+    int ret = m_pClient->DBWrite(PLC_S7_DB_WRITE, PLC_S7_DB_WRITE_OFFSET, PLC_S7_DB_WRITE_SIZE, (void*)dataSend.data());
     if (ret != 0)
     {
         PLC_LOG_ERROR("S7 writeCodeInfo失败 err=%s", m_pClient->err_(ret).c_str());

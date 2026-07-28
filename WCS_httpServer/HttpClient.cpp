@@ -108,7 +108,7 @@ void HttpClient::onReplyFinished()
     LogCenter::Instance()->wcs_run_log_warn(success,
         QString("[Report] orderCode=%1 success=%2 status=%3 body=%4")
             .arg(pr.orderCode).arg(success).arg(statusCode)
-            .arg(QString::fromUtf8(respBody).left(200)));  // 截断200字符，防止日志过长
+            .arg(QString::fromUtf8(respBody).left(RESP_BODY_LOG_TRUNCATE)));  // 截断防止日志过长
 
     emit reportResult(pr.orderCode, success, QString::fromUtf8(respBody));
     m_pending.erase(it);

@@ -46,6 +46,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 #define BUSINESS_POOL_SIZE      90      // 业务线程池大小（16扫描仪×5并发 + HTTP回传 + 异常处理 + 余量）
 #define TASK_QUEUE_MAX_SIZE      5      // 波次推送任务队列最大排队数（防止大波次突发撑爆内存）
+#define POOL_OVERLOAD_MULTIPLIER  2      // 线程池过载倍数（积压任务 > 线程数×倍数 时告警）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 网络请求超时配置
@@ -85,6 +86,8 @@
 #define PLC_S7_LOCK_READ_SIZE   25             // S7 锁格读取大小（字节，25字节=200位）
 #define PLC_S7_LOCK_INTERVAL_MS 1000           // S7 锁格轮询间隔(ms)
 #define PLC_S7_MAX_GRID_COUNT   200            // 最大格口数（锁格位图覆盖范围）
+#define PLC_S7_CODE_MAX_LEN      25             // S7 包中条码字段最大字节数（ASCII编码）
+#define PLC_S7_CODE_OFFSET       10             // S7 包中条码字段起始偏移（0-based）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 配置文件路径
@@ -100,6 +103,40 @@
 #define API_INSERT_WAVE_INFO      "/api/DispatchSortingCommand/InsertWaveInfo"  // ① WMS 推送波次数据 (POST)
 #define API_BINDING_LATTICE_PORT  "/api/DispatchSortingCommand/BindingLatticePort" // ② WMS 绑定格口容器 (POST)
 #define API_INSERT_WAVE_IN        "/api/DispatchSortingCommand/InsertWaveIn"   // ③ WMS 退货任务取消 (POST)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 连接监控阈值（健康检查日志分级输出 → HttpServer::logHealthStatus）
+// ═══════════════════════════════════════════════════════════════════════════
+#define CONN_LOG_THROTTLE_INTERVAL 100   // 连接日志节流间隔（每N个连接输出一次统计，防日志刷屏）
+#define CONN_ACTIVE_WARN_THRESHOLD  50   // 活跃连接数 ≥ N → WARN 级别日志
+#define CONN_ACTIVE_HIGH_THRESHOLD 100   // 活跃连接数 ≥ N → 高频日志告警（可能连接泄漏）
+#define CONN_ACTIVE_ALERT_THRESHOLD 200  // 活跃连接数 ≥ N → 严重告警（连接池即将耗尽）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLC 反馈批量缓冲（防止高频信号卡死UI）
+// ═══════════════════════════════════════════════════════════════════════════
+#define PLC_FEEDBACK_BATCH_INTERVAL_MS 100  // PLC 反馈批量刷新间隔(ms)
+#define PLC_FEEDBACK_BATCH_MAX_SIZE    200  // PLC 反馈缓冲区上限（超过则丢弃最旧数据）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 容器格口绑定 → MainWindow 容器绑定面板
+// ═══════════════════════════════════════════════════════════════════════════
+#define BINDING_SLOT_COUNT        66      // 容器格口总数（= 分拣机格口数，可扩展）
+#define FEEDBACK_DISPLAY_MAX       3      // PLC 反馈批量展示上限（日志中最多显示前N条详情）
+#define GRID_KEY_PADDING           5      // 格口号零填充宽度（WMS 格式: "00001"~"00066"，与 UI/存储 key 一致）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UI 定时刷新间隔（MainWindow 每秒轮询所有面板）
+// ═══════════════════════════════════════════════════════════════════════════
+#define UI_REFRESH_INTERVAL_MS   1000     // UI 状态刷新周期(ms)：波次/PLC/绑定面板全量刷新
+#define LOG_FLUSH_INTERVAL_MS     100     // 日志批量刷新周期(ms)：缓冲→QTextEdit，防高频卡死
+#define LOG_FLUSH_MAX_BATCH_SIZE  100     // 单次日志刷新最大条数（防止一次刷太多卡UI）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WMS 回传响应日志截断（防止超长响应体撑满日志文件）
+// ═══════════════════════════════════════════════════════════════════════════
+#define RESP_BODY_LOG_TRUNCATE    200     // WMS 回传响应体在日志中截断长度（字符数）
+#define RAW_REQ_BODY_LOG_LEN      500     // 原始请求 Body 在日志中截断长度（字符数，完整记录 queryString）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UI/日志限制

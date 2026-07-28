@@ -13,6 +13,7 @@
 #include <QCloseEvent>
 #include <QMessageBox>
 #include <QFrame>
+#include <QScrollArea>
 #include <QVector>
 #include <QTextCursor>
 
@@ -20,8 +21,8 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle("WMS退货HTTP服务 -- 默鑫 V1.0");
-    resize(960, 820);
-    setMinimumSize(800, 700);
+    resize(960, 1000);
+    setMinimumSize(860, 800);
 
     setupUI();
     ConfigManager::instance()->load();
@@ -32,7 +33,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // ★ 创建日志刷新定时器（100ms，防高频场景下 QTextEdit 卡死）
     m_logFlushTimer = new QTimer(this);
-    m_logFlushTimer->setInterval(100);
+    m_logFlushTimer->setInterval(LOG_FLUSH_INTERVAL_MS);
     connect(m_logFlushTimer, &QTimer::timeout, this, &MainWindow::flushLogBuffer);
     m_logFlushTimer->start();
 
@@ -237,9 +238,6 @@ void MainWindow::setupUI()
     m_lblElapsed     = makeValue();
     m_lblLastWave    = makeValue();
 
-    m_btnManualReport = new QPushButton("手动回传");
-    m_btnManualReport->setMinimumHeight(32);
-
     int row = 0;
     waveLayout->addWidget(makeLabel("波次号:"),    row, 0); waveLayout->addWidget(m_lblWaveCode,    row++, 1);
     waveLayout->addWidget(makeLabel("状态:"),      row, 0); waveLayout->addWidget(m_lblWaveStatus,  row++, 1);
@@ -249,29 +247,98 @@ void MainWindow::setupUI()
     waveLayout->addWidget(makeLabel("格口数:"),    row, 0); waveLayout->addWidget(m_lblSumLocation, row++, 1);
     waveLayout->addWidget(makeLabel("耗时:"),      row, 0); waveLayout->addWidget(m_lblElapsed,     row++, 1);
     waveLayout->addWidget(makeLabel("上波次:"),    row, 0); waveLayout->addWidget(m_lblLastWave,    row++, 1);
-    waveLayout->addWidget(m_btnManualReport,       row, 0, 1, 2);
 
     // ═══════════════════════════════════════════
-    // 第三行：配置区（紧凑）
+    // 容器绑定状态面板（66格口，6列×11行可拓展网格）
     // ═══════════════════════════════════════════
-    QGroupBox* grpConfig = new QGroupBox("配置");
-    QGridLayout* cfgLayout = new QGridLayout(grpConfig);
+    QGroupBox* grpBinding = new QGroupBox("容器绑定状态");
+    QVBoxLayout* bindOuterLayout = new QVBoxLayout(grpBinding);
 
-    m_spinWmsPort     = new QSpinBox();     m_spinWmsPort->setRange(1, 65535);
-    m_editFeedbackUrl = new QLineEdit();
-    m_editAppkey      = new QLineEdit();
-    m_chkTestEnv      = new QCheckBox("测试环境");
-    m_spinTimeout     = new QSpinBox(); m_spinTimeout->setRange(0, 1440); m_spinTimeout->setSuffix(" 分钟");
-    m_btnSave         = new QPushButton("保存配置");
+    QHBoxLayout* bindBtnRow = new QHBoxLayout();
+    QPushButton* btnRefreshBind = new QPushButton("刷新绑定状态");
+    btnRefreshBind->setMinimumHeight(32);
+    btnRefreshBind->setStyleSheet(
+        "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #1976D2; }");
+    QLabel* bindHint = new QLabel("绿色=已绑定  灰色=未绑定");
+    bindHint->setStyleSheet("font-size: 12px; color: #888;");
+    bindBtnRow->addWidget(btnRefreshBind);
+    bindBtnRow->addWidget(bindHint);
+    bindBtnRow->addStretch();
 
-    m_btnSave->setMinimumHeight(32);
+    // 已绑定/未绑定计数
+    m_lblBoundCount = new QLabel();
+    m_lblUnboundCount = new QLabel();
+    m_lblBoundCount->setStyleSheet("font-size: 13px; font-weight: bold; color: #4CAF50; padding: 0 8px;");
+    m_lblUnboundCount->setStyleSheet("font-size: 13px; font-weight: bold; color: #E53935; padding: 0 8px;");
+    bindBtnRow->addWidget(m_lblBoundCount);
+    bindBtnRow->addWidget(m_lblUnboundCount);
 
-    int cr = 0;
-    cfgLayout->addWidget(new QLabel("端口:"), cr, 0);     cfgLayout->addWidget(m_spinWmsPort, cr++, 1);
-    cfgLayout->addWidget(new QLabel("回传URL:"),  cr, 0); cfgLayout->addWidget(m_editFeedbackUrl, cr++, 1);
-    cfgLayout->addWidget(new QLabel("AppKey:"),    cr, 0); cfgLayout->addWidget(m_editAppkey, cr++, 1);
-    cfgLayout->addWidget(new QLabel("波次超时:"),  cr, 0); cfgLayout->addWidget(m_spinTimeout, cr++, 1);
-    cfgLayout->addWidget(m_chkTestEnv, cr, 0);             cfgLayout->addWidget(m_btnSave, cr++, 1);
+    connect(btnRefreshBind, &QPushButton::clicked, this, &MainWindow::onRefreshBindings);
+
+    // 可滚动区域——容纳所有格口绑定指示器
+    QScrollArea* scrollBinding = new QScrollArea();
+    scrollBinding->setWidgetResizable(true);
+    scrollBinding->setMinimumHeight(260);
+    scrollBinding->setMaximumHeight(400);
+    scrollBinding->setStyleSheet("QScrollArea { border: 1px solid #ddd; }");
+
+    m_bindingWidget = new QWidget();
+    m_bindingGrid = new QGridLayout(m_bindingWidget);
+    m_bindingGrid->setSpacing(2);
+    m_bindingGrid->setContentsMargins(4, 4, 4, 4);
+
+    // 创建66个格口绑定标签（6列×11行）
+    for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
+    {
+        int gridNum = i + 1;
+        int col = i % m_bindingCols;
+        int row = i / m_bindingCols;
+
+        // 每个格口一个 Frame 包裹
+        QFrame* frame = new QFrame();
+        frame->setFrameShape(QFrame::Box);
+        frame->setStyleSheet("QFrame { background: #f5f5f5; border: 1px solid #ddd; border-radius: 2px; }");
+        frame->setMinimumHeight(36);
+
+        QHBoxLayout* fLayout = new QHBoxLayout(frame);
+        fLayout->setContentsMargins(2, 1, 2, 1);
+        fLayout->setSpacing(1);
+
+        // ★ 零填充格口号显示，与 WMS 格式一致: 1 → "00001"
+        QLabel* lblGrid = new QLabel(QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0')));
+        lblGrid->setFixedWidth(38);
+        lblGrid->setAlignment(Qt::AlignCenter);
+        lblGrid->setStyleSheet("font-size: 11px; font-weight: bold; color: #333; border: none; background: transparent;");
+
+        // 绑定状态指示器标签
+        QLabel* lblStatus = new QLabel("--");
+        lblStatus->setFixedWidth(12);
+        lblStatus->setFixedHeight(12);
+        lblStatus->setAlignment(Qt::AlignCenter);
+        lblStatus->setStyleSheet(
+            "font-size: 10px; color: white; border-radius: 6px; background-color: #bbb;");
+        lblStatus->setToolTip(QString("格口%1: 未绑定").arg(
+            QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'))));
+
+        QLabel* lblBox = new QLabel("--");
+        lblBox->setStyleSheet("font-size: 11px; color: #888; border: none; background: transparent;");
+        lblBox->setMinimumWidth(90);
+
+        fLayout->addWidget(lblGrid);
+        fLayout->addWidget(lblStatus);
+        fLayout->addWidget(lblBox);
+
+        m_bindingGrid->addWidget(frame, row, col);
+
+        // 存储状态标签引用（用于后续刷新）
+        m_bindingLabels[i] = lblStatus;
+    }
+
+    scrollBinding->setWidget(m_bindingWidget);
+    bindOuterLayout->addLayout(bindBtnRow);
+    bindOuterLayout->addWidget(scrollBinding);
 
     // ═══════════════════════════════════════════
     // 日志区
@@ -296,34 +363,23 @@ void MainWindow::setupUI()
     mainLayout->addWidget(grpServer);
     mainLayout->addWidget(grpPlc);
     mainLayout->addWidget(grpWave);
-    mainLayout->addWidget(grpConfig);
+    mainLayout->addWidget(grpBinding);
     mainLayout->addWidget(grpLog, 1); // 日志区占剩余空间
 }
 
 void MainWindow::setupConnections()
 {
     connect(m_btnStartStop, &QPushButton::clicked, this, &MainWindow::onStartStop);
-    connect(m_btnManualReport, &QPushButton::clicked, this, &MainWindow::onManualReport);
-    connect(m_btnSave, &QPushButton::clicked, this, &MainWindow::onSaveConfig);
 
     // 定时刷新（每秒）
     m_timerRefresh = new QTimer(this);
     connect(m_timerRefresh, &QTimer::timeout, this, &MainWindow::onRefreshTimer);
-    m_timerRefresh->start(1000);
-
-    // ★ 初始化时加载配置到 UI 控件
-    applyConfig();
+    m_timerRefresh->start(UI_REFRESH_INTERVAL_MS);
 }
 
 void MainWindow::applyConfig()
 {
     AppConfig& cfg = ConfigManager::instance()->config();
-    m_spinWmsPort->setValue(cfg.wmsListenPort);
-    m_editFeedbackUrl->setText(cfg.activeFeedbackUrl());
-    m_editAppkey->setText(cfg.activeAppkey());
-    m_chkTestEnv->setChecked(cfg.useTestEnv);
-    m_spinTimeout->setValue(cfg.waveTimeoutMin);
-
     m_lblPort->setText(QString("端口: %1").arg(cfg.wmsListenPort));
 }
 
@@ -375,18 +431,24 @@ void MainWindow::onStartStop()
     }
     else    //状态：关闭 --> 开启
     {
+        // ★ 服务始终允许启动以接收 WMS 的绑定请求和波次数据
+        //    容器绑定校验移至波次推送入口（InsertWaveInfo），避免循环依赖：
+        //    服务必须运行才能接收 BindingLatticePort 请求完成绑定
         m_pServer = new HttpServer(this);
-        m_pClient = new HttpClient(this);
-        m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
 
         AppConfig& cfg = ConfigManager::instance()->config();
+
+        // ★ 从配置文件恢复容器绑定
+        m_pServer->loadContainerBindings(cfg.containerBindings);
+        m_pClient = new HttpClient(this);
+        m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
         m_pClient->setUrl(cfg.activeFeedbackUrl());
         m_pClient->setAppkey(cfg.activeAppkey());
 
         m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
         m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
 
-        int port = m_spinWmsPort->value();
+        int port = cfg.wmsListenPort;
 
         if (m_pServer->start(port))
         {
@@ -431,6 +493,15 @@ void MainWindow::onStartStop()
             // ★ 连接HttpServer日志信号到UI日志区
             connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
 
+            // ★ 容器绑定变更 → 即时刷新 UI + 持久化到 XML
+            connect(m_pServer, &HttpServer::bindingUpdated, this, [this]() {
+                updateBindingPanel();
+                // 同步到配置并保存
+                AppConfig& c = ConfigManager::instance()->config();
+                c.containerBindings = m_pServer->getContainerBindings();
+                ConfigManager::instance()->save();
+            });
+
             // ★ 连接PLC状态信号到UI（全部使用 QueuedConnection，确保跨线程安全）
             if (m_pPlcMgr)
             {
@@ -467,7 +538,7 @@ void MainWindow::onStartStop()
                         {
                             // 多条：汇总显示前3条 + 共N条
                             QString summary;
-                            int showCount = qMin(entries.size(), 3);
+                            int showCount = qMin(entries.size(), FEEDBACK_DISPLAY_MAX);
                             for (int i = 0; i < showCount; ++i)
                             {
                                 const auto& e = entries[i];
@@ -475,7 +546,7 @@ void MainWindow::onStartStop()
                                 summary += QString("  code=%1 → grid=%2 car=%3")
                                     .arg(e.code).arg(e.grid).arg(e.car);
                             }
-                            if (entries.size() > 3)
+                            if (entries.size() > FEEDBACK_DISPLAY_MAX)
                                 summary += QString("\n  ... 共 %1 条").arg(entries.size());
                             appendLog(QString("[PLC] 批量反馈 (%1条):\n%2").arg(entries.size()).arg(summary));
                         }
@@ -534,6 +605,7 @@ void MainWindow::onRefreshTimer()
     {
         updateWavePanel();
         updatePlcPanel();
+        updateBindingPanel();
     }
 }
 
@@ -709,89 +781,66 @@ void MainWindow::updatePlcPanel()
     }
 }
 
-void MainWindow::onManualReport()
+// ============================================================================
+// 容器绑定状态
+// ============================================================================
+
+void MainWindow::onRefreshBindings()
 {
-    if (!m_pServer || !m_pClient) return;
-
-    WaveSnapshot snap = m_pServer->waveManager()->snapshot();
-    if (snap.orderCode.isEmpty())
-    {
-        QMessageBox::information(this, "提示", "没有活跃的波次可回传");
-        return;
-    }
-
-    auto ret = QMessageBox::question(this, "手动回传",
-        QString("确定回传波次 %1 吗？\n格口数: %2  已分拣: %3/%4")
-            .arg(snap.orderCode).arg(snap.sumLocation)
-            .arg(snap.sortedCount).arg(snap.totalRecv));
-
-    if (ret == QMessageBox::Yes)
-    {
-        m_pServer->waveManager()->setState(WAVE_COMPLETING);
-        m_pClient->sendWaveComplete(snap.orderCode, snap.sumLocation);
-        appendLog(QString("手动回传波次 %1 sumLocation=%2").arg(snap.orderCode).arg(snap.sumLocation));
-    }
+    updateBindingPanel();
+    appendLog("容器绑定状态已刷新");
 }
 
-void MainWindow::onSaveConfig()
+void MainWindow::updateBindingPanel()
 {
-    AppConfig& cfg = ConfigManager::instance()->config();
-    int oldPort = cfg.wmsListenPort;
-    int newPort = m_spinWmsPort->value();
+    if (!m_pServer || !m_bindingWidget) return;
 
-    cfg.wmsListenPort  = newPort;
-    cfg.waveTimeoutMin = m_spinTimeout->value();
-    cfg.useTestEnv     = m_chkTestEnv->isChecked();
+    QMap<QString, QString> bindings = m_pServer->getContainerBindings();
+    int boundCount = 0;
+    int unboundCount = 0;
 
-    if (cfg.useTestEnv) {
-        cfg.feedbackTestUrl = m_editFeedbackUrl->text();
-        cfg.appkeyTest      = m_editAppkey->text();
-    } else {
-        cfg.feedbackUrl     = m_editFeedbackUrl->text();
-        cfg.appkey          = m_editAppkey->text();
-    }
-
-    if (!ConfigManager::instance()->save())
+    for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
     {
-        appendLog("配置保存失败！", true);
-        return;
-    }
+        int gridNum = i + 1;
+        // ★ 零填充 key，与 WMS 格式一致: 1 → "00001", 66 → "00066"
+        QString gridKey = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
+        QString boxCode = bindings.value(gridKey, "");
 
-    // ★ 更新 UI 显示，确保配置值正确反映在界面上
-    applyConfig();
+        // 找到该格口的容器号标签（Frame 内第3个QLabel）
+        QFrame* frame = qobject_cast<QFrame*>(m_bindingGrid->itemAtPosition(i / m_bindingCols, i % m_bindingCols)->widget());
+        if (!frame) continue;
 
-    // ★ 实时生效：更新运行中组件的配置
-    if (m_bRunning)
-    {
-        // 更新回传URL和AppKey
-        if (m_pClient)
+        QList<QLabel*> labels = frame->findChildren<QLabel*>();
+        if (labels.size() < 3) continue;
+
+        QLabel* lblStatus = labels[1]; // 状态指示圆点
+        QLabel* lblBox    = labels[2]; // 容器号
+
+        if (!boxCode.isEmpty())
         {
-            m_pClient->setUrl(cfg.activeFeedbackUrl());
-            m_pClient->setAppkey(cfg.activeAppkey());
-        }
-
-        // 更新波次超时
-        if (m_pServer && m_pServer->waveManager())
-        {
-            m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
-        }
-
-        // 端口变更需要重启服务
-        if (newPort != oldPort)
-        {
-            appendLog(QString("端口已变更 %1→%2，需重启服务生效").arg(oldPort).arg(newPort), true);
-            m_lblPort->setText(QString("端口: %1 (需重启)").arg(newPort));
+            boundCount++;
+            // 已绑定 → 绿色
+            lblStatus->setStyleSheet(
+                "font-size: 10px; color: white; border-radius: 6px; background-color: #4CAF50;");
+            lblStatus->setToolTip(QString("格口%1 ←→ %2 (已绑定)").arg(gridKey).arg(boxCode));
+            lblBox->setText(boxCode);
+            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
         }
         else
         {
-            appendLog(QString("配置已保存并生效 url=%1 timeout=%2min")
-                .arg(cfg.activeFeedbackUrl()).arg(cfg.waveTimeoutMin));
+            // 未绑定 → 灰色
+            lblStatus->setStyleSheet(
+                "font-size: 10px; color: white; border-radius: 6px; background-color: #bbb;");
+            lblStatus->setToolTip(QString("格口%1: 未绑定").arg(gridKey));
+            lblBox->setText("--");
+            lblBox->setStyleSheet("font-size: 11px; color: #bbb; border: none; background: transparent;");
         }
     }
-    else
-    {
-        appendLog("配置已保存");
-    }
+
+    // 更新已绑定/未绑定计数标签
+    unboundCount = BINDING_SLOT_COUNT - boundCount;
+    m_lblBoundCount->setText(QString("已绑定: %1").arg(boundCount));
+    m_lblUnboundCount->setText(QString("未绑定: %1").arg(unboundCount));
 }
 
 void MainWindow::onClearLog()
@@ -842,8 +891,8 @@ void MainWindow::flushLogBuffer()
         batch.swap(m_logBuffer);  // O(1) 交换，清空缓冲区
     }
 
-    // 截断保护：单次最多刷新 100 条，超出的重新放回队首
-    constexpr int MAX_BATCH = 100;
+    // 截断保护：单次最多刷新 LOG_FLUSH_MAX_BATCH_SIZE 条，超出的重新放回队首
+    constexpr int MAX_BATCH = LOG_FLUSH_MAX_BATCH_SIZE;
     if (batch.size() > MAX_BATCH)
     {
         // 保留前 MAX_BATCH 条，其余重新入队（下次刷新）
@@ -867,7 +916,3 @@ void MainWindow::flushLogBuffer()
     m_txtLog->moveCursor(QTextCursor::End);
 }
 
-void MainWindow::onRefreshWave()
-{
-    updateWavePanel();
-}

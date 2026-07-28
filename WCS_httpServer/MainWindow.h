@@ -5,9 +5,11 @@
 // 界面布局：
 //   ┌─ 服务控制区 ─┐ ┌─ 波次信息面板 ────────────────────────────────────┐
 //   │ 启动/停止     │ │ 波次号 / 状态 / SKU数 / 已分拣 / 异常 / 格口数   │
-//   │ 端口 / PLC状态│ │ 耗时 / 上波次 / 手动回传                          │
-//   ├─ PLC状态 ────┤ └──────────────────────────────────────────────────┘
-//   │ 连接数/收发统计│
+//   │ 端口 / PLC状态│ │ 耗时 / 上波次                                      │
+//   ├─ PLC综合状态 ─┤ └──────────────────────────────────────────────────┘
+//   │ TCP/S7连接统计 │
+//   ├─ 容器绑定状态 ┤
+//   │ 66格口→容器   │
 //   ├─ 配置区 ─────┤
 //   │ 端口/URL/AppKey│
 //   ├─ 运行日志 ───┤
@@ -20,12 +22,9 @@
 #include <QMainWindow>
 #include <QTimer>
 #include <QLabel>
-#include <QTableWidget>
+#include <QGridLayout>
 #include <QTextEdit>
 #include <QPushButton>
-#include <QSpinBox>
-#include <QLineEdit>
-#include <QCheckBox>
 #include <QAtomicInteger>
 #include <QMutex>
 #include "HttpServer.h"
@@ -45,9 +44,7 @@ protected:
 
 private slots:
     void onStartStop();       // 启动/停止服务按钮
-    void onRefreshWave();     // 手动刷新波次状态
-    void onManualReport();    // 手动触发波次回传
-    void onSaveConfig();      // 保存配置到XML
+    void onRefreshBindings(); // 刷新容器绑定状态
     void onClearLog();        // 清空日志窗口
     void onRefreshTimer();    // 每秒定时刷新UI
     void flushLogBuffer();    // 定时批量刷新日志到UI（防高频卡死）
@@ -57,9 +54,9 @@ private:
     void setupConnections();  // 连接信号槽
     void applyConfig();       // 从ConfigManager读取配置填充UI
     void appendLog(const QString& msg, bool isError = false);  // 追加日志到窗口
-    //void updateStatusBar();   // 更新顶部状态条
     void updateWavePanel();   // 更新波次信息面板
     void updatePlcPanel();    // 刷新PLC状态面板（连接数/收发统计/运行时间）
+    void updateBindingPanel();// 刷新容器绑定面板（66格口×容器号）
 
     // ──── 核心组件 ────
     HttpServer*  m_pServer  = nullptr;   // HTTP Server（内部持有 PlcManager/WaveManager/TaskQueue 等）
@@ -104,15 +101,15 @@ private:
     QLabel*      m_lblSumLocation  = nullptr;  // 去重格口总数
     QLabel*      m_lblElapsed      = nullptr;  // 波次耗时
     QLabel*      m_lblLastWave     = nullptr;  // 上一个波次号
-    QPushButton* m_btnManualReport = nullptr;  // 手动回传按钮（异常恢复用）
 
-    // ──── 配置区 UI ────
-    QSpinBox*    m_spinWmsPort     = nullptr;  // WMS监听端口编辑框
-    QLineEdit*   m_editFeedbackUrl = nullptr;  // 回传URL编辑框
-    QLineEdit*   m_editAppkey      = nullptr;  // AppKey编辑框
-    QCheckBox*   m_chkTestEnv      = nullptr;  // 测试环境复选框
-    QSpinBox*    m_spinTimeout     = nullptr;  // 波次超时设置（分钟）
-    QPushButton* m_btnSave         = nullptr;  // 保存配置按钮
+    // ──── 容器绑定面板 UI（92格口 6列×16行）────
+    QWidget*     m_bindingWidget   = nullptr;  // 绑定状态容器
+    QGridLayout* m_bindingGrid     = nullptr;  // 网格布局
+    QLabel*      m_bindingLabels[BINDING_SLOT_COUNT] = {};  // N个格口绑定状态标签
+    int          m_bindingCols     = 6;        // 每行列数
+    int          m_bindingRows     = BINDING_SLOT_COUNT / m_bindingCols;       // 行数（可扩展，92/6≈16）
+    QLabel*      m_lblBoundCount   = nullptr;  // 已绑定数量
+    QLabel*      m_lblUnboundCount = nullptr;  // 未绑定数量
 
     // ──── 日志区 ────
     QTextEdit*   m_txtLog = nullptr;           // 运行日志文本框

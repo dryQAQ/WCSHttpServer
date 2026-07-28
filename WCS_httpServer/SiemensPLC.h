@@ -14,6 +14,7 @@
 #include <vector>
 #include <QByteArray>
 #include <QString>
+#include "define.h"
 #include "snap7.h"
 
 class CSiemensPLC
