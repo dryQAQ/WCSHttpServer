@@ -565,10 +565,10 @@ EnHandleResult PlcManager::OnShutdown(ITcpServer* pSender)
 // ============================================================================
 // PLC反馈解析
 // 协议格式（与WCSApp完全兼容）:
-//   {barcode|grid|car}  — 落格确认
-//   {start}             — 批次开始
-//   {stop}              — 批次停止
-//   支持粘包: {barcode1|grid1|car1}{barcode2|grid2|car2}
+//   查询:  {barcode|car}         — 相机/PLC 扫描到条码，查询格口分配   [1~2字段]
+//   反馈:  {barcode|grid|car}    — PLC 落格确认（分拣完成）            [≥3字段]
+//   信号:  {start} / {stop}      — 批次开始/停止
+//   支持粘包: {WV34S1|005}{WV34S2|006}{WV34S1|015|005|006|1}
 // ============================================================================
 
 void PlcManager::parsePlcFeedback(const QByteArray& rawData)
@@ -598,8 +598,55 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
             continue;
         }
 
-        // 落格确认: {barcode|grid|car}
+        // 按 | 分割字段
         QStringList parts = content.split('|');
+        int partCount = parts.size();
+
+        // ═══════════════════════════════════════════════════════════════
+        // ★ 查询报文: {barcode|car}  (2字段)
+        //   相机扫描到条码 → WCS查格口 → 发送PLC分拣指令
+        //   若条码不在波次中（lookup返回空），回退到反馈处理（可能是2字段PLC反馈）
+        // ═══════════════════════════════════════════════════════════════
+        if (partCount == 2 && m_lookupCb)
+        {
+            QString code = parts[0].trimmed();
+            QString car  = parts[1].trimmed();
+
+            // 查格口
+            QString gridStr = m_lookupCb(code);
+            if (!gridStr.isEmpty())
+            {
+                // 解析格口（支持逗号分隔的多格口 "1,2,3"）
+                std::vector<int> vecGrid;
+                for (const QString& g : gridStr.split(',', Qt::SkipEmptyParts))
+                {
+                    bool ok = false;
+                    int n = g.trimmed().toInt(&ok);
+                    if (ok && n > 0) vecGrid.push_back(n);
+                }
+
+                if (!vecGrid.empty())
+                {
+                    // ★ 发送PLC分拣指令: {barcode|格口|小车号}
+                    int carNum = car.toInt();
+                    sendCodeInfo(code, vecGrid, carNum > 0 ? carNum : 1);
+                    emit plcSendInfo(code, gridStr, true);
+                    continue;
+                }
+                else
+                {
+                    PLC_LOG_WARN("格口号解析失败: code=%s gridStr=%s",
+                        code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+                    continue;
+                }
+            }
+            // 条码不在波次中 → 回退，当作反馈报文处理（可能是 {barcode|grid} 格式的PLC确认）
+            PLC_LOG_WARN("条码不在波次中，回退为反馈处理 code=%s", code.toLocal8Bit().data());
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // 反馈报文: {barcode|grid|car} (≥3字段)  — PLC反馈落格确认
+        // ═══════════════════════════════════════════════════════════════
         if (parts.size() >= 2)
         {
             QString code = parts[0].trimmed();

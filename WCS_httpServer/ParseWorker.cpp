@@ -43,7 +43,12 @@ void ParseWorker::run()
 
         QJsonObject root   = doc.object();
         QString orderCode  = root["orderCode"].toString();
-        int orderQty       = root["orderQty"].toString().toInt();
+        // ★ 兼容整数和字符串两种类型: "12312" 或 12312
+        int orderQty = 0;
+        {
+            QJsonValue v = root["orderQty"];
+            orderQty = v.isString() ? v.toString().toInt() : v.toInt();
+        }
         QJsonArray items   = root["items"].toArray();
 
         // 构建新Map
@@ -56,9 +61,20 @@ void ParseWorker::run()
             QString inco     = item["inco"].toString().trimmed();
             QString gridNum  = item["gridNum"].toString().trimmed();
             QString gridType = item["gridType"].toString().trimmed();
-            int gridNumber   = item["gridNumber"].toString().toInt();
+            // ★ 兼容整数和字符串两种类型
+            int gridNumber = 0;
+            {
+                QJsonValue gv = item["gridNumber"];
+                gridNumber = gv.isString() ? gv.toString().toInt() : gv.toInt();
+            }
 
-            if (inco.isEmpty() || gridNum.isEmpty()) continue;
+            if (inco.isEmpty() || gridNum.isEmpty())
+            {
+                WCS_WARN("[Parse] 跳过无效条目 inco=%s gridNum=%s orderCode=%s",
+                    inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(),
+                    orderCode.toLocal8Bit().data());
+                continue;
+            }
 
             recvSet.insert(inco);
 

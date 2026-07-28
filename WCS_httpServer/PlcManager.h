@@ -122,6 +122,8 @@ struct PlcStats
 // 回调类型
 typedef std::function<void(std::string ip, int port, bool status)> PlcStatusCallback;
 typedef std::function<void(QString code, QString grid, QString car)> PlcFeedbackCallback;
+// ★ 格口查询回调：相机扫到 {条码|小车号} 时调用，返回格口字符串（如 "15" 或 "1,2,3"）
+typedef std::function<QString(const QString& barcode)> PlcLookupCallback;
 
 class PlcManager : public QObject, public CTcpServerListener
 {
@@ -154,6 +156,7 @@ public:
 
     void registerStatusCallback(PlcStatusCallback cb) { m_statusCb = std::move(cb); }
     void registerFeedbackCallback(PlcFeedbackCallback cb) { m_feedbackCb = std::move(cb); }
+    void setLookupCallback(PlcLookupCallback cb) { m_lookupCb = std::move(cb); }
 
     // ──── 发送指令 ────
     bool sendCodeInfo(const QString& barcode, const std::vector<int>& vecGrid, int car = 1);
@@ -201,6 +204,7 @@ private:
 
     PlcStatusCallback m_statusCb;
     PlcFeedbackCallback m_feedbackCb;
+    PlcLookupCallback  m_lookupCb;   // ★ 相机查询回调：查格口
 
     // ──── TCP 统计 ────
     std::atomic<int64_t> m_tcpSendCount{0};

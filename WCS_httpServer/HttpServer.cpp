@@ -39,6 +39,13 @@ HttpServer::HttpServer(QObject* parent)
     m_pWorker  = new ParseWorker(m_pQueue, m_pBuffer, this);
     m_pPlcMgr  = new PlcManager(this);  // ★ PLC直连管理器
 
+    // ★ 设置格口查询回调：相机/PLC 扫到 {条码|小车号} 时 → 查 DoubleBuffer → 返回格口号
+    m_pPlcMgr->setLookupCallback([this](const QString& barcode) -> QString {
+        if (!m_pBuffer) return QString();
+        GridEntry entry = m_pBuffer->get(barcode);
+        return entry.gridNum;  // 返回 "15" 或 "1,2,3"（多格口逗号分隔）
+    });
+
     // ──── 业务线程池 ────
     // BUSINESS_POOL_SIZE=90：预估16台扫描仪×5并发查询 + HTTP回传 + 异常处理 + 余量
     // 参考WCSApp架构中的 ThreadPool 模式，将业务逻辑 offload 到线程池避免阻塞 I/O 线程
@@ -400,7 +407,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
             task.rawBody  = st.body;
             task.recvTime = QDateTime::currentMSecsSinceEpoch();
             m_pQueue->push(task);
-            sendJsonResponse(pSender, dwConnID, okResponse("accepted"));
+            sendJsonResponse(pSender, dwConnID, okResponse(""));
             HTTP_INFO("InsertWaveInfo 入队 len=%d queue=%d elapsed=%lldms", st.body.size(), m_pQueue->size(), reqTimer.elapsed());
             emit logMessage(QString("[WMS] InsertWaveInfo 入队 size=%1 queue=%2").arg(st.body.size()).arg(m_pQueue->size()));
         }
@@ -496,7 +503,7 @@ QJsonObject HttpServer::errResponse(const QString& msg, const QString& code)
 // ============================================================================
 // handleBindingLatticePort — 格口容器绑定
 // WMS 下发容器与格口的绑定关系，用于后续装箱数据同步
-// 参数来源: URL queryString ?latticehole=格口号&boxcode=容器号
+// 参数来源: JSON Body {"boxcode":"fDD03","latticehole":"00001"} 或 queryString
 // ============================================================================
 QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, const QString& boxcode)
 {
@@ -506,7 +513,10 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
             boxcode.toLocal8Bit().data(), latticehole.toLocal8Bit().data());
         emit logMessage(QString("[容器绑定] 参数缺失 boxcode=%1 latticehole=%2")
             .arg(boxcode).arg(latticehole), true);
-        return errResponse("参数缺失: latticehole和boxcode均为必填", "400");
+        QJsonObject r;
+        r["code"] = 100;
+        r["msg"]  = QString("参数缺失: latticehole和boxcode均为必填");
+        return r;
     }
 
     // ★ 格口号范围校验：必须在 1～BINDING_SLOT_COUNT 范围内
@@ -519,9 +529,8 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         emit logMessage(QString("[容器绑定] 格口号越界 latticehole=%1 (有效范围: 1~%2)")
             .arg(latticehole).arg(BINDING_SLOT_COUNT), true);
         QJsonObject r;
-        r["code"]    = "400";
-        r["message"] = QString("格口号越界，有效范围: 1~%1").arg(BINDING_SLOT_COUNT);
-        r["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+        r["code"] = 100;
+        r["msg"]  = QString("格口号越界，有效范围: 1~%1").arg(BINDING_SLOT_COUNT);
         return r;
     }
 
@@ -551,9 +560,8 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
     emit bindingUpdated();  // ★ 通知 UI 即时刷新
 
     QJsonObject r;
-    r["code"]    = "200";
-    r["message"] = "收到信息";
-    r["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+    r["code"] = 200;
+    r["msg"]  = "收到信息";
     return r;
 }
 
