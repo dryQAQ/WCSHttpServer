@@ -106,7 +106,7 @@ private:
     QWidget*     m_bindingWidget   = nullptr;  // 绑定状态容器
     QGridLayout* m_bindingGrid     = nullptr;  // 网格布局
     QLabel*      m_bindingLabels[BINDING_SLOT_COUNT] = {};  // N个格口绑定状态标签
-    int          m_bindingCols     = 6;        // 每行列数
+    int          m_bindingCols     = 4;        // 每行列数
     int          m_bindingRows     = BINDING_SLOT_COUNT / m_bindingCols;       // 行数（可扩展，92/6≈16）
     QLabel*      m_lblBoundCount   = nullptr;  // 已绑定数量
     QLabel*      m_lblUnboundCount = nullptr;  // 未绑定数量

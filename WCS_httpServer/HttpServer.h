@@ -28,6 +28,16 @@
 
 class ParseWorker;
 
+// ★ 格口分拣记录（锁格时回传 WMS 用）
+struct GridSortRecord
+{
+    QString inco;          // 条码
+    QString car;           // 小车号
+    int     gridCount = 0; // 配货件数
+    QString volu;          // 来源库位
+    qint64  timeMs   = 0;  // 分拣时间
+};
+
 // 连接状态
 struct ConnState
 {
@@ -78,12 +88,30 @@ public:
         return m_containerBindings.size();
     }
 
+    // ★ RFID查询：接收RFID服务返回的EPC→SKU映射结果
+    void onRfidQueryResult(const QJsonObject& result, const QString& context);
+
+    // ★ RFID查询：根据EPC获取对应的SKU/条码
+    QString getSkuByEpc(const QString& epc) const {
+        std::lock_guard<std::mutex> lock(m_epcSkuMutex);
+        return m_epcSkuMap.value(epc);
+    }
+
+    // ★ RFID查询：获取EPC→SKU映射快照
+    QMap<QString, QString> getEpcSkuMap() const {
+        std::lock_guard<std::mutex> lock(m_epcSkuMutex);
+        return m_epcSkuMap;
+    }
+
 signals:
     void serverStarted(int port);
     void serverStopped();
     void waveReadyToReport(const QString& orderCode);
     void logMessage(const QString& msg, bool isError = false);
     void bindingUpdated();  // 容器绑定变更通知
+    void gridLockReportReady(const QJsonObject& reportJson);  // ★ 锁格回传 WMS
+    void waveCompleteReportReady(const QJsonObject& reportJson); // ★ 波次完成回传（异步入池构建后发出）
+    void rfidQueryRequested(const QJsonArray& epcList, const QString& context); // ★ 请求RFID查询EPC→SKU
 
 protected:
     // CHttpServerListener 回调
@@ -104,6 +132,9 @@ private:
     void processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState& state);
     QJsonObject handleBindingLatticePort(const QString& latticehole, const QString& boxcode); // 格口容器绑定
     QJsonObject handleCancelWave(const QJsonObject& req);                           // 退货任务取消
+    void sendGridLockFeedback(const QString& grid);  // ★ 锁格时回传分拣明细到 WMS
+    QJsonObject buildReportFromRecords(const QString& orderCode,
+                                       const QMap<QString, QVector<GridSortRecord>>& records); // ★ 从记录副本构建 33.md JSON（线程安全）
     void sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
                           const QJsonObject& json, USHORT status = 200);
     QJsonObject okResponse(const QString& msg = "");
@@ -139,4 +170,12 @@ private:
     // ──── 格口容器绑定 ────
     QMap<QString, QString>  m_containerBindings;  // latticehole(格口号) → boxcode(容器号)
     mutable std::mutex       m_containerMutex;     // 保护 m_containerBindings（const方法中需加锁）
+
+    // ──── 格口分拣记录（锁格回传用）────
+    QMap<QString, QVector<GridSortRecord>> m_gridSortRecords;  // 格口号 → 分拣明细列表
+    std::mutex m_gridRecordMutex;                               // 保护 m_gridSortRecords
+
+    // ──── EPC→SKU 映射（RFID查询结果）────
+    QMap<QString, QString>  m_epcSkuMap;      // EPC → 条码/SKU 映射
+    mutable std::mutex       m_epcSkuMutex;    // 保护 m_epcSkuMap（const方法中需加锁）
 };

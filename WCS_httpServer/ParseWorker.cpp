@@ -53,7 +53,8 @@ void ParseWorker::run()
 
         // 构建新Map
         auto* newMap = new QMap<QString, GridEntry>();
-        QSet<QString> recvSet; // 跟踪接收到的inco
+        QSet<QString> recvSet;   // 跟踪接收到的inco
+        QStringList epcList;      // ★ 收集EPC用于RFID查询
 
         for (const QJsonValue& val : items)
         {
@@ -61,6 +62,7 @@ void ParseWorker::run()
             QString inco     = item["inco"].toString().trimmed();
             QString gridNum  = item["gridNum"].toString().trimmed();
             QString gridType = item["gridType"].toString().trimmed();
+            QString volu     = item["volu"].toString().trimmed();   // ★ 来源库位
             // ★ 兼容整数和字符串两种类型
             int gridNumber = 0;
             {
@@ -78,6 +80,11 @@ void ParseWorker::run()
 
             recvSet.insert(inco);
 
+            // ★ 收集EPC（用于后续RFID查询SKU绑定）
+            QString epcn = item["epcn"].toString().trimmed();
+            if (!epcn.isEmpty() && !epcList.contains(epcn))
+                epcList.append(epcn);
+
             // 同品多格口合并
             if (newMap->contains(inco))
             {
@@ -91,6 +98,7 @@ void ParseWorker::run()
                 entry.gridNum   = gridNum;
                 entry.gridType  = gridType.isEmpty() ? "普通格口" : gridType;
                 entry.gridCount = gridNumber;
+                entry.volu      = volu;                      // ★ 来源库位
                 // 批次信息：每个条码都关联到所属批次
                 entry.orderCode = orderCode;
                 entry.orderQty  = orderQty;
@@ -117,6 +125,6 @@ void ParseWorker::run()
             QString("[Parse] orderCode=%1 items=%2 SKU=%3 elapsed=%4ms")
                 .arg(orderCode).arg(items.size()).arg(newMap->size()).arg(elapsed));
 
-        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed, recvSet);
+        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed, recvSet, epcList);
     }
 }

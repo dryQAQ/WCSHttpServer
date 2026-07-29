@@ -27,8 +27,10 @@ signals:
     // orderQty:   波次总件数
     // elapsedMs:  解析耗时(ms)
     // recvSet:    波次包含的所有inco集合（用于波次完结判定）
+    // epcList:    波次中包含的所有EPC列表（用于RFID查询SKU绑定）
     void waveParsed(const QString& orderCode, int skuCount, int orderQty,
-                    qint64 elapsedMs, const QSet<QString>& recvSet);
+                    qint64 elapsedMs, const QSet<QString>& recvSet,
+                    const QStringList& epcList);
     // 解析异常信号
     void parseError(const QString& errorMsg);
 

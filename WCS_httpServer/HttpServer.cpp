@@ -2,6 +2,7 @@
 #include "ParseWorker.h"
 #include "log_center.h"
 #include "hlog1.h"
+#include "ConfigManager.h"
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QUrlQuery>
@@ -47,39 +48,120 @@ HttpServer::HttpServer(QObject* parent)
     });
 
     // ──── 业务线程池 ────
-    // BUSINESS_POOL_SIZE=90：预估16台扫描仪×5并发查询 + HTTP回传 + 异常处理 + 余量
-    // 参考WCSApp架构中的 ThreadPool 模式，将业务逻辑 offload 到线程池避免阻塞 I/O 线程
     {
-        m_pBusinessPool = new Hanchine::ThreadPool(BUSINESS_POOL_SIZE);
-        HTTP_INFO("业务线程池已创建 threads=%d", BUSINESS_POOL_SIZE);
+        AppConfig& cfg = ConfigManager::instance()->config();
+        m_pBusinessPool = new Hanchine::ThreadPool(cfg.businessPoolSize);
+        HTTP_INFO("业务线程池已创建 threads=%d", cfg.businessPoolSize);
     }
 
     // 显式指定 Qt::QueuedConnection：ParseWorker::run() 在独立线程中运行，
     // 使用 AutoConnection 时因 sender/receiver 的 thread() 都在主线程，
     // 但 emit 发生在工作线程，导致信号跨线程传递异常。
     connect(m_pWorker, &ParseWorker::waveParsed, this,
-        [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet) {
+        [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet, const QStringList& epcList) {
             m_pWaveMgr->setWaveData(orderCode, orderQty, skuCount);
             m_pWaveMgr->setRecvSet(recvSet);
-            // ★ 新波次到来，重置PLC发送失败警告集合
+            // ★ 新波次到来，重置 PLC 发送失败警告集合
             {
                 std::lock_guard<std::mutex> lock(m_warnMutex);
                 m_warnedPlcFailCodes.clear();
             }
+            // ★ 新波次到来，清空旧格口分拣记录
+            {
+                std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+                m_gridSortRecords.clear();
+            }
+            // ★ 新波次到来，清空旧 EPC→SKU 映射
+            {
+                std::lock_guard<std::mutex> lock(m_epcSkuMutex);
+                m_epcSkuMap.clear();
+            }
+
+            // ★ 触发RFID查询：按批次大小拆分EPC列表，分批请求
+            if (!epcList.isEmpty())
+            {
+                HTTP_LOG_INFO("波次解析完成 触发RFID查询 order=%s epcCount=%d",
+                    orderCode.toLocal8Bit().data(), epcList.size());
+
+                QJsonArray batch;
+                for (int i = 0; i < epcList.size(); ++i)
+                {
+                    batch.append(epcList[i]);
+                    if (batch.size() >= RFID_MAX_BATCH_SIZE || i == epcList.size() - 1)
+                    {
+                        QString batchCtx = QString("%1_batch%2").arg(orderCode).arg(i / RFID_MAX_BATCH_SIZE + 1);
+                        emit rfidQueryRequested(batch, batchCtx);
+                        batch = QJsonArray();
+                    }
+                }
+            }
         }, Qt::QueuedConnection);
 
-    connect(m_pWaveMgr, &WaveManager::waveReadyToReport, this, &HttpServer::waveReadyToReport);
+    // ★ 波次完成 → 异步入池构建 33.md JSON（避免主线程遍历大量数据卡 UI）
+    connect(m_pWaveMgr, &WaveManager::waveReadyToReport, this,
+        [this](const QString& orderCode) {
+            // 1. 快速拷贝格口记录（主线程，加锁 ≤1ms）
+            QMap<QString, QVector<GridSortRecord>> recordsCopy;
+            {
+                std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+                recordsCopy = m_gridSortRecords;
+                m_gridSortRecords.clear();  // 立即清空，避免双写
+            }
 
-    // ──── PLC反馈 → 分拣标记 ────
-    // PLC确认落格后自动标记为已分拣
+            if (recordsCopy.isEmpty())
+            {
+                HTTP_LOG_WARN("波次完成回传: 无分拣记录 order=%s", orderCode.toLocal8Bit().data());
+                emit logMessage(QString("[波次] 无分拣记录，跳过回传 order=%1").arg(orderCode));
+                return;
+            }
+
+            // 2. 异步入池构建 JSON + 发出信号（业务线程池，不卡主线程）
+            if (m_pBusinessPool)
+            {
+                m_pBusinessPool->commitNoWait([this, orderCode, recordsCopy]() {
+                    QJsonObject report = buildReportFromRecords(orderCode, recordsCopy);
+                    emit waveCompleteReportReady(report);
+                });
+            }
+            else
+            {
+                QJsonObject report = buildReportFromRecords(orderCode, recordsCopy);
+                emit waveCompleteReportReady(report);
+            }
+        }, Qt::QueuedConnection);
+
+    // ──── PLC反馈 → 分拣标记 + 按格口记录 ────
+    // PLC确认落格后自动标记为已分拣，同时记录格口→条码映射（供锁格回传用）
     connect(m_pPlcMgr, &PlcManager::plcFeedbackReceived, this,
         [this](const QString& code, const QString& grid, const QString& car) {
-            Q_UNUSED(grid);
-            Q_UNUSED(car);
             if (!m_pWaveMgr) return;
             m_pWaveMgr->markSorted(code);
-            HTTP_LOG_INFO("PLC反馈自动分拣 code=%s", code.toLocal8Bit().data());
+
+            // ★ 按格口记录分拣明细（锁格时回传 WMS 用）
+            {
+                std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+                GridSortRecord rec;
+                rec.inco   = code;
+                rec.car    = car;
+                rec.timeMs = QDateTime::currentMSecsSinceEpoch();
+
+                // 从 DoubleBuffer 获取该条码的 gridCount 和 volu
+                GridEntry entry = m_pBuffer->get(code);
+                rec.gridCount = entry.gridCount;
+                rec.volu      = entry.volu.isEmpty() ? QString("--") : entry.volu;
+
+                m_gridSortRecords[grid].append(rec);
+            }
+
+            HTTP_LOG_INFO("PLC反馈自动分拣 code=%s grid=%s", code.toLocal8Bit().data(), grid.toLocal8Bit().data());
             emit logMessage(QString("[PLC] 反馈落格分拣 code=%1 grid=%2 car=%3").arg(code).arg(grid).arg(car));
+        }, Qt::QueuedConnection);
+
+    // ★ S7 锁格 → 触发 WMS 回传
+    connect(m_pPlcMgr, &PlcManager::gridLocked, this,
+        [this](const QString& grid) {
+            emit logMessage(QString("[锁格] 格口%1 已锁定，准备回传WMS").arg(grid), true);
+            sendGridLockFeedback(grid);
         }, Qt::QueuedConnection);
 
     // PLC连接状态日志（使用 QueuedConnection 确保跨线程安全）
@@ -151,21 +233,22 @@ bool HttpServer::start(int port)
     }
 
     LogCenter::Instance()->wcs_run_log_warn(true,
-        QString("[Http] 服务已启动 port=%1 businessPool=%2 hpWorker=%3")
-            .arg(port).arg(BUSINESS_POOL_SIZE).arg(HP_WORKER_THREADS));
+        QString("[Http] 服务已启动 port=%1")
+            .arg(port));
 
     // ★ 同时启动PLC监听服务
     if (m_pPlcMgr)
     {
-        if (m_pPlcMgr->start("0.0.0.0", PLC_LISTEN_PORT))
+        AppConfig& cfg = ConfigManager::instance()->config();
+        if (m_pPlcMgr->start("0.0.0.0", cfg.plcListenPort))
         {
-            HTTP_LOG_INFO("PLC监听服务已启动 port=%d", PLC_LISTEN_PORT);
-            emit logMessage(QString("[PLC] 监听服务已启动 port=%1").arg(PLC_LISTEN_PORT));
+            HTTP_LOG_INFO("PLC监听服务已启动 port=%d", cfg.plcListenPort);
+            emit logMessage(QString("[PLC] 监听服务已启动 port=%1").arg(cfg.plcListenPort));
         }
         else
         {
-            HTTP_LOG_ERROR("PLC监听服务启动失败 port=%d", PLC_LISTEN_PORT);
-            emit logMessage(QString("[PLC] 监听服务启动失败 port=%1").arg(PLC_LISTEN_PORT), true);
+            HTTP_LOG_ERROR("PLC监听服务启动失败 port=%d", cfg.plcListenPort);
+            emit logMessage(QString("[PLC] 监听服务启动失败 port=%1").arg(cfg.plcListenPort), true);
         }
     }
 
@@ -614,6 +697,12 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
         HTTP_LOG_INFO("CancelWave 已清理容器绑定 count=%d", count);
     }
 
+    // ★ 清理格口分拣记录
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        m_gridSortRecords.clear();
+    }
+
     // 清理 TaskQueue 中积压的待解析任务（可能有同波次的重复推送）
     // TaskQueue 没有 clear()，通过 pop 直到空
 
@@ -664,4 +753,210 @@ void HttpServer::logHealthStatus()
             active, request);
     }
     s_lastRequest = request;
+}
+
+// ============================================================================
+// sendGridLockFeedback — 锁格时构建分拣明细，发送 WMS 回传
+// 报文格式: 33.md "gwisSubProductClassifyOrder"
+// ============================================================================
+void HttpServer::sendGridLockFeedback(const QString& grid)
+{
+    // ── 1. 获取容器绑定 ──
+    QString boxCode;
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        // 格口号可能是零填充 "00001" 或普通 "1"，都查一下
+        boxCode = m_containerBindings.value(grid);
+        if (boxCode.isEmpty())
+        {
+            // 尝试去掉前置 0 再查
+            bool ok = false;
+            int g = grid.toInt(&ok);
+            if (ok && g >= 1)
+                boxCode = m_containerBindings.value(QString("%1").arg(g, GRID_KEY_PADDING, 10, QChar('0')));
+        }
+    }
+
+    // ── 2. 获取波次号 ──
+    QString orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+
+    // ── 3. 获取该格口的分拣记录 ──
+    QVector<GridSortRecord> records;
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        auto it = m_gridSortRecords.find(grid);
+        if (it != m_gridSortRecords.end())
+            records = it.value();
+    }
+
+    if (records.isEmpty())
+    {
+        HTTP_LOG_WARN("锁格回传: 格口 %s 无分拣记录, 跳过", grid.toLocal8Bit().data());
+        emit logMessage(QString("[锁格] 格口%1 无分拣记录，跳过回传").arg(grid));
+        return;
+    }
+
+    // ── 4. 构建 WMS 回传 JSON ──
+    AppConfig& cfg = ConfigManager::instance()->config();
+    QJsonObject head;
+    head["orderCode"]      = orderCode;
+    head["orderType"]      = WMS_ORDER_TYPE;
+    head["warehouseCode"]  = cfg.warehouseCode;
+    head["goodsOwner"]     = cfg.goodsOwner;
+    head["fromLocation"]   = records.first().volu;  // 取第一条的 volu
+    head["createDate"]     = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+    head["createUserCode"] = WMS_OPERUSER_CODE;
+    head["createUserName"] = QString::fromUtf8(WMS_OPERUSER_NAME);
+    head["remark"]         = "";
+    head["gwf1-20"]        = "";
+
+    QJsonArray detailList;
+    int lineNum = 1;
+    for (const GridSortRecord& rec : records)
+    {
+        QJsonObject item;
+        item["lineNum"]        = QString::number(lineNum++);
+        item["num"]            = boxCode.isEmpty() ? rec.car : boxCode;  // 框号优先容器号
+        item["targetLocation"] = grid;
+        item["sku"]            = rec.inco;
+        item["qty"]            = QString::number(rec.gridCount);
+        item["batchCode"]      = orderCode;
+        item["gwf1-20"]        = "";
+        detailList.append(item);
+    }
+    head["detailList"] = detailList;
+
+    QJsonObject report;
+    report["head"] = head;
+
+    HTTP_LOG_INFO("锁格回传 grid=%s box=%s order=%s items=%d",
+        grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data(),
+        orderCode.toLocal8Bit().data(), records.size());
+    emit logMessage(QString("[锁格] 回传WMS grid=%1 box=%2 items=%3")
+        .arg(grid).arg(boxCode).arg(records.size()));
+
+    // ★ 信号发送后清理该格口的记录（避免重复回传）
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        m_gridSortRecords.remove(grid);
+    }
+
+    emit gridLockReportReady(report);
+}
+
+// ============================================================================
+// buildReportFromRecords — 从记录副本构建 33.md 格式回传 JSON（线程安全，无锁）
+// 由业务线程池调用，不在主线程执行，不持有任何锁
+// ============================================================================
+QJsonObject HttpServer::buildReportFromRecords(const QString& orderCode,
+                                                const QMap<QString, QVector<GridSortRecord>>& records)
+{
+    AppConfig& cfg = ConfigManager::instance()->config();
+
+    QJsonObject head;
+    head["orderCode"]      = orderCode;
+    head["orderType"]      = WMS_ORDER_TYPE;
+    head["warehouseCode"]  = cfg.warehouseCode;
+    head["goodsOwner"]     = cfg.goodsOwner;
+    head["createDate"]     = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+    head["createUserCode"] = WMS_OPERUSER_CODE;
+    head["createUserName"] = QString::fromUtf8(WMS_OPERUSER_NAME);
+    head["remark"]         = "";
+    head["gwf1-20"]        = "";
+
+    QJsonArray detailList;
+    int lineNum = 1;
+    int totalItems = 0;
+    QString firstVolu;
+
+    for (auto it = records.constBegin(); it != records.constEnd(); ++it)
+    {
+        const QString& grid = it.key();
+        for (const GridSortRecord& rec : it.value())
+        {
+            if (firstVolu.isEmpty() && !rec.volu.isEmpty() && rec.volu != "--")
+                firstVolu = rec.volu;
+
+            QJsonObject item;
+            item["lineNum"]        = QString::number(lineNum++);
+            item["num"]            = rec.car;
+            item["targetLocation"] = grid;
+            item["sku"]            = rec.inco;
+            item["qty"]            = QString::number(rec.gridCount);
+            item["batchCode"]      = orderCode;
+            item["gwf1-20"]        = "";
+            detailList.append(item);
+            totalItems++;
+        }
+    }
+
+    head["fromLocation"] = firstVolu.isEmpty() ? "--" : firstVolu;
+    head["detailList"]   = detailList;
+
+    QJsonObject report;
+    report["head"] = head;
+
+    HTTP_LOG_INFO("波次完成回传 order=%s grids=%d items=%d",
+        orderCode.toLocal8Bit().data(), (int)records.size(), totalItems);
+
+    return report;
+}
+
+// ============================================================================
+// onRfidQueryResult — 接收RFID服务返回的EPC→SKU查询结果
+// 解析格式: {"data":{"data":[{"barcode":"xxx","epc":"xxx",...}]},"success":true}
+// 将 EPC→barcode 映射存储到 m_epcSkuMap
+// ============================================================================
+void HttpServer::onRfidQueryResult(const QJsonObject& result, const QString& context)
+{
+    if (result.isEmpty())
+    {
+        HTTP_LOG_WARN("RFID查询结果为空 context=%s", context.toLocal8Bit().data());
+        emit logMessage(QString("[RFID] 查询结果为空 context=%1").arg(context), true);
+        return;
+    }
+
+    bool success = result["success"].toBool(false);
+    if (!success)
+    {
+        QString errMsg = result["msg"].toString();
+        HTTP_LOG_WARN("RFID查询失败 context=%s msg=%s", context.toLocal8Bit().data(), errMsg.toLocal8Bit().data());
+        emit logMessage(QString("[RFID] 查询失败 context=%1 msg=%2").arg(context).arg(errMsg), true);
+        return;
+    }
+
+    QJsonObject dataObj = result["data"].toObject();
+    QJsonArray dataArr  = dataObj["data"].toArray();
+
+    if (dataArr.isEmpty())
+    {
+        HTTP_LOG_WARN("RFID查询成功但无数据 context=%s", context.toLocal8Bit().data());
+        emit logMessage(QString("[RFID] 查询成功但无数据 context=%1").arg(context));
+        return;
+    }
+
+    // 解析每条 EPC→barcode 映射
+    int newCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_epcSkuMutex);
+        for (const QJsonValue& val : dataArr)
+        {
+            QJsonObject item = val.toObject();
+            QString epc     = item["epc"].toString().trimmed();
+            QString barcode = item["barcode"].toString().trimmed();
+
+            if (epc.isEmpty()) continue;
+
+            if (!barcode.isEmpty())
+            {
+                m_epcSkuMap[epc] = barcode;
+                newCount++;
+            }
+        }
+    }
+
+    HTTP_LOG_INFO("RFID查询结果已存储 context=%s total=%d new=%d",
+        context.toLocal8Bit().data(), dataArr.size(), newCount);
+    emit logMessage(QString("[RFID] EPC→SKU映射已存储 context=%1 返回%2条 有效%3条")
+        .arg(context).arg(dataArr.size()).arg(newCount));
 }

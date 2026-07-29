@@ -15,6 +15,8 @@
 #include <QFrame>
 #include <QScrollArea>
 #include <QVector>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QTextCursor>
 
 MainWindow::MainWindow(QWidget* parent)
@@ -37,8 +39,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_logFlushTimer, &QTimer::timeout, this, &MainWindow::flushLogBuffer);
     m_logFlushTimer->start();
 
-    // 自动启动
-    onStartStop();
+    //自动启动：
+    // onStartStop();
+    // 不自动启动，等待用户点击"启动服务"
 }
 
 MainWindow::~MainWindow()
@@ -306,9 +309,11 @@ void MainWindow::setupUI()
         fLayout->setContentsMargins(2, 1, 2, 1);
         fLayout->setSpacing(1);
 
-        // ★ 零填充格口号显示，与 WMS 格式一致: 1 → "00001"
-        QLabel* lblGrid = new QLabel(QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0')));
-        lblGrid->setFixedWidth(38);
+        // ★ 格口标签：优先使用 XML 自定义名，否则零填充序号
+        QString paddedNum = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
+        QString displayName = ConfigManager::instance()->config().gridNames.value(QString::number(gridNum), paddedNum);
+        QLabel* lblGrid = new QLabel(displayName);
+        lblGrid->setFixedWidth(80);
         lblGrid->setAlignment(Qt::AlignCenter);
         lblGrid->setStyleSheet("font-size: 11px; font-weight: bold; color: #333; border: none; background: transparent;");
 
@@ -444,6 +449,9 @@ void MainWindow::onStartStop()
         m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
         m_pClient->setUrl(cfg.activeFeedbackUrl());
         m_pClient->setAppkey(cfg.activeAppkey());
+        m_pClient->setTimeout(cfg.httpTimeoutMs);
+        m_pClient->setRfidUrl(cfg.rfidUrl);               // ★ RFID查询URL
+        m_pClient->setRfidTimeout(RFID_TIMEOUT_MS);        // ★ RFID查询超时
 
         m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
         m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
@@ -465,12 +473,14 @@ void MainWindow::onStartStop()
 
             appendLog(QString("HTTP服务已启动 端口=%1").arg(port));
 
-            connect(m_pServer, &HttpServer::waveReadyToReport, this, [this](const QString& orderCode) {
-                if (!m_pClient) return;
-                int sumLocation = m_pServer->waveManager()->sumLocation();
-                appendLog(QString("自动回传波次 %1 sumLocation=%2").arg(orderCode).arg(sumLocation));
-                m_pClient->sendWaveComplete(orderCode, sumLocation);
-            });
+            // ★ 波次完成回传 → WMS（HttpServer 异步入池构建 JSON，HttpClient 发送）
+            connect(m_pServer, &HttpServer::waveCompleteReportReady, this,
+                [this](const QJsonObject& reportJson) {
+                    if (!m_pClient) return;
+                    QString orderCode = reportJson["head"].toObject()["orderCode"].toString();
+                    appendLog(QString("波次完成回传 orderCode=%1").arg(orderCode));
+                    m_pClient->sendGenericFeedback(reportJson, orderCode);
+                });
 
             // ★ 回传结果处理：成功→已完成，失败→异常（避免状态卡在"回传中"）
             connect(m_pClient, &HttpClient::reportResult, this,
@@ -490,6 +500,16 @@ void MainWindow::onStartStop()
                     }
                 });
 
+            // ★ 锁格回传 → WMS（HttpServer 构建 JSON，HttpClient 发送）
+            connect(m_pServer, &HttpServer::gridLockReportReady, this,
+                [this](const QJsonObject& reportJson) {
+                    if (!m_pClient) return;
+                    QString grid = reportJson["head"].toObject()["detailList"].toArray().first()
+                        .toObject()["targetLocation"].toString();
+                    appendLog(QString("[锁格] 发送回传 grid=%1").arg(grid));
+                    m_pClient->sendGenericFeedback(reportJson, "lockGrid_" + grid);
+                });
+
             // ★ 连接HttpServer日志信号到UI日志区
             connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
 
@@ -501,6 +521,36 @@ void MainWindow::onStartStop()
                 c.containerBindings = m_pServer->getContainerBindings();
                 ConfigManager::instance()->save();
             });
+
+            // ★ RFID查询：HttpServer触发 → HttpClient发送请求
+            connect(m_pServer, &HttpServer::rfidQueryRequested, this,
+                [this](const QJsonArray& epcList, const QString& context) {
+                    if (!m_pClient) return;
+                    m_pClient->queryRfid(epcList, context);
+                });
+
+            // ★ RFID查询结果：HttpClient返回 → HttpServer存储 + UI日志
+            connect(m_pClient, &HttpClient::rfidQueryResult, this,
+                [this](const QJsonObject& result, const QString& context) {
+                    if (m_pServer) m_pServer->onRfidQueryResult(result, context);
+
+                    // UI日志
+                    if (result.isEmpty())
+                    {
+                        appendLog(QString("[RFID] 查询超时或失败 context=%1").arg(context), true);
+                    }
+                    else
+                    {
+                        bool success = result["success"].toBool(false);
+                        QJsonArray dataArr = result["data"].toObject()["data"].toArray();
+                        if (success)
+                            appendLog(QString("[RFID] 查询成功 context=%1 返回%2条EPC映射")
+                                .arg(context).arg(dataArr.size()));
+                        else
+                            appendLog(QString("[RFID] 查询失败 context=%1 msg=%2")
+                                .arg(context).arg(result["msg"].toString()), true);
+                    }
+                });
 
             // ★ 连接PLC状态信号到UI（全部使用 QueuedConnection，确保跨线程安全）
             if (m_pPlcMgr)

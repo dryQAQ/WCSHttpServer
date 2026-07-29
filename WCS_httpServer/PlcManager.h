@@ -41,6 +41,7 @@
 #include "HPSocket.h"
 #include "define.h"
 #include "LifecycleLogger.h"
+#include "ThreadPool.h"
 
 class CSiemensPLC;
 
@@ -198,6 +199,9 @@ private:
 
     PlcConfig m_plcConfig;
     std::atomic<bool> m_bRunning{false};
+
+    // ★ PLC 发送专用线程池：S7 DBWrite 同步阻塞，异步入池防止阻塞 HP-Socket I/O 线程
+    Hanchine::ThreadPool* m_pSendPool = nullptr;
 
     mutable std::mutex m_clientMutex;
     std::map<CONNID, std::string> m_mapClient;

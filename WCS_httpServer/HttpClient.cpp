@@ -3,6 +3,7 @@
 #include "hlog1.h"
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QDateTime>
 #include <QNetworkRequest>
 
@@ -21,13 +22,21 @@ HttpClient::HttpClient(QObject* parent)
 
 HttpClient::~HttpClient()
 {
-    // 取消所有进行中的请求
+    // 取消所有进行中的 WMS 回传请求
     for (auto it = m_pending.begin(); it != m_pending.end(); ++it)
     {
         if (it->timer)  { it->timer->stop(); delete it->timer; }
         if (it->reply)  { it->reply->abort(); it->reply->deleteLater(); }
     }
     m_pending.clear();
+
+    // 取消所有进行中的 RFID 查询请求
+    for (auto it = m_rfidPending.begin(); it != m_rfidPending.end(); ++it)
+    {
+        if (it->timer)  { it->timer->stop(); delete it->timer; }
+        if (it->reply)  { it->reply->abort(); it->reply->deleteLater(); }
+    }
+    m_rfidPending.clear();
 }
 
 void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
@@ -141,6 +150,155 @@ void HttpClient::onReplyTimeout()
             pr.timer->deleteLater();
             emit reportResult(pr.orderCode, false, QString());
             m_pending.erase(it);
+            break;
+        }
+    }
+}
+
+void HttpClient::sendGenericFeedback(const QJsonObject& json, const QString& context)
+{
+    if (m_url.isEmpty())
+    {
+        HTTP_ERROR("回传URL为空，跳过 context=%s", context.toLocal8Bit().data());
+        return;
+    }
+
+    QByteArray postData = QJsonDocument(json).toJson(QJsonDocument::Compact);
+
+    QUrl url(m_url);
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
+    request.setRawHeader("AppKey", m_appkey.toUtf8());
+
+    QNetworkReply* reply = m_pNetworkMgr->post(request, postData);
+
+    QTimer* timer = new QTimer(this);
+    timer->setSingleShot(true);
+    timer->setInterval(m_timeoutMs);
+
+    PendingRequest pr;
+    pr.reply       = reply;
+    pr.timer       = timer;
+    pr.orderCode   = context.isEmpty() ? "lockGrid" : context;
+    pr.sumLocation = 0;
+    m_pending.insert(reply, pr);
+
+    connect(reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
+    connect(timer, &QTimer::timeout, this, &HttpClient::onReplyTimeout);
+    timer->start();
+
+    HTTP_INFO("锁格回传发送 context=%s len=%d", context.toLocal8Bit().data(), postData.size());
+}
+
+// ============================================================================
+// queryRfid — 向RFID服务查询EPC对应的SKU/条码信息（异步）
+// 请求格式: POST {rfidUrl}  Body: {"epcList":["EPC1","EPC2",...]}
+// 响应格式: {"data":{"data":[{"barcode":"xxx","epc":"xxx",...}]},"success":true}
+// ============================================================================
+void HttpClient::queryRfid(const QJsonArray& epcList, const QString& context)
+{
+    if (m_rfidUrl.isEmpty())
+    {
+        HTTP_ERROR("RFID查询URL为空，跳过 context=%s epcCount=%d",
+            context.toLocal8Bit().data(), epcList.size());
+        emit rfidQueryResult(QJsonObject(), context);
+        return;
+    }
+
+    if (epcList.isEmpty())
+    {
+        HTTP_WARN("RFID查询 EPC列表为空 context=%s", context.toLocal8Bit().data());
+        emit rfidQueryResult(QJsonObject(), context);
+        return;
+    }
+
+    HTTP_INFO("RFID查询开始 context=%s epcCount=%d", context.toLocal8Bit().data(), epcList.size());
+
+    QJsonObject reqBody;
+    reqBody["epcList"] = epcList;
+    QByteArray postData = QJsonDocument(reqBody).toJson(QJsonDocument::Compact);
+
+    QUrl url(m_rfidUrl);
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
+
+    QNetworkReply* reply = m_pNetworkMgr->post(request, postData);
+
+    QTimer* timer = new QTimer(this);
+    timer->setSingleShot(true);
+    timer->setInterval(m_rfidTimeoutMs);
+
+    RfidPendingRequest rpr;
+    rpr.reply   = reply;
+    rpr.timer   = timer;
+    rpr.context = context;
+    m_rfidPending.insert(reply, rpr);
+
+    connect(reply, &QNetworkReply::finished, this, &HttpClient::onRfidReplyFinished);
+    connect(timer, &QTimer::timeout, this, &HttpClient::onRfidReplyTimeout);
+    timer->start();
+}
+
+void HttpClient::onRfidReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    auto it = m_rfidPending.find(reply);
+    if (it == m_rfidPending.end()) return;
+
+    RfidPendingRequest& rpr = it.value();
+    if (rpr.timer) { rpr.timer->stop(); rpr.timer->deleteLater(); rpr.timer = nullptr; }
+
+    QByteArray respBody = reply->readAll();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    reply->deleteLater();
+
+    QJsonDocument doc = QJsonDocument::fromJson(respBody);
+    QJsonObject result = doc.object();
+    bool success = result["success"].toBool(false);
+
+    if (success)
+    {
+        QJsonObject dataObj = result["data"].toObject();
+        QJsonArray dataArr  = dataObj["data"].toArray();
+        HTTP_INFO("RFID查询成功 context=%s status=%d epcMatched=%d",
+            rpr.context.toLocal8Bit().data(), statusCode, dataArr.size());
+    }
+    else
+    {
+        QString errMsg = result["msg"].toString();
+        HTTP_WARN("RFID查询失败 context=%s status=%d msg=%s body=%s",
+            rpr.context.toLocal8Bit().data(), statusCode,
+            errMsg.toLocal8Bit().data(),
+            QString::fromUtf8(respBody).left(RESP_BODY_LOG_TRUNCATE).toLocal8Bit().data());
+    }
+
+    emit rfidQueryResult(result, rpr.context);
+    m_rfidPending.erase(it);
+}
+
+void HttpClient::onRfidReplyTimeout()
+{
+    QTimer* timer = qobject_cast<QTimer*>(sender());
+    if (!timer) return;
+
+    for (auto it = m_rfidPending.begin(); it != m_rfidPending.end(); ++it)
+    {
+        if (it->timer == timer)
+        {
+            RfidPendingRequest& rpr = it.value();
+            HTTP_WARN("RFID查询超时 context=%s timeout=%dms",
+                rpr.context.toLocal8Bit().data(), m_rfidTimeoutMs);
+
+            if (rpr.reply) {
+                disconnect(rpr.reply, &QNetworkReply::finished, this, &HttpClient::onRfidReplyFinished);
+                rpr.reply->abort();
+                rpr.reply->deleteLater();
+            }
+            rpr.timer->deleteLater();
+            emit rfidQueryResult(QJsonObject(), rpr.context);
+            m_rfidPending.erase(it);
             break;
         }
     }

@@ -23,15 +23,39 @@ struct AppConfig
     QString appkeyTest        = WMS_APPKEY_TEST;       // 测试环境 AppKey
     bool    useTestEnv        = true;                  // true=使用测试环境
 
+    // ──── WMS 业务参数 ────
+    QString warehouseCode    = WMS_WAREHOUSE_CODE;    // 仓库编码
+    QString goodsOwner       = WMS_GOODS_OWNER;       // 货主编码
+
     // ──── 波次配置 ────
     int     waveTimeoutMin    = WAVE_TIMEOUT_MIN_DEFAULT; // 波次超时(分钟, 0=不超时)
     int     maxRetryCount     = WAVE_MAX_RETRY;           // 异常 SKU 最大重试次数
+
+    // ──── 网络超时 ────
+    int     httpTimeoutMs         = HTTP_TIMEOUT_MS;          // HTTP 请求超时(ms)
+    int     waveCompleteTimeoutMs = WAVE_COMPLETE_TIMEOUT_MS; // 波次完成回传超时(ms)
+
+    // ──── PLC 通信 ────
+    int     plcListenPort     = PLC_LISTEN_PORT;        // PLC TCP 监听端口（默认 8192）
+    QString plcS7Ip           = PLC_S7_IP;              // S7 PLC IP 地址
+    int     plcS7Rack         = PLC_S7_RACK;            // S7 机架号
+    int     plcS7Slot         = PLC_S7_SLOT;            // S7 槽位号
+
+    // ──── 线程池 ────
+    int     businessPoolSize  = BUSINESS_POOL_SIZE;     // 业务线程池大小
+    int     plcSendPoolSize   = PLC_SEND_POOL_SIZE;     // PLC 发送线程池大小
+
+    // ──── RFID ────
+    QString rfidUrl          = RFID_QUERY_URL;           // RFID EPC查询接口URL
 
     // ──── 日志 ────
     int     logRetainDays     = LOG_RETAIN_DAYS;          // 日志保留天数
 
     // ──── 容器绑定（持久化，格口号→容器号）────
     QMap<QString, QString> containerBindings;
+
+    // ──── 格口显示名（持久化，格口号 → 自定义名称，不设则显示零填充序号）────
+    QMap<QString, QString> gridNames;
 
     bool loadFromFile(const QString& path = CONFIG_FILE);
     bool saveToFile(const QString& path = CONFIG_FILE) const;

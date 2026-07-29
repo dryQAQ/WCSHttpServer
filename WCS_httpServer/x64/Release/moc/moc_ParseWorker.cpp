@@ -23,8 +23,8 @@ QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_ParseWorker_t {
-    QByteArrayData data[11];
-    char stringdata0[104];
+    QByteArrayData data[12];
+    char stringdata0[112];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -42,13 +42,14 @@ QT_MOC_LITERAL(5, 43, 8), // "orderQty"
 QT_MOC_LITERAL(6, 52, 9), // "elapsedMs"
 QT_MOC_LITERAL(7, 62, 13), // "QSet<QString>"
 QT_MOC_LITERAL(8, 76, 7), // "recvSet"
-QT_MOC_LITERAL(9, 84, 10), // "parseError"
-QT_MOC_LITERAL(10, 95, 8) // "errorMsg"
+QT_MOC_LITERAL(9, 84, 7), // "epcList"
+QT_MOC_LITERAL(10, 92, 10), // "parseError"
+QT_MOC_LITERAL(11, 103, 8) // "errorMsg"
 
     },
     "ParseWorker\0waveParsed\0\0orderCode\0"
     "skuCount\0orderQty\0elapsedMs\0QSet<QString>\0"
-    "recvSet\0parseError\0errorMsg"
+    "recvSet\0epcList\0parseError\0errorMsg"
 };
 #undef QT_MOC_LITERAL
 
@@ -66,12 +67,12 @@ static const uint qt_meta_data_ParseWorker[] = {
        2,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    5,   24,    2, 0x06 /* Public */,
-       9,    1,   35,    2, 0x06 /* Public */,
+       1,    6,   24,    2, 0x06 /* Public */,
+      10,    1,   37,    2, 0x06 /* Public */,
 
  // signals: parameters
-    QMetaType::Void, QMetaType::QString, QMetaType::Int, QMetaType::Int, QMetaType::LongLong, 0x80000000 | 7,    3,    4,    5,    6,    8,
-    QMetaType::Void, QMetaType::QString,   10,
+    QMetaType::Void, QMetaType::QString, QMetaType::Int, QMetaType::Int, QMetaType::LongLong, 0x80000000 | 7, QMetaType::QStringList,    3,    4,    5,    6,    8,    9,
+    QMetaType::Void, QMetaType::QString,   11,
 
        0        // eod
 };
@@ -82,7 +83,7 @@ void ParseWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id,
         auto *_t = static_cast<ParseWorker *>(_o);
         Q_UNUSED(_t)
         switch (_id) {
-        case 0: _t->waveParsed((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< int(*)>(_a[2])),(*reinterpret_cast< int(*)>(_a[3])),(*reinterpret_cast< qint64(*)>(_a[4])),(*reinterpret_cast< const QSet<QString>(*)>(_a[5]))); break;
+        case 0: _t->waveParsed((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< int(*)>(_a[2])),(*reinterpret_cast< int(*)>(_a[3])),(*reinterpret_cast< qint64(*)>(_a[4])),(*reinterpret_cast< const QSet<QString>(*)>(_a[5])),(*reinterpret_cast< const QStringList(*)>(_a[6]))); break;
         case 1: _t->parseError((*reinterpret_cast< const QString(*)>(_a[1]))); break;
         default: ;
         }
@@ -100,7 +101,7 @@ void ParseWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id,
     } else if (_c == QMetaObject::IndexOfMethod) {
         int *result = reinterpret_cast<int *>(_a[0]);
         {
-            using _t = void (ParseWorker::*)(const QString & , int , int , qint64 , const QSet<QString> & );
+            using _t = void (ParseWorker::*)(const QString & , int , int , qint64 , const QSet<QString> & , const QStringList & );
             if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&ParseWorker::waveParsed)) {
                 *result = 0;
                 return;
@@ -157,9 +158,9 @@ int ParseWorker::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
 }
 
 // SIGNAL 0
-void ParseWorker::waveParsed(const QString & _t1, int _t2, int _t3, qint64 _t4, const QSet<QString> & _t5)
+void ParseWorker::waveParsed(const QString & _t1, int _t2, int _t3, qint64 _t4, const QSet<QString> & _t5, const QStringList & _t6)
 {
-    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t4))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t5))) };
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t4))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t5))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t6))) };
     QMetaObject::activate(this, &staticMetaObject, 0, _a);
 }
 

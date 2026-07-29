@@ -50,11 +50,17 @@
     <logRetainDays>30</logRetainDays>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- RFID 查询（EPC→SKU绑定关系）                                     -->
+    <!-- BaseURL 需替换为实际RFID服务地址                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <rfidUrl>http://{BaseURL}/open-api/rfid/query</rfidUrl>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 格口显示名（可选，不设则显示零填充序号如"00001"）                  -->
     <!-- 格式: <gridName num="格口编号">自定义名称</gridName>              -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <gridName num="1">1号格口</gridName>
-    <gridName num="2">2号格口</gridName>
+    <gridName num="2">6666</gridName>
     <gridName num="3">3号格口</gridName>
     <gridName num="4">4号格口</gridName>
     <gridName num="5">5号格口</gridName>

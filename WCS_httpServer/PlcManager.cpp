@@ -1,5 +1,6 @@
 #include "PlcManager.h"
 #include "SiemensPLC.h"
+#include "ConfigManager.h"
 #include <QRegularExpression>
 #include <QRegularExpressionMatchIterator>
 #include <QDebug>
@@ -19,7 +20,12 @@ PlcManager::PlcManager(QObject* parent)
     qRegisterMetaType<PlcFeedbackEntry>("PlcFeedbackEntry");
     qRegisterMetaType<QVector<PlcFeedbackEntry>>("QVector<PlcFeedbackEntry>");
 
-    PLC_LOG_INFO("PLC管理器已创建");
+    // ★ 创建 PLC 发送专用线程池（S7 DBWrite 同步阻塞 10~100ms，异步入池防 I/O 线程阻塞）
+    {
+        AppConfig& cfg = ConfigManager::instance()->config();
+        m_pSendPool = new Hanchine::ThreadPool(cfg.plcSendPoolSize);
+        PLC_LOG_INFO("PLC管理器已创建 sendPool=%d", cfg.plcSendPoolSize);
+    }
 }
 
 PlcManager::~PlcManager()
@@ -33,6 +39,14 @@ PlcManager::~PlcManager()
     disconnectS7();
 
     stop();
+
+    // 销毁发送线程池
+    if (m_pSendPool)
+    {
+        delete m_pSendPool;
+        m_pSendPool = nullptr;
+    }
+
     PLC_LOG_INFO("PLC管理器已销毁 tcpSend=%lld tcpErr=%lld s7Send=%lld s7Err=%lld recv=%lld",
         m_tcpSendCount.load(), m_tcpSendErrCount.load(),
         m_s7SendCount.load(), m_s7SendErrCount.load(),
@@ -604,8 +618,8 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
 
         // ═══════════════════════════════════════════════════════════════
         // ★ 查询报文: {barcode|car}  (2字段)
-        //   相机扫描到条码 → WCS查格口 → 发送PLC分拣指令
-        //   若条码不在波次中（lookup返回空），回退到反馈处理（可能是2字段PLC反馈）
+        //   相机扫描到条码 → WCS查格口 → 异步入池发送PLC分拣指令
+        //   若条码不在波次中（lookup返回空），回退到反馈处理
         // ═══════════════════════════════════════════════════════════════
         if (partCount == 2 && m_lookupCb)
         {
@@ -627,10 +641,61 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
 
                 if (!vecGrid.empty())
                 {
-                    // ★ 发送PLC分拣指令: {barcode|格口|小车号}
+                    // ═══════════════════════════════════════════════════════════
+                    // ★ 锁格过滤（参照 WCSApp FrmMainV2::OnPlcS7Thread）
+                    //   多格口时：跳过已锁定的格口，选择第一个未锁定的
+                    //   全部锁定：使用第一个格口（兜底）
+                    //   单格口时：不做过滤（PLC 自行处理）
+                    // ═══════════════════════════════════════════════════════════
+                    if (vecGrid.size() > 1)
+                    {
+                        std::vector<int> unlocked;
+                        int lockedCount = 0;
+                        for (int g : vecGrid)
+                        {
+                            if (isGridLocked(g))
+                                lockedCount++;
+                            else
+                                unlocked.push_back(g);
+                        }
+
+                        if (!unlocked.empty())
+                        {
+                            int chosen = unlocked[0];
+                            PLC_LOG_INFO("锁格过滤 code=%s 总格口=%d 锁定=%d → 选择=%d",
+                                code.toLocal8Bit().data(),
+                                (int)vecGrid.size(), lockedCount, chosen);
+                            vecGrid = { chosen };
+                        }
+                        else
+                        {
+                            // 全部锁定 → 使用第一个格口（兜底，与 WCSApp 一致）
+                            int fallback = vecGrid[0];
+                            PLC_LOG_WARN("锁格过滤 code=%s 所有格口已锁定(%d个) → 兜底=%d",
+                                code.toLocal8Bit().data(), (int)vecGrid.size(), fallback);
+                            vecGrid = { fallback };
+                        }
+                    }
+
                     int carNum = car.toInt();
-                    sendCodeInfo(code, vecGrid, carNum > 0 ? carNum : 1);
-                    emit plcSendInfo(code, gridStr, true);
+                    if (carNum <= 0) carNum = 1;
+
+                    // ★★★ 关键：异步入池发送，防止 S7 DBWrite 同步阻塞 HP-Socket I/O 线程 ★★★
+                    // S7 DBWrite 是 Snap7 库的同步调用，会阻塞当前线程直到 PLC 响应（10~100ms）
+                    // 高并发场景下若在 I/O 线程直接调用，会耗尽 HP-Socket 工作线程导致无法接收新数据
+                    if (m_pSendPool)
+                    {
+                        m_pSendPool->commitNoWait([this, code, vecGrid, carNum, gridStr]() {
+                            sendCodeInfo(code, vecGrid, carNum);
+                            emit plcSendInfo(code, gridStr, true);
+                        });
+                    }
+                    else
+                    {
+                        // 降级：线程池未就绪时同步发送
+                        sendCodeInfo(code, vecGrid, carNum);
+                        emit plcSendInfo(code, gridStr, true);
+                    }
                     continue;
                 }
                 else
@@ -640,7 +705,7 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
                     continue;
                 }
             }
-            // 条码不在波次中 → 回退，当作反馈报文处理（可能是 {barcode|grid} 格式的PLC确认）
+            // 条码不在波次中 → 回退，当作反馈报文处理
             PLC_LOG_WARN("条码不在波次中，回退为反馈处理 code=%s", code.toLocal8Bit().data());
         }
 

@@ -33,6 +33,9 @@
 #define WMS_ORDER_TYPE           "02"                 // 业务类型（02=退货分类）
 #define WMS_OPERUSER_CODE        "admin"              // 操作人编码（WMS 接口要求）
 #define WMS_OPERUSER_NAME        "管理员"              // 操作人名称（WMS 接口要求）
+#define WMS_WAREHOUSE_CODE       "A"                   // 仓库编码
+#define WMS_GOODS_OWNER          "BXH_ZS"              // 货主编码
+#define WMS_METHOD_LOCK          "gwisSubProductClassifyOrder" // 锁格回传 method
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HP-Socket 服务器配置
@@ -47,6 +50,7 @@
 #define BUSINESS_POOL_SIZE      90      // 业务线程池大小（16扫描仪×5并发 + HTTP回传 + 异常处理 + 余量）
 #define TASK_QUEUE_MAX_SIZE      5      // 波次推送任务队列最大排队数（防止大波次突发撑爆内存）
 #define POOL_OVERLOAD_MULTIPLIER  2      // 线程池过载倍数（积压任务 > 线程数×倍数 时告警）
+#define PLC_SEND_POOL_SIZE       8      // PLC 发送专用线程池（S7 DBWrite 同步阻塞10~100ms，需异步化防I/O线程阻塞）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 网络请求超时配置
@@ -92,8 +96,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // 配置文件路径
 // ═══════════════════════════════════════════════════════════════════════════
-#define CONFIG_DIR               "config"                 // 配置文件目录（相对于 exe 路径）
-#define CONFIG_FILE              "config/http_server.xml" // 配置文件路径
+#define CONFIG_DIR               "config"                 // 配置文件目录（exe 同目录下）
+#define CONFIG_FILE              "config/http_server.xml" // 配置文件路径（exe 同目录 config 文件夹内）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS → WCS HTTP API 路由（WMS 调用 WCS_httpServer 的接口路径）
@@ -131,6 +135,13 @@
 #define UI_REFRESH_INTERVAL_MS   1000     // UI 状态刷新周期(ms)：波次/PLC/绑定面板全量刷新
 #define LOG_FLUSH_INTERVAL_MS     100     // 日志批量刷新周期(ms)：缓冲→QTextEdit，防高频卡死
 #define LOG_FLUSH_MAX_BATCH_SIZE  100     // 单次日志刷新最大条数（防止一次刷太多卡UI）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RFID API 配置（EPC→SKU 查询）
+// ═══════════════════════════════════════════════════════════════════════════
+#define RFID_QUERY_URL          "http://{BaseURL}/open-api/rfid/query"  // EPC查询接口（{BaseURL} 通过 XML 配置替换）
+#define RFID_TIMEOUT_MS         2000                                     // RFID查询超时(ms)
+#define RFID_MAX_BATCH_SIZE     100                                      // 单次查询最大EPC数量
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 回传响应日志截断（防止超长响应体撑满日志文件）

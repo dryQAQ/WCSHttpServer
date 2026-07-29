@@ -23,23 +23,41 @@ bool AppConfig::loadFromFile(const QString& path)
         if (!xml.isStartElement()) continue;
 
         QStringRef name = xml.name();
-        if (name == "wmsListenPort")       wmsListenPort = xml.readElementText().toInt();
-        else if (name == "feedbackUrl")    feedbackUrl = xml.readElementText();
-        else if (name == "feedbackTestUrl") feedbackTestUrl = xml.readElementText();
-        else if (name == "appkey")         appkey = xml.readElementText();
-        else if (name == "appkeyTest")     appkeyTest = xml.readElementText();
-        else if (name == "useTestEnv")     useTestEnv = xml.readElementText().toInt();
-        else if (name == "waveTimeoutMin") waveTimeoutMin = xml.readElementText().toInt();
-        else if (name == "maxRetryCount")  maxRetryCount = xml.readElementText().toInt();
-        else if (name == "logRetainDays")  logRetainDays = xml.readElementText().toInt();
+        if (name == "wmsListenPort")           wmsListenPort = xml.readElementText().toInt();
+        else if (name == "feedbackUrl")        feedbackUrl = xml.readElementText();
+        else if (name == "feedbackTestUrl")    feedbackTestUrl = xml.readElementText();
+        else if (name == "appkey")             appkey = xml.readElementText();
+        else if (name == "appkeyTest")         appkeyTest = xml.readElementText();
+        else if (name == "useTestEnv")         useTestEnv = xml.readElementText().toInt();
+        else if (name == "warehouseCode")      warehouseCode = xml.readElementText();
+        else if (name == "goodsOwner")         goodsOwner = xml.readElementText();
+        else if (name == "waveTimeoutMin")     waveTimeoutMin = xml.readElementText().toInt();
+        else if (name == "maxRetryCount")      maxRetryCount = xml.readElementText().toInt();
+        else if (name == "httpTimeoutMs")      httpTimeoutMs = xml.readElementText().toInt();
+        else if (name == "waveCompleteTimeoutMs") waveCompleteTimeoutMs = xml.readElementText().toInt();
+        else if (name == "plcListenPort")      plcListenPort = xml.readElementText().toInt();
+        else if (name == "plcS7Ip")            plcS7Ip = xml.readElementText();
+        else if (name == "plcS7Rack")          plcS7Rack = xml.readElementText().toInt();
+        else if (name == "plcS7Slot")          plcS7Slot = xml.readElementText().toInt();
+        else if (name == "businessPoolSize")   businessPoolSize = xml.readElementText().toInt();
+        else if (name == "plcSendPoolSize")    plcSendPoolSize = xml.readElementText().toInt();
+        else if (name == "logRetainDays")      logRetainDays = xml.readElementText().toInt();
+        else if (name == "rfidUrl")            rfidUrl = xml.readElementText();
         else if (name == "binding")
         {
             // 容器绑定: <binding grid="00001">BOX001</binding>
-            // 格口号保留前置 0，与 WMS 发送格式一致
             QString g = xml.attributes().value("grid").toString();
             QString box = xml.readElementText();
             if (!g.isEmpty() && !box.isEmpty())
                 containerBindings[g] = box;
+        }
+        else if (name == "gridName")
+        {
+            // 格口显示名: <gridName num="1">A区退货口</gridName>
+            QString num = xml.attributes().value("num").toString();
+            QString display = xml.readElementText();
+            if (!num.isEmpty() && !display.isEmpty())
+                gridNames[num] = display;
         }
     }
     file.close();
@@ -64,9 +82,20 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("appkey",           appkey);
     xml.writeTextElement("appkeyTest",       appkeyTest);
     xml.writeTextElement("useTestEnv",       QString::number(useTestEnv));
+    xml.writeTextElement("warehouseCode",    warehouseCode);
+    xml.writeTextElement("goodsOwner",       goodsOwner);
     xml.writeTextElement("waveTimeoutMin",   QString::number(waveTimeoutMin));
     xml.writeTextElement("maxRetryCount",    QString::number(maxRetryCount));
+    xml.writeTextElement("httpTimeoutMs",    QString::number(httpTimeoutMs));
+    xml.writeTextElement("waveCompleteTimeoutMs", QString::number(waveCompleteTimeoutMs));
+    xml.writeTextElement("plcListenPort",    QString::number(plcListenPort));
+    xml.writeTextElement("plcS7Ip",          plcS7Ip);
+    xml.writeTextElement("plcS7Rack",        QString::number(plcS7Rack));
+    xml.writeTextElement("plcS7Slot",        QString::number(plcS7Slot));
+    xml.writeTextElement("businessPoolSize", QString::number(businessPoolSize));
+    xml.writeTextElement("plcSendPoolSize",  QString::number(plcSendPoolSize));
     xml.writeTextElement("logRetainDays",    QString::number(logRetainDays));
+    xml.writeTextElement("rfidUrl",          rfidUrl);
 
     // ──── 容器绑定 ────
     QMapIterator<QString, QString> it(containerBindings);
@@ -76,6 +105,17 @@ bool AppConfig::saveToFile(const QString& path) const
         xml.writeStartElement("binding");
         xml.writeAttribute("grid", it.key());
         xml.writeCharacters(it.value());
+        xml.writeEndElement();
+    }
+
+    // ──── 格口显示名 ────
+    QMapIterator<QString, QString> gn(gridNames);
+    while (gn.hasNext())
+    {
+        gn.next();
+        xml.writeStartElement("gridName");
+        xml.writeAttribute("num", gn.key());
+        xml.writeCharacters(gn.value());
         xml.writeEndElement();
     }
 
