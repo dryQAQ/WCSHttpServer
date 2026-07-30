@@ -40,10 +40,10 @@ public:
     ~MainWindow();
 
 protected:
-    void closeEvent(QCloseEvent* event) override;  // 窗口关闭时停止服务
+    void closeEvent(QCloseEvent* event) override;  // 窗口关闭时结束任务
 
 private slots:
-    void onStartStop();       // 启动/停止服务按钮
+    void onStartStop();       // 启动/结束任务按钮
     void onRefreshBindings(); // 刷新容器绑定状态
     void onClearLog();        // 清空日志窗口
     void onRefreshTimer();    // 每秒定时刷新UI
@@ -105,19 +105,23 @@ private:
     // ──── 容器绑定面板 UI（92格口 6列×16行）────
     QWidget*     m_bindingWidget   = nullptr;  // 绑定状态容器
     QGridLayout* m_bindingGrid     = nullptr;  // 网格布局
-    QLabel*      m_bindingLabels[BINDING_SLOT_COUNT] = {};  // N个格口绑定状态标签
+    QLabel*      m_bindingLabels[BINDING_SLOT_COUNT] = {};    // 状态指示圆点指针
+    QLabel*      m_bindingBoxLabels[BINDING_SLOT_COUNT] = {}; // ★ 容器号标签指针（避免findChildren）
     int          m_bindingCols     = 4;        // 每行列数
-    int          m_bindingRows     = BINDING_SLOT_COUNT / m_bindingCols;       // 行数（可扩展，92/6≈16）
+    int          m_bindingRows     = BINDING_SLOT_COUNT / m_bindingCols;
     QLabel*      m_lblBoundCount   = nullptr;  // 已绑定数量
     QLabel*      m_lblUnboundCount = nullptr;  // 未绑定数量
+    bool         m_bindingDirty    = false;     // ★ 绑定数据变更标记（避免无效刷新）
 
     // ──── 日志区 ────
     QTextEdit*   m_txtLog = nullptr;           // 运行日志文本框
 
     // ──── 日志缓冲（防高频卡死） ────
     QStringList  m_logBuffer;                  // 日志消息缓冲队列
-    QMutex       m_logMutex;                   // 缓冲队列互斥锁（备而不用，当前appendLog在主线程）
-    QTimer*      m_logFlushTimer = nullptr;    // 日志刷新定时器（100ms，批量刷新）
+    QMutex       m_logMutex;                   // 缓冲队列互斥锁
+    QTimer*      m_logFlushTimer = nullptr;    // 日志刷新定时器（100ms，高负载自动降频）
+    int          m_logFlushIntervalMs = LOG_FLUSH_INTERVAL_MS; // ★ 动态调整的刷新间隔
+    int          m_logDropCount       = 0;     // ★ 丢弃的日志计数（高负载时）
 
     // ──── 定时器 ────
     QTimer*      m_timerRefresh = nullptr;     // UI刷新定时器（每秒）
@@ -126,4 +130,6 @@ private:
     bool         m_bRunning = false;           // 服务运行状态
     int          m_reportRetryCount = 0;       // 手动回传重试计数（预留，当前未使用）
     QAtomicInteger<qint64> m_plcFeedbackCount{0}; // ★ PLC反馈计数（无锁，高并发安全）
+    bool         m_lastTcpConnected = false;   // ★ 缓存TCP状态（避免冗余setStyleSheet）
+    bool         m_lastS7Connected  = false;   // ★ 缓存S7状态
 };

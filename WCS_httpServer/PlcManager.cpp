@@ -729,14 +729,16 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
             // 记录生命周期
             LIFE_STAGE_PLC_FEEDBACK(code, grid);
 
-            // ★ 业务信号：每个反馈都发射（HttpServer需要逐条标记分拣）
-            emit plcFeedbackReceived(code, grid, car);
+            // ★ 不再逐条发射信号（避免 QueuedConnection 事件洪水卡死主线程）
+            // 统一通过 flushFeedbackBatch 的批量信号发出：
+            //   plcFeedbackBatch         → MainWindow UI 日志
+            //   plcFeedbackBusinessBatch → HttpServer 分拣标记
 
             // ★ 回调（保持兼容）
             if (m_feedbackCb)
                 m_feedbackCb(code, grid, car);
 
-            // ★ 添加到批量缓冲区（供UI日志批量刷新，减少UI线程压力）
+            // ★ 添加到批量缓冲区（100ms 定时刷新）
             {
                 std::lock_guard<std::mutex> lock(m_feedbackBatchMutex);
                 if (m_feedbackBatchBuffer.size() < PLC_FEEDBACK_BATCH_MAX_SIZE)
@@ -769,10 +771,13 @@ void PlcManager::flushFeedbackBatch()
         std::lock_guard<std::mutex> lock(m_feedbackBatchMutex);
         if (m_feedbackBatchBuffer.isEmpty()) return;
         batch.swap(m_feedbackBatchBuffer);
-        // 预留容量，避免频繁重新分配
-        // 预估：100ms内最多 ~50条反馈（500条/秒的速度）
         m_feedbackBatchBuffer.reserve(64);
     }
 
+    // ★ UI 日志信号（MainWindow 处理）
     emit plcFeedbackBatch(batch);
+
+    // ★ 业务信号（HttpServer 处理：markSorted + GridSortRecord）
+    //    将 N 条反馈合并为 1 次 QueuedConnection 事件，避免主线程事件队列洪水
+    emit plcFeedbackBusinessBatch(batch);
 }

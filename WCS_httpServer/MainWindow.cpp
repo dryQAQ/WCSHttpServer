@@ -41,7 +41,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     //自动启动：
     // onStartStop();
-    // 不自动启动，等待用户点击"启动服务"
+    // 不自动启动，等待用户点击"开始启动"
 }
 
 MainWindow::~MainWindow()
@@ -87,7 +87,7 @@ void MainWindow::setupUI()
     QGroupBox* grpServer = new QGroupBox("服务控制");
     QHBoxLayout* serverLayout = new QHBoxLayout(grpServer);
 
-    m_btnStartStop = new QPushButton("启动服务");
+    m_btnStartStop = new QPushButton("开始启动");
     m_btnStartStop->setMinimumWidth(120);
     m_btnStartStop->setMinimumHeight(36);
     m_btnStartStop->setStyleSheet(
@@ -337,8 +337,9 @@ void MainWindow::setupUI()
 
         m_bindingGrid->addWidget(frame, row, col);
 
-        // 存储状态标签引用（用于后续刷新）
-        m_bindingLabels[i] = lblStatus;
+        // ★ 存储标签指针（后续刷新直接索引，避免 findChildren 递归查找）
+        m_bindingLabels[i]    = lblStatus;
+        m_bindingBoxLabels[i] = lblBox;
     }
 
     scrollBinding->setWidget(m_bindingWidget);
@@ -402,7 +403,7 @@ void MainWindow::onStartStop()
         m_pPlcMgr = nullptr;
         m_bRunning = false; //状态切换
 
-        m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "启动服务"));
+        m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始启动"));
         m_btnStartStop->setStyleSheet(
             "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
             "border-radius: 4px; padding: 6px 16px; }"
@@ -432,6 +433,28 @@ void MainWindow::onStartStop()
         m_lblLastRecvCode->setText(QCoreApplication::translate("MainWindow", "最近接收: --"));
         m_lblLastRecvGrid->setText("");
         m_lblLastRecvTime->setText("");
+        m_lastTcpConnected = false;  // ★ 重置缓存状态
+        m_lastS7Connected  = false;
+
+        // ★ 停止时清除容器绑定（内存 + XML + UI）
+        {
+            AppConfig& c = ConfigManager::instance()->config();
+            c.containerBindings.clear();
+            ConfigManager::instance()->saveNow();  // ★ 立即写盘，不等延迟
+        }
+        // 重置绑定面板为全灰
+        for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
+        {
+            if (m_bindingLabels[i])
+                m_bindingLabels[i]->setStyleSheet(
+                    "font-size: 10px; color: white; border-radius: 6px; background-color: #bbb;");
+            if (m_bindingBoxLabels[i])
+                m_bindingBoxLabels[i]->setText("--");
+        }
+        if (m_lblBoundCount)  m_lblBoundCount->setText("已绑定: 0");
+        if (m_lblUnboundCount) m_lblUnboundCount->setText("未绑定: 66");
+        m_bindingDirty = false;
+
         appendLog("服务已手动停止");
     }
     else    //状态：关闭 --> 开启
@@ -445,6 +468,7 @@ void MainWindow::onStartStop()
 
         // ★ 从配置文件恢复容器绑定
         m_pServer->loadContainerBindings(cfg.containerBindings);
+        m_bindingDirty = true;  // ★ 初始加载后标记为脏，首次刷新时更新面板
         m_pClient = new HttpClient(this);
         m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
         m_pClient->setUrl(cfg.activeFeedbackUrl());
@@ -461,7 +485,7 @@ void MainWindow::onStartStop()
         if (m_pServer->start(port))
         {
             m_bRunning = true;
-            m_btnStartStop->setText("停止服务");
+            m_btnStartStop->setText("结束任务");
             m_btnStartStop->setStyleSheet(
                 "QPushButton { background-color: #f44336; color: white; font-size: 14px; font-weight: bold; "
                 "border-radius: 4px; padding: 6px 16px; }"
@@ -515,6 +539,7 @@ void MainWindow::onStartStop()
 
             // ★ 容器绑定变更 → 即时刷新 UI + 持久化到 XML
             connect(m_pServer, &HttpServer::bindingUpdated, this, [this]() {
+                m_bindingDirty = true;  // ★ 标记脏数据，下次定时刷新时更新
                 updateBindingPanel();
                 // 同步到配置并保存
                 AppConfig& c = ConfigManager::instance()->config();
@@ -564,13 +589,11 @@ void MainWindow::onStartStop()
                     appendLog(QString("[PLC] TCP断开 %1:%2").arg(ip).arg(port), true);
                 }, Qt::QueuedConnection);
 
-                // ★ 业务信号：每个反馈都需处理（HttpServer 用于 markSorted）
-                //    使用 QueuedConnection 确保在主线程执行
-                connect(m_pPlcMgr, &PlcManager::plcFeedbackReceived, this,
-                    [this](const QString& code, const QString& grid, const QString& car) {
-                        Q_UNUSED(code); Q_UNUSED(grid); Q_UNUSED(car);
-                        // 业务逻辑由 HttpServer 处理，此处仅更新统计计数
-                        m_plcFeedbackCount.fetchAndAddRelaxed(1);
+                // ★ 业务信号：批量处理落格反馈计数
+                //    不再逐条 connect plcFeedbackReceived，改用批量信号
+                connect(m_pPlcMgr, &PlcManager::plcFeedbackBusinessBatch, this,
+                    [this](const QVector<PlcFeedbackEntry>& entries) {
+                        m_plcFeedbackCount.fetchAndAddRelaxed(entries.size());
                     }, Qt::QueuedConnection);
 
                 // ★ UI日志信号：批量处理，减少高频场景下的UI更新压力
@@ -655,7 +678,12 @@ void MainWindow::onRefreshTimer()
     {
         updateWavePanel();
         updatePlcPanel();
-        updateBindingPanel();
+        // ★ 仅绑定数据变更时才刷新绑定面板（避免每秒66次findChildren）
+        if (m_bindingDirty)
+        {
+            updateBindingPanel();
+            m_bindingDirty = false;
+        }
     }
 }
 
@@ -695,26 +723,30 @@ void MainWindow::updatePlcPanel()
     // ══════════════════════════════════════════════════════════
     // TCP 连接状态
     // ══════════════════════════════════════════════════════════
-    if (s.running && s.clientCount > 0)
+    bool tcpNow = (s.running && s.clientCount > 0);
+    if (tcpNow != m_lastTcpConnected)  // ★ 状态变化时才改样式
     {
-        m_lblTcpStatus->setText(QString("● TCP: 已连接"));
-        m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
-        m_lblTcpIp->setText(QString("%1:%2").arg(s.lastIp.isEmpty() ? "?" : s.lastIp).arg(s.lastPort));
-        m_lblTcpIp->setStyleSheet("font-size: 13px; color: #2196F3;");
+        m_lastTcpConnected = tcpNow;
+        if (tcpNow)
+        {
+            m_lblTcpStatus->setText(QString("● TCP: 已连接"));
+            m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
+        }
+        else if (s.running)
+        {
+            m_lblTcpStatus->setText(QString("● TCP: 监听中"));
+            m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #FF9800; font-weight: bold;");
+        }
+        else
+        {
+            m_lblTcpStatus->setText(QCoreApplication::translate("MainWindow", "TCP: 未启动"));
+            m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
+        }
     }
-    else if (s.running)
+    if (tcpNow || s.running)
     {
-        m_lblTcpStatus->setText(QString("● TCP: 监听中"));
-        m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #FF9800; font-weight: bold;");
-        m_lblTcpIp->setText(QString(":%1").arg(s.port));
-        m_lblTcpIp->setStyleSheet("font-size: 13px; color: #888;");
-    }
-    else
-    {
-        m_lblTcpStatus->setText(QCoreApplication::translate("MainWindow", "TCP: 未启动"));
-        m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
-        m_lblTcpIp->setText("");
-        m_lblTcpIp->setStyleSheet("font-size: 13px; color: #888;");
+        m_lblTcpIp->setText(tcpNow ? QString("%1:%2").arg(s.lastIp.isEmpty() ? "?" : s.lastIp).arg(s.lastPort)
+                                   : QString(":%1").arg(s.port));
     }
 
     // TCP 收发统计
@@ -748,19 +780,23 @@ void MainWindow::updatePlcPanel()
     // ══════════════════════════════════════════════════════════
     // S7 连接状态
     // ══════════════════════════════════════════════════════════
-    if (s.s7Connected)
+    if (s.s7Connected != m_lastS7Connected)  // ★ 状态变化时才改样式
     {
-        m_lblS7Status->setText(QString("● S7: 已连接"));
-        m_lblS7Status->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
-        m_lblS7Ip->setText(s.s7Ip);
-        m_lblS7Ip->setStyleSheet("font-size: 13px; color: #2196F3;");
-    }
-    else
-    {
-        m_lblS7Status->setText(QString("● S7: 未连接"));
-        m_lblS7Status->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
-        m_lblS7Ip->setText(s.s7Ip.isEmpty() ? "" : s.s7Ip);
-        m_lblS7Ip->setStyleSheet("font-size: 13px; color: #888;");
+        m_lastS7Connected = s.s7Connected;
+        if (s.s7Connected)
+        {
+            m_lblS7Status->setText(QString("● S7: 已连接"));
+            m_lblS7Status->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
+            m_lblS7Ip->setText(s.s7Ip);
+            m_lblS7Ip->setStyleSheet("font-size: 13px; color: #2196F3;");
+        }
+        else
+        {
+            m_lblS7Status->setText(QString("● S7: 未连接"));
+            m_lblS7Status->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
+            m_lblS7Ip->setText(s.s7Ip.isEmpty() ? "" : s.s7Ip);
+            m_lblS7Ip->setStyleSheet("font-size: 13px; color: #888;");
+        }
     }
 
     // S7 收发统计
@@ -843,33 +879,24 @@ void MainWindow::onRefreshBindings()
 
 void MainWindow::updateBindingPanel()
 {
-    if (!m_pServer || !m_bindingWidget) return;
+    if (!m_pServer) return;
 
     QMap<QString, QString> bindings = m_pServer->getContainerBindings();
     int boundCount = 0;
-    int unboundCount = 0;
 
     for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
     {
         int gridNum = i + 1;
-        // ★ 零填充 key，与 WMS 格式一致: 1 → "00001", 66 → "00066"
         QString gridKey = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
         QString boxCode = bindings.value(gridKey, "");
 
-        // 找到该格口的容器号标签（Frame 内第3个QLabel）
-        QFrame* frame = qobject_cast<QFrame*>(m_bindingGrid->itemAtPosition(i / m_bindingCols, i % m_bindingCols)->widget());
-        if (!frame) continue;
-
-        QList<QLabel*> labels = frame->findChildren<QLabel*>();
-        if (labels.size() < 3) continue;
-
-        QLabel* lblStatus = labels[1]; // 状态指示圆点
-        QLabel* lblBox    = labels[2]; // 容器号
+        QLabel* lblStatus = m_bindingLabels[i];
+        QLabel* lblBox    = m_bindingBoxLabels[i];
+        if (!lblStatus || !lblBox) continue;
 
         if (!boxCode.isEmpty())
         {
             boundCount++;
-            // 已绑定 → 绿色
             lblStatus->setStyleSheet(
                 "font-size: 10px; color: white; border-radius: 6px; background-color: #4CAF50;");
             lblStatus->setToolTip(QString("格口%1 ←→ %2 (已绑定)").arg(gridKey).arg(boxCode));
@@ -878,7 +905,6 @@ void MainWindow::updateBindingPanel()
         }
         else
         {
-            // 未绑定 → 灰色
             lblStatus->setStyleSheet(
                 "font-size: 10px; color: white; border-radius: 6px; background-color: #bbb;");
             lblStatus->setToolTip(QString("格口%1: 未绑定").arg(gridKey));
@@ -887,8 +913,7 @@ void MainWindow::updateBindingPanel()
         }
     }
 
-    // 更新已绑定/未绑定计数标签
-    unboundCount = BINDING_SLOT_COUNT - boundCount;
+    int unboundCount = BINDING_SLOT_COUNT - boundCount;
     m_lblBoundCount->setText(QString("已绑定: %1").arg(boundCount));
     m_lblUnboundCount->setText(QString("未绑定: %1").arg(unboundCount));
 }
@@ -923,46 +948,73 @@ void MainWindow::appendLog(const QString& msg, bool isError)
 }
 
 // ============================================================================
-// flushLogBuffer — 定时批量刷新日志缓冲到 UI
+// flushLogBuffer — 定时批量刷新日志缓冲到 UI（动态降频）
 //
-// 设计要点：
-//   - 每 100ms 由定时器触发一次，将缓冲队列中的日志批量写入 QTextEdit
-//   - 单次最多刷新 100 条，超出部分留到下次刷新（防 UI 长时间阻塞）
-//   - 100ms 间隔平衡了实时性和性能：高频场景下 UI 更新频率被限制在 10次/秒
-//   - 日志文件写入（log_center）不受缓冲影响，已在 appendLog 中实时完成
+// 正常: 每 100ms 刷新，单次最多 100 条
+// 积压>50: 降频到 200ms，单次最多 50 条
+// 积压>200: 降频到 500ms，丢弃非错误日志，单次最多 20 条
+// 积压>500: 降频到 1000ms，只保留错误日志
 // ============================================================================
 void MainWindow::flushLogBuffer()
 {
     // 批量取出缓冲队列
     QStringList batch;
+    int queueSize = 0;
     {
         QMutexLocker locker(&m_logMutex);
-        if (m_logBuffer.isEmpty()) return;
-        batch.swap(m_logBuffer);  // O(1) 交换，清空缓冲区
+        queueSize = m_logBuffer.size();
+        if (queueSize == 0) return;
+        batch.swap(m_logBuffer);
     }
 
-    // 截断保护：单次最多刷新 LOG_FLUSH_MAX_BATCH_SIZE 条，超出的重新放回队首
-    constexpr int MAX_BATCH = LOG_FLUSH_MAX_BATCH_SIZE;
-    if (batch.size() > MAX_BATCH)
+    // ★ 动态调整刷新间隔
+    int newInterval = LOG_FLUSH_INTERVAL_MS;
+    if (queueSize > 500)      newInterval = 1000;
+    else if (queueSize > 200) newInterval = 500;
+    else if (queueSize > 50)  newInterval = 200;
+
+    if (newInterval != m_logFlushIntervalMs)
     {
-        // 保留前 MAX_BATCH 条，其余重新入队（下次刷新）
-        QStringList remaining = batch.mid(MAX_BATCH);
+        m_logFlushIntervalMs = newInterval;
+        m_logFlushTimer->setInterval(newInterval);
+    }
+
+    // ★ 高负载时丢弃非错误日志
+    if (queueSize > 200)
+    {
+        QStringList filtered;
+        for (const QString& line : batch)
+        {
+            if (line.contains("#f44336"))  // 红色=错误日志
+                filtered.append(line);
+        }
+        m_logDropCount += (batch.size() - filtered.size());
+        batch = filtered;
+        if (batch.isEmpty()) return;
+    }
+
+    // ★ 截断保护：根据负载动态调整单次刷新上限
+    int maxBatch = LOG_FLUSH_MAX_BATCH_SIZE;
+    if (queueSize > 500)      maxBatch = 20;
+    else if (queueSize > 200) maxBatch = 50;
+
+    if (batch.size() > maxBatch)
+    {
+        QStringList remaining = batch.mid(maxBatch);
         {
             QMutexLocker locker(&m_logMutex);
-            // 剩余部分插入到队首，保持顺序
             for (int i = remaining.size() - 1; i >= 0; --i)
                 m_logBuffer.prepend(remaining[i]);
         }
-        batch = batch.mid(0, MAX_BATCH);
+        batch = batch.mid(0, maxBatch);
     }
 
-    // 批量写入 UI（关掉自动格式化，加速 append）
+    // 批量写入 UI
     m_txtLog->setUpdatesEnabled(false);
     for (const QString& line : batch)
         m_txtLog->append(line);
     m_txtLog->setUpdatesEnabled(true);
 
-    // 滚动到底部
     m_txtLog->moveCursor(QTextCursor::End);
 }
 

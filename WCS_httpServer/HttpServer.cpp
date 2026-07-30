@@ -130,31 +130,40 @@ HttpServer::HttpServer(QObject* parent)
             }
         }, Qt::QueuedConnection);
 
-    // ──── PLC反馈 → 分拣标记 + 按格口记录 ────
-    // PLC确认落格后自动标记为已分拣，同时记录格口→条码映射（供锁格回传用）
-    connect(m_pPlcMgr, &PlcManager::plcFeedbackReceived, this,
-        [this](const QString& code, const QString& grid, const QString& car) {
+    // ──── PLC反馈批次 → 分拣标记 + 按格口记录 ────
+    // ★ 批量处理：N条反馈合并为1次 QueuedConnection 事件，避免主线程事件队列洪水
+    //    每 100ms 触发一次，处理该周期内的所有落格反馈
+    connect(m_pPlcMgr, &PlcManager::plcFeedbackBusinessBatch, this,
+        [this](const QVector<PlcFeedbackEntry>& entries) {
             if (!m_pWaveMgr) return;
-            m_pWaveMgr->markSorted(code);
 
-            // ★ 按格口记录分拣明细（锁格时回传 WMS 用）
+            for (const PlcFeedbackEntry& e : entries)
             {
-                std::lock_guard<std::mutex> lock(m_gridRecordMutex);
-                GridSortRecord rec;
-                rec.inco   = code;
-                rec.car    = car;
-                rec.timeMs = QDateTime::currentMSecsSinceEpoch();
+                m_pWaveMgr->markSorted(e.code);
 
-                // 从 DoubleBuffer 获取该条码的 gridCount 和 volu
-                GridEntry entry = m_pBuffer->get(code);
-                rec.gridCount = entry.gridCount;
-                rec.volu      = entry.volu.isEmpty() ? QString("--") : entry.volu;
+                // ★ 按格口记录分拣明细（锁格时回传 WMS 用）
+                {
+                    std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+                    GridSortRecord rec;
+                    rec.inco   = e.code;
+                    rec.car    = e.car;
+                    rec.timeMs = e.timestampMs;
 
-                m_gridSortRecords[grid].append(rec);
+                    // 从 DoubleBuffer 获取该条码的 gridCount 和 volu
+                    GridEntry entry = m_pBuffer->get(e.code);
+                    rec.gridCount = entry.gridCount;
+                    rec.volu      = entry.volu.isEmpty() ? QString("--") : entry.volu;
+
+                    m_gridSortRecords[e.grid].append(rec);
+                }
             }
 
-            HTTP_LOG_INFO("PLC反馈自动分拣 code=%s grid=%s", code.toLocal8Bit().data(), grid.toLocal8Bit().data());
-            emit logMessage(QString("[PLC] 反馈落格分拣 code=%1 grid=%2 car=%3").arg(code).arg(grid).arg(car));
+            if (entries.size() == 1)
+            {
+                HTTP_LOG_INFO("PLC反馈自动分拣 code=%s grid=%s",
+                    entries[0].code.toLocal8Bit().data(),
+                    entries[0].grid.toLocal8Bit().data());
+            }
         }, Qt::QueuedConnection);
 
     // ★ S7 锁格 → 触发 WMS 回传
@@ -675,15 +684,19 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
         return errResponse("波次不存在或已完结", "404");
     }
 
-    // 状态校验: 只能在 IDLE/RECEIVED 状态下取消
+    // 状态校验: 仅允许 IDLE(0)/RECEIVED(1)/ERROR(5) 状态下取消
+    // SORTING(2): 分拣进行中，不允许取消
+    // COMPLETING(3): 回传进行中，不允许取消（WMS可能同时收到完成报告和取消响应）
+    // CLEANED(4): 数据已清理，无需取消（由波次号校验拦截）
     int status = m_pWaveMgr->status();
-    if (status >= WAVE_SORTING)
+    if (status == WAVE_SORTING || status == WAVE_COMPLETING)
     {
-        HTTP_LOG_WARN("CancelWave 波次已开始分拣 不允许取消 orderCode=%s status=%d",
-            orderCode.toLocal8Bit().data(), status);
-        emit logMessage(QString("[取消波次] 已开始分拣 不允许取消 orderCode=%1 status=%2")
-            .arg(orderCode).arg(status), true);
-        return errResponse("波次已开始分拣，不允许取消", "400");
+        const char* reason = (status == WAVE_SORTING) ? "分拣进行中" : "回传进行中";
+        HTTP_LOG_WARN("CancelWave 波次%s 不允许取消 orderCode=%s status=%d",
+            reason, orderCode.toLocal8Bit().data(), status);
+        emit logMessage(QString("[取消波次] %1 不允许取消 orderCode=%2")
+            .arg(reason).arg(orderCode), true);
+        return errResponse(QString("波次%1，不允许取消").arg(reason), "400");
     }
 
     // 执行取消: 清理波次数据

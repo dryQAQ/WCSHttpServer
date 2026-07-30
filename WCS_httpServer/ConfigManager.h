@@ -80,10 +80,13 @@ public:
     static ConfigManager* instance();
 
     AppConfig& config() { return m_config; }
-    bool load();    // 加载配置文件，不存在则自动创建
-    bool save();    // 保存当前配置到文件
+    bool load();         // 加载配置文件，不存在则自动创建
+    bool save();         // ★ 延迟保存：2秒内多次调用只写一次盘
+    bool saveNow();      // ★ 立即保存（服务停止等关键时刻）
 
 private:
-    ConfigManager() = default;
+    ConfigManager();
     AppConfig m_config;
+    QTimer*  m_saveTimer  = nullptr;  // 延迟保存定时器（2秒）
+    bool     m_saveDirty   = false;   // 脏标记
 };

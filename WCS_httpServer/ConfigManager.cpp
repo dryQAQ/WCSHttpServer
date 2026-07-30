@@ -4,11 +4,22 @@
 #include <QXmlStreamWriter>
 #include <QDir>
 #include <QCoreApplication>
+#include <QTimer>
 
 ConfigManager* ConfigManager::instance()
 {
     static ConfigManager mgr;
     return &mgr;
+}
+
+ConfigManager::ConfigManager()
+{
+    m_saveTimer = new QTimer(this);
+    m_saveTimer->setSingleShot(true);
+    m_saveTimer->setInterval(2000);  // 2秒聚合窗口
+    connect(m_saveTimer, &QTimer::timeout, this, [this]() {
+        saveNow();
+    });
 }
 
 bool AppConfig::loadFromFile(const QString& path)
@@ -143,6 +154,20 @@ bool ConfigManager::load()
 
 bool ConfigManager::save()
 {
+    // ★ 延迟保存：标记脏数据，2秒内多次调用只触发一次实际写盘
+    //    高并发下 bindingUpdated 每秒400+次 → 文件IO从每秒400次降为0.5次
+    if (!m_saveDirty)
+    {
+        m_saveDirty = true;
+        m_saveTimer->start();
+    }
+    return true;  // 调用者无需等待写盘结果
+}
+
+bool ConfigManager::saveNow()
+{
+    m_saveDirty = false;
+    m_saveTimer->stop();
     QString exePath = QCoreApplication::applicationDirPath();
     return m_config.saveToFile(exePath + "/" CONFIG_FILE);
 }

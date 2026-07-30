@@ -23,8 +23,8 @@ QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_PlcManager_t {
-    QByteArrayData data[25];
-    char stringdata0[261];
+    QByteArrayData data[26];
+    char stringdata0[286];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -46,28 +46,29 @@ QT_MOC_LITERAL(9, 79, 3), // "car"
 QT_MOC_LITERAL(10, 83, 16), // "plcFeedbackBatch"
 QT_MOC_LITERAL(11, 100, 25), // "QVector<PlcFeedbackEntry>"
 QT_MOC_LITERAL(12, 126, 7), // "entries"
-QT_MOC_LITERAL(13, 134, 13), // "plcBatchStart"
-QT_MOC_LITERAL(14, 148, 12), // "plcBatchStop"
-QT_MOC_LITERAL(15, 161, 11), // "plcSendInfo"
-QT_MOC_LITERAL(16, 173, 5), // "grids"
-QT_MOC_LITERAL(17, 179, 7), // "success"
-QT_MOC_LITERAL(18, 187, 11), // "s7Connected"
-QT_MOC_LITERAL(19, 199, 14), // "s7Disconnected"
-QT_MOC_LITERAL(20, 214, 7), // "s7Error"
-QT_MOC_LITERAL(21, 222, 6), // "errMsg"
-QT_MOC_LITERAL(22, 229, 10), // "gridLocked"
-QT_MOC_LITERAL(23, 240, 7), // "gridNum"
-QT_MOC_LITERAL(24, 248, 12) // "gridUnlocked"
+QT_MOC_LITERAL(13, 134, 24), // "plcFeedbackBusinessBatch"
+QT_MOC_LITERAL(14, 159, 13), // "plcBatchStart"
+QT_MOC_LITERAL(15, 173, 12), // "plcBatchStop"
+QT_MOC_LITERAL(16, 186, 11), // "plcSendInfo"
+QT_MOC_LITERAL(17, 198, 5), // "grids"
+QT_MOC_LITERAL(18, 204, 7), // "success"
+QT_MOC_LITERAL(19, 212, 11), // "s7Connected"
+QT_MOC_LITERAL(20, 224, 14), // "s7Disconnected"
+QT_MOC_LITERAL(21, 239, 7), // "s7Error"
+QT_MOC_LITERAL(22, 247, 6), // "errMsg"
+QT_MOC_LITERAL(23, 254, 10), // "gridLocked"
+QT_MOC_LITERAL(24, 265, 7), // "gridNum"
+QT_MOC_LITERAL(25, 273, 12) // "gridUnlocked"
 
     },
     "PlcManager\0plcConnected\0\0ip\0port\0"
     "plcDisconnected\0plcFeedbackReceived\0"
     "code\0grid\0car\0plcFeedbackBatch\0"
     "QVector<PlcFeedbackEntry>\0entries\0"
-    "plcBatchStart\0plcBatchStop\0plcSendInfo\0"
-    "grids\0success\0s7Connected\0s7Disconnected\0"
-    "s7Error\0errMsg\0gridLocked\0gridNum\0"
-    "gridUnlocked"
+    "plcFeedbackBusinessBatch\0plcBatchStart\0"
+    "plcBatchStop\0plcSendInfo\0grids\0success\0"
+    "s7Connected\0s7Disconnected\0s7Error\0"
+    "errMsg\0gridLocked\0gridNum\0gridUnlocked"
 };
 #undef QT_MOC_LITERAL
 
@@ -77,40 +78,42 @@ static const uint qt_meta_data_PlcManager[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-      12,   14, // methods
+      13,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
        0,       // flags
-      12,       // signalCount
+      13,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    2,   74,    2, 0x06 /* Public */,
-       5,    2,   79,    2, 0x06 /* Public */,
-       6,    3,   84,    2, 0x06 /* Public */,
-      10,    1,   91,    2, 0x06 /* Public */,
-      13,    0,   94,    2, 0x06 /* Public */,
-      14,    0,   95,    2, 0x06 /* Public */,
-      15,    3,   96,    2, 0x06 /* Public */,
-      18,    1,  103,    2, 0x06 /* Public */,
-      19,    1,  106,    2, 0x06 /* Public */,
-      20,    1,  109,    2, 0x06 /* Public */,
-      22,    1,  112,    2, 0x06 /* Public */,
-      24,    1,  115,    2, 0x06 /* Public */,
+       1,    2,   79,    2, 0x06 /* Public */,
+       5,    2,   84,    2, 0x06 /* Public */,
+       6,    3,   89,    2, 0x06 /* Public */,
+      10,    1,   96,    2, 0x06 /* Public */,
+      13,    1,   99,    2, 0x06 /* Public */,
+      14,    0,  102,    2, 0x06 /* Public */,
+      15,    0,  103,    2, 0x06 /* Public */,
+      16,    3,  104,    2, 0x06 /* Public */,
+      19,    1,  111,    2, 0x06 /* Public */,
+      20,    1,  114,    2, 0x06 /* Public */,
+      21,    1,  117,    2, 0x06 /* Public */,
+      23,    1,  120,    2, 0x06 /* Public */,
+      25,    1,  123,    2, 0x06 /* Public */,
 
  // signals: parameters
     QMetaType::Void, QMetaType::QString, QMetaType::Int,    3,    4,
     QMetaType::Void, QMetaType::QString, QMetaType::Int,    3,    4,
     QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::QString,    7,    8,    9,
     QMetaType::Void, 0x80000000 | 11,   12,
+    QMetaType::Void, 0x80000000 | 11,   12,
     QMetaType::Void,
     QMetaType::Void,
-    QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::Bool,    7,   16,   17,
+    QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::Bool,    7,   17,   18,
     QMetaType::Void, QMetaType::QString,    3,
     QMetaType::Void, QMetaType::QString,    3,
-    QMetaType::Void, QMetaType::QString,   21,
-    QMetaType::Void, QMetaType::QString,   23,
-    QMetaType::Void, QMetaType::QString,   23,
+    QMetaType::Void, QMetaType::QString,   22,
+    QMetaType::Void, QMetaType::QString,   24,
+    QMetaType::Void, QMetaType::QString,   24,
 
        0        // eod
 };
@@ -125,20 +128,28 @@ void PlcManager::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         case 1: _t->plcDisconnected((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< int(*)>(_a[2]))); break;
         case 2: _t->plcFeedbackReceived((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3]))); break;
         case 3: _t->plcFeedbackBatch((*reinterpret_cast< const QVector<PlcFeedbackEntry>(*)>(_a[1]))); break;
-        case 4: _t->plcBatchStart(); break;
-        case 5: _t->plcBatchStop(); break;
-        case 6: _t->plcSendInfo((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< bool(*)>(_a[3]))); break;
-        case 7: _t->s7Connected((*reinterpret_cast< const QString(*)>(_a[1]))); break;
-        case 8: _t->s7Disconnected((*reinterpret_cast< const QString(*)>(_a[1]))); break;
-        case 9: _t->s7Error((*reinterpret_cast< const QString(*)>(_a[1]))); break;
-        case 10: _t->gridLocked((*reinterpret_cast< const QString(*)>(_a[1]))); break;
-        case 11: _t->gridUnlocked((*reinterpret_cast< const QString(*)>(_a[1]))); break;
+        case 4: _t->plcFeedbackBusinessBatch((*reinterpret_cast< const QVector<PlcFeedbackEntry>(*)>(_a[1]))); break;
+        case 5: _t->plcBatchStart(); break;
+        case 6: _t->plcBatchStop(); break;
+        case 7: _t->plcSendInfo((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< bool(*)>(_a[3]))); break;
+        case 8: _t->s7Connected((*reinterpret_cast< const QString(*)>(_a[1]))); break;
+        case 9: _t->s7Disconnected((*reinterpret_cast< const QString(*)>(_a[1]))); break;
+        case 10: _t->s7Error((*reinterpret_cast< const QString(*)>(_a[1]))); break;
+        case 11: _t->gridLocked((*reinterpret_cast< const QString(*)>(_a[1]))); break;
+        case 12: _t->gridUnlocked((*reinterpret_cast< const QString(*)>(_a[1]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
         switch (_id) {
         default: *reinterpret_cast<int*>(_a[0]) = -1; break;
         case 3:
+            switch (*reinterpret_cast<int*>(_a[1])) {
+            default: *reinterpret_cast<int*>(_a[0]) = -1; break;
+            case 0:
+                *reinterpret_cast<int*>(_a[0]) = qRegisterMetaType< QVector<PlcFeedbackEntry> >(); break;
+            }
+            break;
+        case 4:
             switch (*reinterpret_cast<int*>(_a[1])) {
             default: *reinterpret_cast<int*>(_a[0]) = -1; break;
             case 0:
@@ -177,58 +188,65 @@ void PlcManager::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
             }
         }
         {
-            using _t = void (PlcManager::*)();
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::plcBatchStart)) {
+            using _t = void (PlcManager::*)(const QVector<PlcFeedbackEntry> & );
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::plcFeedbackBusinessBatch)) {
                 *result = 4;
                 return;
             }
         }
         {
             using _t = void (PlcManager::*)();
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::plcBatchStop)) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::plcBatchStart)) {
                 *result = 5;
+                return;
+            }
+        }
+        {
+            using _t = void (PlcManager::*)();
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::plcBatchStop)) {
+                *result = 6;
                 return;
             }
         }
         {
             using _t = void (PlcManager::*)(const QString & , const QString & , bool );
             if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::plcSendInfo)) {
-                *result = 6;
-                return;
-            }
-        }
-        {
-            using _t = void (PlcManager::*)(const QString & );
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::s7Connected)) {
                 *result = 7;
                 return;
             }
         }
         {
             using _t = void (PlcManager::*)(const QString & );
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::s7Disconnected)) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::s7Connected)) {
                 *result = 8;
                 return;
             }
         }
         {
             using _t = void (PlcManager::*)(const QString & );
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::s7Error)) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::s7Disconnected)) {
                 *result = 9;
                 return;
             }
         }
         {
             using _t = void (PlcManager::*)(const QString & );
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::gridLocked)) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::s7Error)) {
                 *result = 10;
                 return;
             }
         }
         {
             using _t = void (PlcManager::*)(const QString & );
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::gridUnlocked)) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::gridLocked)) {
                 *result = 11;
+                return;
+            }
+        }
+        {
+            using _t = void (PlcManager::*)(const QString & );
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&PlcManager::gridUnlocked)) {
+                *result = 12;
                 return;
             }
         }
@@ -266,13 +284,13 @@ int PlcManager::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 12)
+        if (_id < 13)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 12;
+        _id -= 13;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 12)
+        if (_id < 13)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 12;
+        _id -= 13;
     }
     return _id;
 }
@@ -306,57 +324,64 @@ void PlcManager::plcFeedbackBatch(const QVector<PlcFeedbackEntry> & _t1)
 }
 
 // SIGNAL 4
-void PlcManager::plcBatchStart()
+void PlcManager::plcFeedbackBusinessBatch(const QVector<PlcFeedbackEntry> & _t1)
 {
-    QMetaObject::activate(this, &staticMetaObject, 4, nullptr);
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    QMetaObject::activate(this, &staticMetaObject, 4, _a);
 }
 
 // SIGNAL 5
-void PlcManager::plcBatchStop()
+void PlcManager::plcBatchStart()
 {
     QMetaObject::activate(this, &staticMetaObject, 5, nullptr);
 }
 
 // SIGNAL 6
-void PlcManager::plcSendInfo(const QString & _t1, const QString & _t2, bool _t3)
+void PlcManager::plcBatchStop()
 {
-    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))) };
-    QMetaObject::activate(this, &staticMetaObject, 6, _a);
+    QMetaObject::activate(this, &staticMetaObject, 6, nullptr);
 }
 
 // SIGNAL 7
-void PlcManager::s7Connected(const QString & _t1)
+void PlcManager::plcSendInfo(const QString & _t1, const QString & _t2, bool _t3)
 {
-    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))) };
     QMetaObject::activate(this, &staticMetaObject, 7, _a);
 }
 
 // SIGNAL 8
-void PlcManager::s7Disconnected(const QString & _t1)
+void PlcManager::s7Connected(const QString & _t1)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 8, _a);
 }
 
 // SIGNAL 9
-void PlcManager::s7Error(const QString & _t1)
+void PlcManager::s7Disconnected(const QString & _t1)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 9, _a);
 }
 
 // SIGNAL 10
-void PlcManager::gridLocked(const QString & _t1)
+void PlcManager::s7Error(const QString & _t1)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 10, _a);
 }
 
 // SIGNAL 11
-void PlcManager::gridUnlocked(const QString & _t1)
+void PlcManager::gridLocked(const QString & _t1)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 11, _a);
+}
+
+// SIGNAL 12
+void PlcManager::gridUnlocked(const QString & _t1)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    QMetaObject::activate(this, &staticMetaObject, 12, _a);
 }
 QT_WARNING_POP
 QT_END_MOC_NAMESPACE

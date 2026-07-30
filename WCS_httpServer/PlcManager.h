@@ -177,7 +177,8 @@ signals:
     void plcConnected(const QString& ip, int port);
     void plcDisconnected(const QString& ip, int port);
     void plcFeedbackReceived(const QString& code, const QString& grid, const QString& car);
-    void plcFeedbackBatch(const QVector<PlcFeedbackEntry>& entries);  // ★ 批量反馈信号（UI日志用）
+    void plcFeedbackBatch(const QVector<PlcFeedbackEntry>& entries);  // ★ 批量反馈信号（UI日志用，100ms间隔）
+    void plcFeedbackBusinessBatch(const QVector<PlcFeedbackEntry>& entries); // ★ 批量业务信号（HttpServer分拣标记，100ms间隔）
     void plcBatchStart();
     void plcBatchStop();
     void plcSendInfo(const QString& code, const QString& grids, bool success);
