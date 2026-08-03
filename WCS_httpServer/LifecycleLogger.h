@@ -92,6 +92,20 @@ private:
         TraceContext::instance().traceId().toLocal8Bit().data(), \
         __FUNCTION__, __LINE__, ##__VA_ARGS__)
 
+// CAM模块（相机通信、扫描结果）
+#define CAM_LOG_INFO(fmt, ...) \
+    hlog_format(HLOG_LEVEL_INFO, "CAM", "[%s][%s:%d] " fmt, \
+        TraceContext::instance().traceId().toLocal8Bit().data(), \
+        __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define CAM_LOG_WARN(fmt, ...) \
+    hlog_format(HLOG_LEVEL_WARN, "CAM", "[%s][%s:%d] " fmt, \
+        TraceContext::instance().traceId().toLocal8Bit().data(), \
+        __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define CAM_LOG_ERROR(fmt, ...) \
+    hlog_format(HLOG_LEVEL_ERROR, "CAM", "[%s][%s:%d] " fmt, \
+        TraceContext::instance().traceId().toLocal8Bit().data(), \
+        __FUNCTION__, __LINE__, ##__VA_ARGS__)
+
 // HTTP模块（请求分发、WMS回传）
 #define HTTP_LOG_INFO(fmt, ...) \
     hlog_format(HLOG_LEVEL_INFO, "HTTP", "[%s][%s:%d] " fmt, \

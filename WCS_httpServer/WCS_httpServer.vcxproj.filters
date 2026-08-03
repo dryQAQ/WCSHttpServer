@@ -64,6 +64,21 @@
     <ClCompile Include="log_center.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SiemensPLC.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="snap7.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="CameraManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SortingDatabase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="sqlite3.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="ConfigManager.h">
@@ -87,6 +102,12 @@
     <QtMoc Include="log_center.h">
       <Filter>Header Files</Filter>
     </QtMoc>
+    <QtMoc Include="HttpServer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="CameraManager.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DoubleBuffer.h">
@@ -102,6 +123,21 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ThreadPool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SortingDatabase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SiemensPLC.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="snap7.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sqlite3.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sqlite3ext.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

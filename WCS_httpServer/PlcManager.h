@@ -6,10 +6,10 @@
 //   ① 通过 S7 DBWrite 发送条码+格口分拣指令到 PLC（与 WCSApp 一致）
 //   ② 通过 TCP 文本协议发送指令 + 接收 PLC 落格反馈
 //   ③ 监听TCP端口，接受PLC主动连接（HP-Socket CTcpServerListener）
-//   ④ 通过 S7 DBRead 轮询 PLC 锁格状态（200位格口锁定位图）
-//   ⑤ 锁格状态检测：上升沿锁格，下降沿解锁
-//   ⑥ 管理多PLC客户端连接（m_mapClient）
-//   ⑦ 连接状态监控和心跳检测
+//   ④ 接收 PLC 主动发送的 TCP 锁格消息 {grid|L}/{grid|U}（与WCSApp一致，PLC主动发，WCS被动接收执行）
+//   ⑤ 管理多PLC客户端连接（m_mapClient）
+//   ⑥ S7 心跳线程：每2秒检测连接，断线自动重连（与 WCSApp simensS7 一致）
+//   ⑦ 支持主动发送模式：批量发送波次所有条码到PLC（不等待PLC查询，与WCSApp一致）
 //
 // 通信协议（与 WCSApp 完全兼容）：
 //   S7 发送: DB1 Offset 1000, 42 bytes (条码+格口二进制包)
@@ -18,9 +18,11 @@
 //   TCP 反馈: {条码|格口|小车号}  — 落格确认
 //           {start}              — 批次开始
 //           {stop}               — 批次停止
-//   S7 锁格: DB77 Offset 0, 25 bytes (200位格口锁定位图)
+//   TCP 锁格: {格口号|L}          — PLC主动锁格（如 {222|L}）
+//           {格口号|U}          — PLC主动解锁（如 {222|U}）
+//   S7 锁格: 已移除S7锁格轮询，锁格由PLC通过TCP主动发送 {grid|L}/{grid|U}（与WCSApp一致）
 //
-// 参考: WCSApp\WCSApps\PlcCenter.h, FrmMainV2.cpp
+// 参考: WCSApp\WCSApps\PlcCenter.h, FrmMainV2.cpp, simensS7.h
 // ============================================================================
 
 #include <QObject>
@@ -31,6 +33,7 @@
 #include <QSet>
 #include <QTimer>
 #include <QVector>
+#include <QMap>
 #include <vector>
 #include <map>
 #include <mutex>
@@ -54,6 +57,17 @@ static inline bool S7_GetBitAt(byte Buffer[], int Pos, int Bit)
     if (Bit < 0) Bit = 0;
     if (Bit > 7) Bit = 7;
     return (Buffer[Pos] & g_s7Mask[Bit]) != 0;
+}
+
+// 设置 byte 缓冲区中某一位的值（与 WCSApp simensS7.h 完全一致）
+static inline void S7_SetBitAt(byte Buffer[], int Pos, int Bit, bool Value)
+{
+    if (Bit < 0) Bit = 0;
+    if (Bit > 7) Bit = 7;
+    if (Value)
+        Buffer[Pos] = (byte)(Buffer[Pos] | g_s7Mask[Bit]);
+    else
+        Buffer[Pos] = (byte)(Buffer[Pos] & ~g_s7Mask[Bit]);
 }
 
 // PLC配置结构
@@ -162,6 +176,9 @@ public:
     // ──── 发送指令 ────
     bool sendCodeInfo(const QString& barcode, const std::vector<int>& vecGrid, int car = 1);
     bool sendRawCommand(const QString& command);
+    // ★ 主动发送模式：批量发送波次条码到PLC（不等待PLC查询，与WCSApp一致）
+    // codeGridMap: 条码→格口字符串（如 "15" 或 "1,2,3"）
+    bool sendBatchCodes(const QMap<QString, QString>& codeGridMap);
 
     int  connectedClientCount() const;
     bool hasConnectedClients() const { return connectedClientCount() > 0; }
@@ -187,12 +204,14 @@ signals:
     void s7Connected(const QString& ip);
     void s7Disconnected(const QString& ip);
     void s7Error(const QString& errMsg);
-    void gridLocked(const QString& gridNum);     // 格口被锁定
-    void gridUnlocked(const QString& gridNum);   // 格口解锁
+    void gridLocked(const QString& gridNum);     // 格口被锁定（S7边沿检测）
+    void gridUnlocked(const QString& gridNum);   // 格口解锁（S7边沿检测）
+    void gridLockedByPlc(const QString& gridNum);  // ★ 格口被锁定（PLC主动TCP消息）
+    void gridUnlockedByPlc(const QString& gridNum);// ★ 格口解锁（PLC主动TCP消息）
 
-private:
+    private:
     void parsePlcFeedback(const QByteArray& data);
-    void OnPlcS7Thread();                      // S7 锁格轮询线程
+    void OnS7HeartThread();                    // ★ S7 心跳线程：每2秒检测连接，断线重连（与 WCSApp simensS7::OnHeartThread 一致）
     void flushFeedbackBatch();                 // ★ 定时刷新批量反馈到UI
 
     // ──── TCP 通信 ────
@@ -221,12 +240,13 @@ private:
     std::atomic<int64_t> m_s7SendCount{0};
     std::atomic<int64_t> m_s7SendErrCount{0};
 
-    // ──── S7 锁格轮询 ────
-    std::thread m_threadS7PLC;
-    bool        m_bS7ThreadStart = false;
-    byte        m_s7PlcLastData[PLC_S7_LOCK_READ_SIZE]{ 0 };  // 上一次锁格状态（用于边缘检测）
+    // ──── S7 锁格状态（由TCP锁格消息 {grid|L}/{grid|U} 更新，与WCSApp一致）────
     bool        m_s7Grid_200[PLC_S7_MAX_GRID_COUNT]{ false }; // 当前锁格状态（200位）
     mutable std::mutex m_lockGridPlc;       // 保护 m_s7Grid_200
+
+    // ──── S7 心跳线程（与 WCSApp simensS7::OnHeartThread 一致）────
+    std::thread m_heartThread;              // ★ S7 心跳线程
+    bool        m_bHeartThreadStart = false; // ★ 心跳线程启动标志
 
     // ──── 锁格事件队列 ────
     std::mutex m_lockGrid;                  // 保护锁格队列
@@ -262,5 +282,4 @@ private:
     QTimer*       m_feedbackBatchTimer = nullptr; // 批量刷新定时器（100ms间隔）
     std::mutex    m_feedbackBatchMutex;           // 保护批量反馈队列
     QVector<PlcFeedbackEntry> m_feedbackBatchBuffer; // 批量反馈缓冲区
-    // FEEDBACK_BATCH 常量已统一移至 define.h: PLC_FEEDBACK_BATCH_INTERVAL_MS / PLC_FEEDBACK_BATCH_MAX_SIZE
 };

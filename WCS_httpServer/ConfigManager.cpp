@@ -50,9 +50,16 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "plcS7Ip")            plcS7Ip = xml.readElementText();
         else if (name == "plcS7Rack")          plcS7Rack = xml.readElementText().toInt();
         else if (name == "plcS7Slot")          plcS7Slot = xml.readElementText().toInt();
+        else if (name == "cameraListenPort")   cameraListenPort = xml.readElementText().toInt();
+        else if (name == "cameraPlatType")     cameraPlatType = xml.readElementText().toInt();
         else if (name == "businessPoolSize")   businessPoolSize = xml.readElementText().toInt();
         else if (name == "plcSendPoolSize")    plcSendPoolSize = xml.readElementText().toInt();
+        else if (name == "plcRecvPoolSize")    plcRecvPoolSize = xml.readElementText().toInt();
+        else if (name == "cameraProcPoolSize") cameraProcPoolSize = xml.readElementText().toInt();
         else if (name == "logRetainDays")      logRetainDays = xml.readElementText().toInt();
+        else if (name == "apiInsertWaveInfo")    apiInsertWaveInfo = xml.readElementText();
+        else if (name == "apiBindingLatticePort") apiBindingLatticePort = xml.readElementText();
+        else if (name == "apiInsertWaveIn")      apiInsertWaveIn = xml.readElementText();
         else if (name == "rfidUrl")            rfidUrl = xml.readElementText();
         else if (name == "binding")
         {
@@ -103,10 +110,17 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("plcS7Ip",          plcS7Ip);
     xml.writeTextElement("plcS7Rack",        QString::number(plcS7Rack));
     xml.writeTextElement("plcS7Slot",        QString::number(plcS7Slot));
+    xml.writeTextElement("cameraListenPort",  QString::number(cameraListenPort));
+    xml.writeTextElement("cameraPlatType",    QString::number(cameraPlatType));
     xml.writeTextElement("businessPoolSize", QString::number(businessPoolSize));
     xml.writeTextElement("plcSendPoolSize",  QString::number(plcSendPoolSize));
+    xml.writeTextElement("plcRecvPoolSize",   QString::number(plcRecvPoolSize));
+    xml.writeTextElement("cameraProcPoolSize", QString::number(cameraProcPoolSize));
     xml.writeTextElement("logRetainDays",    QString::number(logRetainDays));
     xml.writeTextElement("rfidUrl",          rfidUrl);
+    xml.writeTextElement("apiInsertWaveInfo",     apiInsertWaveInfo);
+    xml.writeTextElement("apiBindingLatticePort", apiBindingLatticePort);
+    xml.writeTextElement("apiInsertWaveIn",       apiInsertWaveIn);
 
     // ──── 容器绑定 ────
     QMapIterator<QString, QString> it(containerBindings);

@@ -7,11 +7,12 @@
   moc log_center.h
   moc WaveManager.h
   moc ParseWorker.h
+   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   moc PlcManager.h
   moc MainWindow.h
   moc HttpServer.h
+  moc CameraManager.h
   moc HttpClient.h
-   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   ConfigManager.cpp
   HttpClient.cpp
   HttpServer.cpp
@@ -21,9 +22,12 @@
   PlcManager.cpp
   SiemensPLC.cpp
   snap7.cpp
+  CameraManager.cpp
+  SortingDatabase.cpp
   WaveManager.cpp
   WCS_httpServer.cpp
   main.cpp
+  sqlite3.c
   qrc_WCS_httpServer.cpp
   moc_WCS_httpServer.cpp
   moc_ConfigManager.cpp
@@ -34,5 +38,6 @@
   moc_PlcManager.cpp
   moc_MainWindow.cpp
   moc_HttpServer.cpp
+  moc_CameraManager.cpp
   moc_HttpClient.cpp
   WCS_httpServer.vcxproj -> D:\WCS\WCSApp\WCS_httpServer\release_WcsHttpServer\WCS_httpServer.exe

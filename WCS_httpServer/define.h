@@ -50,7 +50,9 @@
 #define BUSINESS_POOL_SIZE      90      // 业务线程池大小（16扫描仪×5并发 + HTTP回传 + 异常处理 + 余量）
 #define TASK_QUEUE_MAX_SIZE      5      // 波次推送任务队列最大排队数（防止大波次突发撑爆内存）
 #define POOL_OVERLOAD_MULTIPLIER  2      // 线程池过载倍数（积压任务 > 线程数×倍数 时告警）
-#define PLC_SEND_POOL_SIZE       8      // PLC 发送专用线程池（S7 DBWrite 同步阻塞10~100ms，需异步化防I/O线程阻塞）
+#define PLC_SEND_POOL_SIZE       8      // PLC 发送专用线程池
+#define PLC_RECV_POOL_SIZE       4      // PLC 反馈接收专用线程池（落格反馈→分拣标记→SQLite写入，参考WCSApp m_threadPoolPLCRecvPtr）
+#define CAMERA_PROC_POOL_SIZE    4      // 相机数据处理专用线程池（相机扫描→格口查询→PLC发送，参考WCSApp m_threadPoolPtr）（S7 DBWrite 同步阻塞10~100ms，需异步化防I/O线程阻塞）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 网络请求超时配置
@@ -75,6 +77,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // PLC 通信配置（与 WCSApp 一致，TCP 文本协议 + S7 协议）
 // ═══════════════════════════════════════════════════════════════════════════
+// ── 相机通信 ──
+#define CAMERA_LISTEN_PORT      8193     // 相机 TCP 监听端口（相机主动连接到此端口）
+#define CAMERA_MAX_CONNECTIONS    16     // 最大相机连接数
+
 // ── TCP 文本协议 ──
 #define PLC_LISTEN_PORT         8192     // PLC TCP 监听端口（PLC主动连接到此端口）
 #define PLC_RECONNECT_INTERVAL_MS 3000   // PLC 断线重连间隔(ms)
@@ -148,6 +154,100 @@
 // ═══════════════════════════════════════════════════════════════════════════
 #define RESP_BODY_LOG_TRUNCATE    200     // WMS 回传响应体在日志中截断长度（字符数）
 #define RAW_REQ_BODY_LOG_LEN      500     // 原始请求 Body 在日志中截断长度（字符数，完整记录 queryString）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 分拣数据本地存储（SQLite）
+// ═══════════════════════════════════════════════════════════════════════════
+// 分拣数据本地存储（SQLite）—— 数据库路径
+// ═══════════════════════════════════════════════════════════════════════════
+#define SORTING_DB_DIR            "data"                    // 数据库文件目录（exe 同目录下）
+#define SORTING_DB_FILE           "data/sorting_records.db" // 数据库文件路径（相对于 exe 目录）
+#define SORTING_DB_RETAIN_DAYS    90                        // 分拣记录保留天数
+#define SORTING_QUERY_MAX_RESULTS 1000                      // 单次查询最大返回记录数
+#define SORTING_QUERY_PAGE_SIZE   100                       // 表格每页显示记录数
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 分拣数据本地存储（SQLite）—— SQL 语句宏
+//
+// 设计原则：所有 SQL 语句集中在 define.h，使用处用中文注释标注实际语句，
+//          方便维护时直接理解 SQL 含义，无需跳转到宏定义。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ──── 数据库性能优化（PRAGMA 指令）────
+#define SQL_PRAGMA_WAL            "PRAGMA journal_mode=WAL"       // 启用 WAL 日志模式，允许读写并发，提升高并发场景性能
+#define SQL_PRAGMA_SYNC           "PRAGMA synchronous=NORMAL"     // 同步模式设为 NORMAL，在安全性和写入性能之间取得平衡
+#define SQL_PRAGMA_CACHE          "PRAGMA cache_size=5000"        // 设置缓存大小为 5000 页（约 20MB），减少磁盘 I/O
+#define SQL_PRAGMA_OPTIMIZE       "PRAGMA optimize"               // 执行数据库优化，清理删除记录后回收磁盘空间
+
+// ──── 建表：分拣记录表 ────
+// 创建分拣记录主表，存储每条 PLC 落格反馈的完整信息
+// 字段说明：
+//   id         — 自增主键，唯一标识每条记录
+//   order_code — 波次号，关联 WMS 推送的波次
+//   barcode    — 条码/SKU 编码，用于查询追溯
+//   grid_num   — 格口号，分拣落格的目标格口
+//   car_num    — 小车号，输送分拣的小车编号
+//   grid_count — 配货件数，该格口该条码的配货数量
+//   volu       — 来源库位，货物在原仓库的存放位置
+//   sort_time  — 分拣完成时间，PLC 反馈落格的时间戳
+//   create_time— 记录创建时间，写入数据库的时间
+#define SQL_CREATE_TABLE_SORTING \
+    "CREATE TABLE IF NOT EXISTS sorting_records (" \
+    "  id          INTEGER PRIMARY KEY AUTOINCREMENT," \
+    "  order_code  TEXT    NOT NULL DEFAULT ''," \
+    "  barcode     TEXT    NOT NULL DEFAULT ''," \
+    "  grid_num    TEXT    NOT NULL DEFAULT ''," \
+    "  car_num     TEXT    NOT NULL DEFAULT '1'," \
+    "  grid_count  INTEGER NOT NULL DEFAULT 0," \
+    "  volu        TEXT    NOT NULL DEFAULT ''," \
+    "  sort_time   TEXT    NOT NULL DEFAULT ''," \
+    "  create_time TEXT    NOT NULL DEFAULT ''" \
+    ")"
+
+// ──── 索引：加速常用查询 ────
+// 按条码查询索引 — 加速按条码搜索历史分拣记录
+#define SQL_CREATE_INDEX_BARCODE   "CREATE INDEX IF NOT EXISTS idx_barcode    ON sorting_records(barcode)"
+// 按波次号查询索引 — 加速按波次号查询该波次下所有分拣记录
+#define SQL_CREATE_INDEX_ORDER     "CREATE INDEX IF NOT EXISTS idx_order_code ON sorting_records(order_code)"
+// 按分拣时间查询索引 — 加速按时间范围查询（如查询某天的分拣记录）
+#define SQL_CREATE_INDEX_TIME      "CREATE INDEX IF NOT EXISTS idx_sort_time  ON sorting_records(sort_time)"
+
+// ──── 公共查询字段列表（SELECT 子句复用）────
+// 查询所有字段，用于各种 SELECT 语句拼接，避免重复书写字段列表
+#define SQL_SELECT_FIELDS  "SELECT id, order_code, barcode, grid_num, car_num, grid_count, volu, sort_time, create_time "
+
+// ──── 插入记录：PLC 落格反馈时写入一条分拣记录 ────
+// 使用参数化查询（?占位符），防止 SQL 注入，字段顺序与建表语句一致
+#define SQL_INSERT_RECORD \
+    "INSERT INTO sorting_records " \
+    "(order_code, barcode, grid_num, car_num, grid_count, volu, sort_time, create_time) " \
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+
+// ──── 查询：按不同条件检索分拣记录 ────
+// 按条码查询 — 输入条码，返回该条码的所有分拣历史（按时间倒序）
+#define SQL_QUERY_BY_BARCODE       SQL_SELECT_FIELDS "FROM sorting_records WHERE barcode = ? ORDER BY id DESC LIMIT ?"
+// 按时间范围查询 — 输入起始和结束时间，返回该时间段内的分拣记录（按时间倒序）
+#define SQL_QUERY_BY_TIME          SQL_SELECT_FIELDS "FROM sorting_records WHERE sort_time >= ? AND sort_time <= ? ORDER BY id DESC LIMIT ?"
+// 按波次号查询 — 输入波次号，返回该波次下的所有分拣记录（按时间倒序）
+#define SQL_QUERY_BY_ORDER         SQL_SELECT_FIELDS "FROM sorting_records WHERE order_code = ? ORDER BY id DESC LIMIT ?"
+// 查询全部记录 — 不设条件，返回最新的分拣记录（按时间倒序）
+#define SQL_QUERY_ALL              SQL_SELECT_FIELDS "FROM sorting_records ORDER BY id DESC LIMIT ?"
+
+// ──── 统计查询：汇总数据库整体情况 ────
+// 统计总记录数 — 数据库中所有分拣记录的总条数
+#define SQL_COUNT_ALL              "SELECT COUNT(*) FROM sorting_records"
+// 统计今日记录数 — 当天（从 00:00:00 起）的分拣记录条数
+#define SQL_COUNT_TODAY            "SELECT COUNT(*) FROM sorting_records WHERE sort_time >= ?"
+// 统计波次总数 — 去重统计所有波次号的数量
+#define SQL_COUNT_WAVES            "SELECT COUNT(DISTINCT order_code) FROM sorting_records"
+// 统计格口使用数 — 去重统计所有使用过的格口号数量
+#define SQL_COUNT_GRIDS            "SELECT COUNT(DISTINCT grid_num) FROM sorting_records"
+// 查询最近分拣时间 — 获取最新一条分拣记录的时间，用于判断数据新鲜度
+#define SQL_LAST_SORT_TIME         "SELECT sort_time FROM sorting_records ORDER BY id DESC LIMIT 1"
+
+// ──── 清理：删除过期记录 ────
+// 按分拣时间删除 N 天前的旧记录，防止数据库文件无限增长
+#define SQL_DELETE_OLD             "DELETE FROM sorting_records WHERE sort_time < ?"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UI/日志限制

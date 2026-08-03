@@ -8,6 +8,7 @@
 #include <QUrlQuery>
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QCoreApplication>
 #include <cstring>
 #include <windows.h>
 #include <tchar.h>
@@ -39,6 +40,21 @@ HttpServer::HttpServer(QObject* parent)
     m_pWaveMgr = new WaveManager(m_pBuffer, this);
     m_pWorker  = new ParseWorker(m_pQueue, m_pBuffer, this);
     m_pPlcMgr  = new PlcManager(this);  // ★ PLC直连管理器
+    m_pCameraMgr = new CameraManager(this); // ★ 相机通信管理器
+    m_pSortingDb = new SortingDatabase(); // ★ 分拣记录数据库
+
+    // ★ 打开本地数据库（路径: exe同目录/data/sorting_records.db）
+    {
+        QString dbPath = QCoreApplication::applicationDirPath() + "/" + SORTING_DB_FILE;
+        if (m_pSortingDb->open(dbPath))
+        {
+            HTTP_LOG_INFO("分拣记录数据库已打开 path=%s", dbPath.toLocal8Bit().data());
+        }
+        else
+        {
+            HTTP_LOG_ERROR("分拣记录数据库打开失败 path=%s", dbPath.toLocal8Bit().data());
+        }
+    }
 
     // ★ 设置格口查询回调：相机/PLC 扫到 {条码|小车号} 时 → 查 DoubleBuffer → 返回格口号
     m_pPlcMgr->setLookupCallback([this](const QString& barcode) -> QString {
@@ -52,6 +68,17 @@ HttpServer::HttpServer(QObject* parent)
         AppConfig& cfg = ConfigManager::instance()->config();
         m_pBusinessPool = new Hanchine::ThreadPool(cfg.businessPoolSize);
         HTTP_INFO("业务线程池已创建 threads=%d", cfg.businessPoolSize);
+        HTTP_INFO("业务线程池已创建 threads=%d", cfg.businessPoolSize);
+
+        // ★ 专用业务线程池（参考WCSApp分类线程池设计，不同业务用独立池，方便管理内存）
+
+        m_pPlcRecvPool = new Hanchine::ThreadPool(cfg.plcRecvPoolSize);
+
+        HTTP_INFO("PLC反馈接收专用线程池已创建 threads=%d", cfg.plcRecvPoolSize);
+
+        m_pCameraProcPool = new Hanchine::ThreadPool(cfg.cameraProcPoolSize);
+
+        HTTP_INFO("相机数据处理专用线程池已创建 threads=%d", cfg.cameraProcPoolSize);
     }
 
     // 显式指定 Qt::QueuedConnection：ParseWorker::run() 在独立线程中运行，
@@ -77,6 +104,28 @@ HttpServer::HttpServer(QObject* parent)
                 m_epcSkuMap.clear();
             }
 
+            // ★ 主动发送模式：波次解析完成后，批量发送所有条码到PLC（与WCSApp一致）
+            //   不等待PLC查询报文，主动遍历波次所有条码发送PLC分拣指令
+            if (m_pPlcMgr && m_pPlcMgr->hasConnectedClients())
+            {
+                QMap<QString, QString> codeGridMap;
+                for (const QString& code : recvSet)
+                {
+                    GridEntry entry = m_pBuffer->get(code);
+                    if (!entry.gridNum.isEmpty())
+                    {
+                        codeGridMap[code] = entry.gridNum;
+                    }
+                }
+                if (!codeGridMap.isEmpty())
+                {
+                    HTTP_LOG_INFO("波次解析完成 主动批量发送PLC指令 order=%s count=%d",
+                        orderCode.toLocal8Bit().data(), codeGridMap.size());
+                    emit logMessage(QString("[PLC] 主动批量发送 %1 条指令").arg(codeGridMap.size()));
+                    m_pPlcMgr->sendBatchCodes(codeGridMap);
+                }
+            }
+
             // ★ 触发RFID查询：按批次大小拆分EPC列表，分批请求
             if (!epcList.isEmpty())
             {
@@ -96,6 +145,72 @@ HttpServer::HttpServer(QObject* parent)
                 }
             }
         }, Qt::QueuedConnection);
+
+    // ★ 相机扫描回调注册（与 WCSApp 的 CodeRecvCallBack 一致，在 HP-Socket I/O 线程中调用）
+    //   上层立即提交到相机数据处理专用线程池，不阻塞 I/O 线程
+    //   数据流: CameraManager::OnReceive (HP-Socket I/O线程) → CodeRecvCallBack → 相机处理池 → PLC发送
+    //   与 WCSApp 的 _cb(stCode) → FrmMainV2::OnCodeFrinDaHuaResultCallBack → m_threadPoolPtr 路径一致
+    m_pCameraMgr->RegisterCodeResultCallBack([this](CodeInfo stInfo) {
+        // 未识别条码 → 仅记录日志（UI通知通过MainWindow定时器刷新状态面板）
+        if (stInfo.codes.empty() || stInfo.codes[0] == "noread")
+        {
+            HTTP_LOG_WARN("相机未识别条码 car=%d", stInfo.car);
+            emit logMessage(QString("[相机] 未识别条码 car=%1").arg(stInfo.car), true);
+            return;
+        }
+
+        // 正常扫描 → 提交到相机数据处理专用线程池（不占用主线程）
+        if (m_pCameraProcPool)
+        {
+            // 按值捕获避免悬空引用（stInfo 在 I/O 线程栈上）
+            QString barcode = stInfo.codes[0];
+            int car = stInfo.car;
+            m_pCameraProcPool->commitNoWait([this, barcode, car]() {
+                if (!m_pBuffer || !m_pPlcMgr) return;
+
+                // 查格口
+                GridEntry entry = m_pBuffer->get(barcode);
+                if (entry.gridNum.isEmpty())
+                {
+                    HTTP_LOG_WARN("相机扫描条码不在波次中 code=%s", barcode.toLocal8Bit().data());
+                    emit logMessage(QString("[相机] 条码不在波次中: %1").arg(barcode), true);
+                    return;
+                }
+
+                // 解析格口
+                std::vector<int> vecGrid;
+                for (const QString& g : entry.gridNum.split(',', Qt::SkipEmptyParts))
+                {
+                    bool ok = false;
+                    int n = g.trimmed().toInt(&ok);
+                    if (ok && n > 0) vecGrid.push_back(n);
+                }
+                if (vecGrid.empty()) return;
+
+                int c = (car > 0) ? car : 1;
+
+                // 发送PLC指令
+                m_pPlcMgr->sendCodeInfo(barcode, vecGrid, c);
+
+                HTTP_LOG_INFO("相机扫描→发送PLC code=%s grid=%s car=%d",
+                    barcode.toLocal8Bit().data(), entry.gridNum.toLocal8Bit().data(), c);
+            });
+        }
+        else
+        {
+            // 兜底：直接处理（相机处理池未初始化时）
+            GridEntry entry = m_pBuffer->get(stInfo.codes[0]);
+            if (!entry.gridNum.isEmpty()) {
+                std::vector<int> vecGrid;
+                for (const QString& g : entry.gridNum.split(',', Qt::SkipEmptyParts))
+                {
+                    bool ok = false; int n = g.trimmed().toInt(&ok);
+                    if (ok && n > 0) vecGrid.push_back(n);
+                }
+                m_pPlcMgr->sendCodeInfo(stInfo.codes[0], vecGrid, stInfo.car > 0 ? stInfo.car : 1);
+            }
+        }
+    });
 
     // ★ 波次完成 → 异步入池构建 33.md JSON（避免主线程遍历大量数据卡 UI）
     connect(m_pWaveMgr, &WaveManager::waveReadyToReport, this,
@@ -131,40 +246,55 @@ HttpServer::HttpServer(QObject* parent)
         }, Qt::QueuedConnection);
 
     // ──── PLC反馈批次 → 分拣标记 + 按格口记录 ────
-    // ★ 批量处理：N条反馈合并为1次 QueuedConnection 事件，避免主线程事件队列洪水
-    //    每 100ms 触发一次，处理该周期内的所有落格反馈
+    // ★ 提交到 PLC 反馈接收专用线程池处理（参考WCSApp m_threadPoolPLCRecvPtr）
+    //   不占用主线程，避免高并发落格反馈阻塞 UI
+    //   数据流: PlcManager::flushFeedbackBatch (主线程QTimer) → plcFeedbackBusinessBatch → PLC接收池 → markSorted + SQLite
     connect(m_pPlcMgr, &PlcManager::plcFeedbackBusinessBatch, this,
         [this](const QVector<PlcFeedbackEntry>& entries) {
             if (!m_pWaveMgr) return;
 
-            for (const PlcFeedbackEntry& e : entries)
+            // ★ 提交到 PLC 反馈接收专用线程池（不阻塞主线程）
+            if (m_pPlcRecvPool)
             {
-                m_pWaveMgr->markSorted(e.code);
+                m_pPlcRecvPool->commitNoWait([this, entries]() {
+                    for (const PlcFeedbackEntry& e : entries)
+                    {
+                        m_pWaveMgr->markSorted(e.code);
 
-                // ★ 按格口记录分拣明细（锁格时回传 WMS 用）
-                {
-                    std::lock_guard<std::mutex> lock(m_gridRecordMutex);
-                    GridSortRecord rec;
-                    rec.inco   = e.code;
-                    rec.car    = e.car;
-                    rec.timeMs = e.timestampMs;
+                        // 按格口记录分拣明细（锁格时回传 WMS 用）
+                        {
+                            std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+                            GridSortRecord rec;
+                            rec.inco   = e.code;
+                            rec.car    = e.car;
+                            rec.timeMs = e.timestampMs;
 
-                    // 从 DoubleBuffer 获取该条码的 gridCount 和 volu
-                    GridEntry entry = m_pBuffer->get(e.code);
-                    rec.gridCount = entry.gridCount;
-                    rec.volu      = entry.volu.isEmpty() ? QString("--") : entry.volu;
+                            GridEntry entry = m_pBuffer->get(e.code);
+                            rec.gridCount = entry.gridCount;
+                            rec.volu      = entry.volu.isEmpty() ? QString("--") : entry.volu;
 
-                    m_gridSortRecords[e.grid].append(rec);
-                }
+                            m_gridSortRecords[e.grid].append(rec);
+
+                            // 写入分拣记录到本地 SQLite 数据库
+                            if (m_pSortingDb)
+                            {
+                                m_pSortingDb->insertRecord(
+                                    m_pWaveMgr->orderCode(),
+                                    e.code, e.grid, e.car,
+                                    entry.gridCount, entry.volu);
+                            }
+                        }
+                    }
+
+                    if (entries.size() == 1)
+                    {
+                        HTTP_LOG_INFO("PLC反馈自动分拣 code=%s grid=%s",
+                            entries[0].code.toLocal8Bit().data(),
+                            entries[0].grid.toLocal8Bit().data());
+                    }
+                });
             }
-
-            if (entries.size() == 1)
-            {
-                HTTP_LOG_INFO("PLC反馈自动分拣 code=%s grid=%s",
-                    entries[0].code.toLocal8Bit().data(),
-                    entries[0].grid.toLocal8Bit().data());
-            }
-        }, Qt::QueuedConnection);
+        });
 
     // ★ S7 锁格 → 触发 WMS 回传
     connect(m_pPlcMgr, &PlcManager::gridLocked, this,
@@ -210,9 +340,30 @@ HttpServer::~HttpServer()
     stop();
     m_pWorker->stop();
     m_pWorker->wait(WORKER_WAIT_MS);
+    // ★ 关闭相机服务
+    if (m_pCameraMgr) {
+        m_pCameraMgr->stop();
+        delete m_pCameraMgr;
+        m_pCameraMgr = nullptr;
+    }
+    // ★ 关闭分拣记录数据库
+    if (m_pSortingDb) {
+        m_pSortingDb->close();
+        delete m_pSortingDb;
+        m_pSortingDb = nullptr;
+    }
     if (m_pBusinessPool) {
         delete m_pBusinessPool;
         m_pBusinessPool = nullptr;
+    }
+    // ★ 清理专用业务线程池（PLC反馈接收池、相机数据处理池）
+    if (m_pPlcRecvPool) {
+        delete m_pPlcRecvPool;
+        m_pPlcRecvPool = nullptr;
+    }
+    if (m_pCameraProcPool) {
+        delete m_pCameraProcPool;
+        m_pCameraProcPool = nullptr;
     }
 }
 
@@ -245,6 +396,22 @@ bool HttpServer::start(int port)
         QString("[Http] 服务已启动 port=%1")
             .arg(port));
 
+    // ★ 同时启动相机监听服务
+    if (m_pCameraMgr)
+    {
+        AppConfig& cfg2 = ConfigManager::instance()->config();
+        if (m_pCameraMgr->start("0.0.0.0", cfg2.cameraListenPort))
+        {
+            HTTP_LOG_INFO("相机监听服务已启动 port=%d", cfg2.cameraListenPort);
+            emit logMessage(QString("[相机] 监听服务已启动 port=%1").arg(cfg2.cameraListenPort));
+        }
+        else
+        {
+            HTTP_LOG_ERROR("相机监听服务启动失败 port=%d", cfg2.cameraListenPort);
+            emit logMessage(QString("[相机] 监听服务启动失败 port=%1").arg(cfg2.cameraListenPort), true);
+        }
+    }
+
     // ★ 同时启动PLC监听服务
     if (m_pPlcMgr)
     {
@@ -268,6 +435,7 @@ bool HttpServer::start(int port)
 void HttpServer::stop()
 {
     if (m_pPlcMgr) m_pPlcMgr->stop();  // ★ 先停PLC
+    if (m_pCameraMgr) m_pCameraMgr->stop();  // ★ 再停相机
 
     if (m_pServer && m_pServer->HasStarted())
     {
@@ -465,7 +633,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     // 报文: POST /api/DispatchSortingCommand/InsertWaveInfo
     // 功能: 推送波次数据，包含条码-格口映射，WCS解析后存储
     // ═══════════════════════════════════════════════════════════════════════
-    if (st.path == API_INSERT_WAVE_INFO && st.method == "POST")
+    if (st.path == m_apiInsertWaveInfo && st.method == "POST")
     {
         // ★ 前置校验：所有格口必须已绑定容器，否则拒绝波次
         if (!areAllBindingsComplete())
@@ -512,7 +680,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     // 报文: POST /api/DispatchSortingCommand/BindingLatticePort?latticehole=格口号&boxcode=容器号
     // 功能: 绑定容器号与格口的对应关系，用于后续装箱数据同步
     // ═══════════════════════════════════════════════════════════════════════
-    if (st.path == API_BINDING_LATTICE_PORT && st.method == "POST")
+    if (st.path == m_apiBindingLatticePort && st.method == "POST")
     {
         // 优先从 queryString 解析参数（WMS 标准格式）
         QUrlQuery q(st.queryString);
@@ -541,7 +709,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     // 报文: POST /api/DispatchSortingCommand/InsertWaveIn
     // 功能: WMS 下发取消指令，清除当前波次数据
     // ═══════════════════════════════════════════════════════════════════════
-    if (st.path == API_INSERT_WAVE_IN && st.method == "POST")
+    if (st.path == m_apiInsertWaveIn && st.method == "POST")
     {
         QJsonDocument d = QJsonDocument::fromJson(st.body);
         QJsonObject result = handleCancelWave(d.object());

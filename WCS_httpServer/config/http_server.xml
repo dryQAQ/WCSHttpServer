@@ -84,6 +84,10 @@
     <plcS7Rack>0</plcS7Rack>
     <plcS7Slot>1</plcS7Slot>
 
+    <!-- 相机监听端口: 相机主动连接此端口发送扫描结果 {条码|小车号} -->
+    <cameraListenPort>8193</cameraListenPort>
+    <cameraPlatType>1</cameraPlatType>
+
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 七、线程池                                                       -->
     <!--    businessPoolSize: 业务线程池大小（处理 HTTP 请求 + 回传构建）   -->
@@ -95,6 +99,8 @@
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <businessPoolSize>90</businessPoolSize>
     <plcSendPoolSize>8</plcSendPoolSize>
+    <plcRecvPoolSize>4</plcRecvPoolSize>
+    <cameraProcPoolSize>4</cameraProcPoolSize>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 八、日志                                                         -->
@@ -116,7 +122,16 @@
     <rfidUrl>http://{BaseURL}/open-api/rfid/query</rfidUrl>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- 十、格口显示名（可选）                                            -->
+    <!-- 十、API 路由路径（WMS 调用 WCS 的接口 URL）                       -->
+    <!--    与 define.h 中的宏保持同名，XML 可覆盖宏默认值                  -->
+    <!--    修改后需重启服务                                               -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <apiInsertWaveInfo>/api/DispatchSortingCommand/InsertWaveInfo</apiInsertWaveInfo>
+    <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
+    <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- 十一、格口显示名（可选）                                          -->
     <!--    自定义 UI 上格口的显示名称                                     -->
     <!--    格式: <gridName num="格口编号(1~66)">名称</gridName>            -->
     <!--    不设则显示零填充序号如 "00001"                                  -->
@@ -190,7 +205,7 @@
     <gridName num="66">66号格口</gridName>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- 十一、容器绑定（运行时数据）                                       -->
+    <!-- 十二、容器绑定（运行时数据）                                       -->
     <!--    由 WMS 通过 BindingLatticePort 接口下发后自动填充               -->
     <!--    格式: <binding grid="格口号(5位补零)">容器号</binding>           -->
     <!--    共计 66 个格口，必须全部绑定后才能接收波次数据                    -->

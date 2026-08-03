@@ -2,6 +2,7 @@
 #include "ConfigManager.h"
 #include "log_center.h"
 #include "hlog1.h"
+#include "SortingDatabase.h"
 #include "define.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -23,8 +24,8 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle("WMS退货HTTP服务 -- 默鑫 V1.0");
-    resize(960, 1000);
-    setMinimumSize(860, 800);
+    resize(960, 1100);
+    setMinimumSize(860, 950);
 
     setupUI();
     ConfigManager::instance()->load();
@@ -175,6 +176,23 @@ void MainWindow::setupUI()
     s7Row2->addWidget(m_lblS7LockGrids);
     s7Row2->addStretch();
 
+    // ── 相机状态 ──
+    QFrame* lineCam = new QFrame();
+    lineCam->setFrameShape(QFrame::HLine);
+    lineCam->setFrameShadow(QFrame::Sunken);
+
+    QHBoxLayout* camRow = new QHBoxLayout();
+    m_lblCamStatus = new QLabel(QCoreApplication::translate("MainWindow", "相机: 未启动"));
+    m_lblCamStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
+    m_lblCamScanCount = new QLabel("扫描: 0");
+    m_lblCamScanCount->setStyleSheet("font-size: 13px; color: #2196F3;");
+    m_lblCamNoRead = new QLabel("未识别: 0");
+    m_lblCamNoRead->setStyleSheet("font-size: 13px; color: #f44336;");
+    camRow->addWidget(m_lblCamStatus);
+    camRow->addWidget(m_lblCamScanCount);
+    camRow->addWidget(m_lblCamNoRead);
+    camRow->addStretch();
+
     // ── 最近数据 ──
     QHBoxLayout* lastDataRow1 = new QHBoxLayout();
     m_lblLastSendCode = new QLabel(QCoreApplication::translate("MainWindow", "最近发送: --"));
@@ -210,6 +228,8 @@ void MainWindow::setupUI()
     plcOuterLayout->addWidget(lineS7);
     plcOuterLayout->addLayout(s7Row1);
     plcOuterLayout->addLayout(s7Row2);
+    plcOuterLayout->addWidget(lineCam);
+    plcOuterLayout->addLayout(camRow);
     plcOuterLayout->addWidget(line1);
     plcOuterLayout->addLayout(lastDataRow1);
     plcOuterLayout->addLayout(lastDataRow2);
@@ -347,6 +367,95 @@ void MainWindow::setupUI()
     bindOuterLayout->addWidget(scrollBinding);
 
     // ═══════════════════════════════════════════
+    // ★ 分拣记录查询面板
+    // ═══════════════════════════════════════════
+    QGroupBox* grpQuery = new QGroupBox(QCoreApplication::translate("MainWindow", "分拣记录查询"));
+    QVBoxLayout* queryLayout = new QVBoxLayout(grpQuery);
+
+    // ── 查询条件行 ──
+    QHBoxLayout* queryCondRow = new QHBoxLayout();
+    queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "条码:")));
+    m_editQueryBarcode = new QLineEdit();
+    m_editQueryBarcode->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入条码查询（留空查全部）"));
+    m_editQueryBarcode->setMinimumWidth(180);
+    queryCondRow->addWidget(m_editQueryBarcode);
+
+    queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "日期:")));
+    m_editQueryDateFrom = new QDateEdit(QDate::currentDate().addDays(-7));
+    m_editQueryDateFrom->setCalendarPopup(true);
+    m_editQueryDateFrom->setDisplayFormat("yyyy-MM-dd");
+    queryCondRow->addWidget(m_editQueryDateFrom);
+
+    queryCondRow->addWidget(new QLabel("~"));
+    m_editQueryDateTo = new QDateEdit(QDate::currentDate());
+    m_editQueryDateTo->setCalendarPopup(true);
+    m_editQueryDateTo->setDisplayFormat("yyyy-MM-dd");
+    queryCondRow->addWidget(m_editQueryDateTo);
+
+    m_btnQueryRecords = new QPushButton(QCoreApplication::translate("MainWindow", "查询"));
+    m_btnQueryRecords->setMinimumHeight(32);
+    m_btnQueryRecords->setStyleSheet(
+        "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #1976D2; }");
+    queryCondRow->addWidget(m_btnQueryRecords);
+
+    m_btnQueryClear = new QPushButton(QCoreApplication::translate("MainWindow", "清空"));
+    m_btnQueryClear->setMinimumHeight(32);
+    queryCondRow->addWidget(m_btnQueryClear);
+    queryCondRow->addStretch();
+
+    // ── 统计标签 ──
+    QHBoxLayout* statsRow = new QHBoxLayout();
+    m_lblRecordCount = new QLabel(QCoreApplication::translate("MainWindow", "共 0 条记录"));
+    m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
+    m_lblDbStats = new QLabel("");
+    m_lblDbStats->setStyleSheet("font-size: 12px; color: #2196F3;");
+    statsRow->addWidget(m_lblRecordCount);
+    statsRow->addWidget(m_lblDbStats);
+    statsRow->addStretch();
+
+    // ── 结果表格 ──
+    m_tblRecords = new QTableWidget();
+    m_tblRecords->setColumnCount(8);
+    m_tblRecords->setHorizontalHeaderLabels({
+        QCoreApplication::translate("MainWindow", "序号"),
+        QCoreApplication::translate("MainWindow", "波次号"),
+        QCoreApplication::translate("MainWindow", "条码"),
+        QCoreApplication::translate("MainWindow", "格口号"),
+        QCoreApplication::translate("MainWindow", "小车号"),
+        QCoreApplication::translate("MainWindow", "件数"),
+        QCoreApplication::translate("MainWindow", "库位"),
+        QCoreApplication::translate("MainWindow", "分拣时间")
+    });
+    m_tblRecords->setMinimumHeight(180);
+    m_tblRecords->setMaximumHeight(300);
+    m_tblRecords->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_tblRecords->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_tblRecords->setAlternatingRowColors(true);
+    m_tblRecords->horizontalHeader()->setStretchLastSection(true);
+    m_tblRecords->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_tblRecords->verticalHeader()->setVisible(false);
+    m_tblRecords->setStyleSheet(
+        "QTableWidget { font-size: 12px; }"
+        "QTableWidget::item { padding: 2px 4px; }"
+        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 4px; }");
+
+    queryLayout->addLayout(queryCondRow);
+    queryLayout->addLayout(statsRow);
+    queryLayout->addWidget(m_tblRecords);
+
+    // 连接信号
+    connect(m_btnQueryRecords, &QPushButton::clicked, this, &MainWindow::onQueryRecords);
+    connect(m_btnQueryClear,   &QPushButton::clicked, this, [this]() {
+        m_tblRecords->setRowCount(0);
+        m_lblRecordCount->setText(QCoreApplication::translate("MainWindow", "共 0 条记录"));
+        m_lblDbStats->setText("");
+    });
+    // 回车触发查询
+    connect(m_editQueryBarcode, &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
+
+    // ═══════════════════════════════════════════
     // 日志区
     // ═══════════════════════════════════════════
     QGroupBox* grpLog = new QGroupBox("运行日志");
@@ -370,6 +479,7 @@ void MainWindow::setupUI()
     mainLayout->addWidget(grpPlc);
     mainLayout->addWidget(grpWave);
     mainLayout->addWidget(grpBinding);
+    mainLayout->addWidget(grpQuery);  // ★ 分拣记录查询面板
     mainLayout->addWidget(grpLog, 1); // 日志区占剩余空间
 }
 
@@ -436,6 +546,11 @@ void MainWindow::onStartStop()
         m_lastTcpConnected = false;  // ★ 重置缓存状态
         m_lastS7Connected  = false;
 
+        m_lblCamStatus->setText(QCoreApplication::translate("MainWindow", "相机: 未启动"));
+        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
+        m_lblCamScanCount->setText("扫描: 0");
+        m_lblCamNoRead->setText("未识别: 0");
+
         // ★ 停止时清除容器绑定（内存 + XML + UI）
         {
             AppConfig& c = ConfigManager::instance()->config();
@@ -476,6 +591,11 @@ void MainWindow::onStartStop()
         m_pClient->setTimeout(cfg.httpTimeoutMs);
         m_pClient->setRfidUrl(cfg.rfidUrl);               // ★ RFID查询URL
         m_pClient->setRfidTimeout(RFID_TIMEOUT_MS);        // ★ RFID查询超时
+
+        // ★ 从配置文件加载 API 路由路径
+        m_pServer->setApiInsertWaveInfo(cfg.apiInsertWaveInfo);
+        m_pServer->setApiBindingLatticePort(cfg.apiBindingLatticePort);
+        m_pServer->setApiInsertWaveIn(cfg.apiInsertWaveIn);
 
         m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
         m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
@@ -662,6 +782,25 @@ void MainWindow::onStartStop()
                 // ★ 启动S7连接（与 WCSApp 一致，服务启动后自动连接S7 PLC）
                 m_pPlcMgr->connectS7();
             }
+
+            // ★ 相机状态信号
+            if (m_pServer->cameraManager())
+            {
+                connect(m_pServer->cameraManager(), &CameraManager::cameraConnected, this, [this](const QString& ip, int port) {
+                    updateCameraPanel();
+                    appendLog(QString("[相机] 连接 %1:%2").arg(ip).arg(port));
+                }, Qt::QueuedConnection);
+                connect(m_pServer->cameraManager(), &CameraManager::cameraDisconnected, this, [this](const QString& ip, int port) {
+                    updateCameraPanel();
+                    appendLog(QString("[相机] 断开 %1:%2").arg(ip).arg(port), true);
+                }, Qt::QueuedConnection);
+                // ★ 相机扫描结果已改为回调机制（CodeRecvCallBack），不再通过信号通知
+                //    UI 更新通过 MainWindow 定时器轮询 CameraManager::stats() 实现
+            }
+
+            // ★ 启动后清理过期数据库记录
+            if (m_pServer->sortingDb())
+                m_pServer->sortingDb()->cleanupOldRecords(SORTING_DB_RETAIN_DAYS);
         }
         else
         {
@@ -678,11 +817,23 @@ void MainWindow::onRefreshTimer()
     {
         updateWavePanel();
         updatePlcPanel();
+        updateCameraPanel();
         // ★ 仅绑定数据变更时才刷新绑定面板（避免每秒66次findChildren）
         if (m_bindingDirty)
         {
             updateBindingPanel();
             m_bindingDirty = false;
+        }
+        // ★ 更新数据库统计（每10秒，避免频繁查询）
+        static int dbRefreshCounter = 0;
+        if (++dbRefreshCounter % 10 == 0 && m_pServer->sortingDb())
+        {
+            SortingStatistics stats = m_pServer->sortingDb()->statistics();
+            m_lblDbStats->setText(QString("数据库: 总计 %1 条 | 今日 %2 条 | %3 波次 | %4 格口")
+                .arg(stats.totalRecords)
+                .arg(stats.todayRecords)
+                .arg(stats.totalWaves)
+                .arg(stats.totalGrids));
         }
     }
 }
@@ -867,6 +1018,31 @@ void MainWindow::updatePlcPanel()
     }
 }
 
+void MainWindow::updateCameraPanel()
+{
+    if (!m_pServer || !m_pServer->cameraManager()) return;
+    CameraStats s = m_pServer->cameraManager()->stats();
+    
+    if (s.running && s.clientCount > 0)
+    {
+        m_lblCamStatus->setText(QString::fromUtf8("● 相机: 已连接(%1)").arg(s.clientCount));
+        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
+    }
+    else if (s.running)
+    {
+        m_lblCamStatus->setText(QCoreApplication::translate("MainWindow", "● 相机: 监听中"));
+        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #FF9800; font-weight: bold;");
+    }
+    else
+    {
+        m_lblCamStatus->setText(QCoreApplication::translate("MainWindow", "相机: 未启动"));
+        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
+    }
+    
+    m_lblCamScanCount->setText(QString("扫描: %1").arg(s.scanCount));
+    m_lblCamNoRead->setText(QString("未识别: %1").arg(s.noReadCount));
+}
+
 // ============================================================================
 // 容器绑定状态
 // ============================================================================
@@ -1016,5 +1192,85 @@ void MainWindow::flushLogBuffer()
     m_txtLog->setUpdatesEnabled(true);
 
     m_txtLog->moveCursor(QTextCursor::End);
+}
+
+// ============================================================================
+// ★ onQueryRecords — 分拣记录查询
+// ============================================================================
+
+void MainWindow::onQueryRecords()
+{
+    SortingDatabase* db = m_pServer ? m_pServer->sortingDb() : nullptr;
+    if (!db || !db->isOpen())
+    {
+        appendLog("[查询] 数据库未就绪", true);
+        return;
+    }
+
+    QString barcode = m_editQueryBarcode->text().trimmed();
+    QDateTime from(m_editQueryDateFrom->date(), QTime(0, 0, 0));
+    QDateTime to(m_editQueryDateTo->date(), QTime(23, 59, 59, 999));
+
+    QVector<SortingRecord> records;
+
+    if (!barcode.isEmpty())
+    {
+        // 按条码查询
+        records = db->queryByBarcode(barcode, SORTING_QUERY_MAX_RESULTS);
+    }
+    else
+    {
+        // 按时间范围查询
+        records = db->queryByTime(from, to, SORTING_QUERY_MAX_RESULTS);
+    }
+
+    // 填充表格
+    m_tblRecords->setRowCount(0);
+    m_tblRecords->setRowCount(records.size());
+
+    for (int i = 0; i < records.size(); ++i)
+    {
+        const SortingRecord& rec = records[i];
+
+        auto* item0 = new QTableWidgetItem(QString::number(i + 1));
+        item0->setTextAlignment(Qt::AlignCenter);
+        m_tblRecords->setItem(i, 0, item0);
+
+        m_tblRecords->setItem(i, 1, new QTableWidgetItem(rec.orderCode));
+        m_tblRecords->setItem(i, 2, new QTableWidgetItem(rec.barcode));
+        m_tblRecords->setItem(i, 3, new QTableWidgetItem(rec.gridNum));
+        m_tblRecords->setItem(i, 4, new QTableWidgetItem(rec.carNum));
+
+        auto* item5 = new QTableWidgetItem(QString::number(rec.gridCount));
+        item5->setTextAlignment(Qt::AlignCenter);
+        m_tblRecords->setItem(i, 5, item5);
+
+        m_tblRecords->setItem(i, 6, new QTableWidgetItem(rec.volu));
+        m_tblRecords->setItem(i, 7, new QTableWidgetItem(rec.sortTime));
+    }
+
+    // 更新统计标签
+    if (!barcode.isEmpty())
+    {
+        m_lblRecordCount->setText(QString("共 %1 条记录（条码: %2）")
+            .arg(records.size()).arg(barcode));
+    }
+    else
+    {
+        m_lblRecordCount->setText(QString("共 %1 条记录（%2 ~ %3）")
+            .arg(records.size())
+            .arg(from.toString("yyyy-MM-dd"))
+            .arg(to.toString("yyyy-MM-dd")));
+    }
+
+    // 更新数据库统计
+    SortingStatistics stats = db->statistics();
+    m_lblDbStats->setText(QString("数据库: 总计 %1 条 | 今日 %2 条 | %3 波次 | %4 格口")
+        .arg(stats.totalRecords)
+        .arg(stats.todayRecords)
+        .arg(stats.totalWaves)
+        .arg(stats.totalGrids));
+
+    appendLog(QString("[查询] 返回 %1 条记录").arg(records.size()));
 }
 

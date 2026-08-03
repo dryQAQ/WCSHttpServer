@@ -33,7 +33,7 @@
   </ImportGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
     <QtInstall>5.15.2_msvc2019_64</QtInstall>
-    <QtModules>core;gui;widgets;network</QtModules>
+    <QtModules>core;sql;gui;widgets;network</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
@@ -60,7 +60,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <LibraryPath>D:\Qt\5.15.2\msvc2019_64\lib;D:\WCS\WCSApp\WCS_httpServer\lib;$(LibraryPath)</LibraryPath>
     <OutDir>..\release_WcsHttpServer\</OutDir>
-    <IncludePath>D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\log4cxx;$(IncludePath)</IncludePath>
+    <IncludePath>D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\log4cxx;D:\WCS\WCSApp\WCS_httpServer\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
@@ -114,6 +114,9 @@
     <ClCompile Include="PlcManager.cpp" />
     <ClCompile Include="SiemensPLC.cpp" />
     <ClCompile Include="snap7.cpp" />
+    <ClCompile Include="CameraManager.cpp" />
+    <ClCompile Include="SortingDatabase.cpp" />
+    <ClCompile Include="sqlite3.c" />
     <ClCompile Include="WaveManager.cpp" />
     <ClCompile Include="WCS_httpServer.cpp" />
     <ClCompile Include="main.cpp" />
@@ -126,6 +129,9 @@
     <QtMoc Include="LifecycleLogger.h" />
     <QtMoc Include="log_center.h" />
     <ClInclude Include="define.h" />
+    <ClInclude Include="SortingDatabase.h" />
+    <ClInclude Include="sqlite3.h" />
+    <ClInclude Include="sqlite3ext.h" />
     <ClInclude Include="TaskQueue.h" />
     <ClInclude Include="ThreadPool.h" />
     <QtMoc Include="WaveManager.h" />
@@ -133,6 +139,7 @@
     <QtMoc Include="PlcManager.h" />
     <QtMoc Include="MainWindow.h" />
     <QtMoc Include="HttpServer.h" />
+    <QtMoc Include="CameraManager.h" />
     <QtMoc Include="HttpClient.h" />
     <ClInclude Include="SiemensPLC.h" />
     <ClInclude Include="snap7.h" />

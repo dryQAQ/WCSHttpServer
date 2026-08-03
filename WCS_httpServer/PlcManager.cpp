@@ -30,10 +30,10 @@ PlcManager::PlcManager(QObject* parent)
 
 PlcManager::~PlcManager()
 {
-    // 停止 S7 锁格线程
-    m_bS7ThreadStart = false;
-    if (m_threadS7PLC.joinable())
-        m_threadS7PLC.join();
+    // 停止 S7 心跳线程
+    m_bHeartThreadStart = false;
+    if (m_heartThread.joinable())
+        m_heartThread.join();
 
     // 断开 S7 连接
     disconnectS7();
@@ -260,6 +260,83 @@ bool PlcManager::sendRawCommand(const QString& command)
 }
 
 // ============================================================================
+// sendBatchCodes — 主动发送模式：批量发送波次条码到PLC（与WCSApp一致）
+// 不等待PLC查询报文，遍历波次所有条码主动发送PLC分拣指令
+// codeGridMap: 条码→格口字符串（如 "15" 或 "1,2,3"）
+// ============================================================================
+bool PlcManager::sendBatchCodes(const QMap<QString, QString>& codeGridMap)
+{
+    if (codeGridMap.isEmpty())
+    {
+        PLC_LOG_WARN("sendBatchCodes: 条码映射为空，跳过");
+        return false;
+    }
+
+    PLC_LOG_INFO("sendBatchCodes: 开始批量发送 total=%d", codeGridMap.size());
+
+    int successCount = 0;
+    int failCount = 0;
+
+    for (auto it = codeGridMap.constBegin(); it != codeGridMap.constEnd(); ++it)
+    {
+        const QString& code = it.key();
+        const QString& gridStr = it.value();
+
+        // 解析格口（支持逗号分隔的多格口 "1,2,3"）
+        std::vector<int> vecGrid;
+        for (const QString& g : gridStr.split(',', Qt::SkipEmptyParts))
+        {
+            bool ok = false;
+            int n = g.trimmed().toInt(&ok);
+            if (ok && n > 0) vecGrid.push_back(n);
+        }
+
+        if (vecGrid.empty())
+        {
+            PLC_LOG_WARN("sendBatchCodes: 格口解析失败 code=%s gridStr=%s",
+                code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+            failCount++;
+            continue;
+        }
+
+        // ★ 锁格过滤（多格口时跳过已锁定格口，与WCSApp一致）
+        if (vecGrid.size() > 1)
+        {
+            std::vector<int> unlocked;
+            for (int g : vecGrid)
+            {
+                if (!isGridLocked(g))
+                    unlocked.push_back(g);
+            }
+            if (!unlocked.empty())
+            {
+                vecGrid = { unlocked[0] };
+            }
+            // 全部锁定则使用第一个格口（兜底）
+        }
+
+        // ★ 异步入池发送（与查询模式一致，防止S7阻塞）
+        if (m_pSendPool)
+        {
+            m_pSendPool->commitNoWait([this, code, vecGrid]() {
+                sendCodeInfo(code, vecGrid, 1);
+            });
+        }
+        else
+        {
+            sendCodeInfo(code, vecGrid, 1);
+        }
+
+        successCount++;
+    }
+
+    PLC_LOG_INFO("sendBatchCodes: 批量发送完成 success=%d fail=%d total=%d",
+        successCount, failCount, codeGridMap.size());
+
+    return failCount == 0;
+}
+
+// ============================================================================
 // 状态查询
 // ============================================================================
 
@@ -348,9 +425,9 @@ bool PlcManager::connectS7(const char* ip)
     strncpy_s(m_plcConfig.szS7Ip, sizeof(m_plcConfig.szS7Ip), ip, 23);
     PLC_LOG_INFO("S7连接成功 ip=%s", ip);
 
-    // 启动 S7 锁格轮询线程
-    m_bS7ThreadStart = true;
-    m_threadS7PLC = std::thread(&PlcManager::OnPlcS7Thread, this);
+    // 启动 S7 心跳线程（与 WCSApp simensS7::OnHeartThread 一致）
+    m_bHeartThreadStart = true;
+    m_heartThread = std::thread(&PlcManager::OnS7HeartThread, this);
 
     emit s7Connected(QString::fromLocal8Bit(ip));
     return true;
@@ -358,6 +435,11 @@ bool PlcManager::connectS7(const char* ip)
 
 void PlcManager::disconnectS7()
 {
+    // ★ 先停止心跳线程
+    m_bHeartThreadStart = false;
+    if (m_heartThread.joinable())
+        m_heartThread.join();
+
     if (m_S7Plc)
     {
         m_S7Plc->disconnect();
@@ -374,88 +456,38 @@ bool PlcManager::isS7Connected() const
 }
 
 // ============================================================================
-// S7 锁格轮询线程（与 WCSApp FrmMainV2::OnPlcS7Thread 完全一致）
-// 每 1 秒读取 DB77 Offset 0, 25 字节（200位格口锁定位图）
-// 上升沿 → 锁格，下降沿 → 解锁
+// S7 心跳线程（与 WCSApp simensS7::OnHeartThread 完全一致）
+// 每 2 秒检测 S7 连接状态，断线自动重连
 // ============================================================================
-
-void PlcManager::OnPlcS7Thread()
+void PlcManager::OnS7HeartThread()
 {
-    while (m_bS7ThreadStart)
+    PLC_LOG_INFO("S7心跳线程已启动");
+
+    while (m_bHeartThreadStart)
     {
-        Sleep(PLC_S7_LOCK_INTERVAL_MS);
+        Sleep(2000);
 
-        if (!m_S7Plc || !m_S7Plc->isConnected())
-            continue;
+        if (!m_bHeartThreadStart)
+            break;
 
-        byte tempData[PLC_S7_LOCK_READ_SIZE]{ 0 };
-
-        if (!m_S7Plc->readData(PLC_S7_DB_READ, 0, PLC_S7_LOCK_READ_SIZE, tempData))
-            continue;
-
-        // 遍历 200 位格口锁定位图
-        for (int i = 0; i < PLC_S7_LOCK_READ_SIZE; i++)
+        if (m_S7Plc && !m_S7Plc->isConnected())
         {
-            for (int a = 0; a < 8; a++)
+            PLC_LOG_WARN("S7心跳检测到断线，尝试重连 ip=%s", m_plcConfig.szS7Ip);
+            Sleep(100);
+            m_S7Plc->connectTo(m_plcConfig.szS7Ip);
+            if (m_S7Plc->isConnected())
             {
-                int grid_status = i * 8 + a;
-
-                bool bNew = S7_GetBitAt(tempData, i, a);
-                bool bOld = S7_GetBitAt(m_s7PlcLastData, i, a);
-
-                // 锁格（上升沿: 0→1）
-                if (bNew && !bOld)
-                {
-                    QString s_grid = QString("%1").arg(grid_status, 3, 10, QChar('0'));
-                    PLC_LOG_WARN("chutStatus %d, lock", grid_status);
-
-                    LockGridInfo info;
-                    info.gridNum = s_grid;
-                    info.type = 0;  // 锁格
-
-                    {
-                        std::unique_lock<std::mutex> lock(m_lockGrid);
-                        m_queueLockInfo.push(info);
-                    }
-
-                    emit gridLocked(s_grid);
-                }
-
-                // 解锁（下降沿: 1→0）
-                if (bOld && !bNew)
-                {
-                    QString s_grid = QString("%1").arg(grid_status, 3, 10, QChar('0'));
-                    PLC_LOG_WARN("chutStatus %d, unLock", grid_status);
-
-                    LockGridInfo info;
-                    info.gridNum = s_grid;
-                    info.type = 1;  // 解锁
-
-                    {
-                        std::unique_lock<std::mutex> lock(m_lockGrid);
-                        m_queueLockInfo.push(info);
-                    }
-
-                    emit gridUnlocked(s_grid);
-                }
+                PLC_LOG_INFO("S7心跳重连成功 ip=%s", m_plcConfig.szS7Ip);
+                emit s7Connected(QString::fromLocal8Bit(m_plcConfig.szS7Ip));
             }
-        }
-
-        // 更新锁格状态缓存
-        memcpy(m_s7PlcLastData, tempData, PLC_S7_LOCK_READ_SIZE * sizeof(byte));
-
-        {
-            std::unique_lock<std::mutex> lock(m_lockGridPlc);
-            for (int i = 0; i < PLC_S7_LOCK_READ_SIZE; i++)
+            else
             {
-                for (int a = 0; a < 8; a++)
-                {
-                    int grid_status = i * 8 + a;
-                    m_s7Grid_200[grid_status] = S7_GetBitAt(m_s7PlcLastData, i, a);
-                }
+                PLC_LOG_ERROR("S7心跳重连失败 ip=%s", m_plcConfig.szS7Ip);
             }
         }
     }
+
+    PLC_LOG_INFO("S7心跳线程已退出");
 }
 
 // ============================================================================
@@ -579,10 +611,11 @@ EnHandleResult PlcManager::OnShutdown(ITcpServer* pSender)
 // ============================================================================
 // PLC反馈解析
 // 协议格式（与WCSApp完全兼容）:
-//   查询:  {barcode|car}         — 相机/PLC 扫描到条码，查询格口分配   [1~2字段]
 //   反馈:  {barcode|grid|car}    — PLC 落格确认（分拣完成）            [≥3字段]
+//   锁格:  {grid|L}              — PLC主动锁格（如 {222|L}）           [2字段, L]
+//   解锁:  {grid|U}              — PLC主动解锁（如 {222|U}）           [2字段, U]
 //   信号:  {start} / {stop}      — 批次开始/停止
-//   支持粘包: {WV34S1|005}{WV34S2|006}{WV34S1|015|005|006|1}
+//   支持粘包: {WV34S1|015|005}{WV34S2|016|006}{WV34S1|015|005|006|1}
 // ============================================================================
 
 void PlcManager::parsePlcFeedback(const QByteArray& rawData)
@@ -617,106 +650,86 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
         int partCount = parts.size();
 
         // ═══════════════════════════════════════════════════════════════
-        // ★ 查询报文: {barcode|car}  (2字段)
-        //   相机扫描到条码 → WCS查格口 → 异步入池发送PLC分拣指令
-        //   若条码不在波次中（lookup返回空），回退到反馈处理
+        // ★ TCP 锁格/解锁消息: {grid|L} 或 {grid|U}  (2字段, 第二位为L或U)
+        //   PLC主动发送锁格/解锁消息，与WCSApp一致
+        //   {222|L} → 格口222锁定，{222|U} → 格口222解锁
         // ═══════════════════════════════════════════════════════════════
-        if (partCount == 2 && m_lookupCb)
+        if (partCount == 2)
         {
-            QString code = parts[0].trimmed();
-            QString car  = parts[1].trimmed();
+            QString field0 = parts[0].trimmed();
+            QString field1 = parts[1].trimmed().toUpper();
 
-            // 查格口
-            QString gridStr = m_lookupCb(code);
-            if (!gridStr.isEmpty())
+            if (field1 == "L" || field1 == "U")
             {
-                // 解析格口（支持逗号分隔的多格口 "1,2,3"）
-                std::vector<int> vecGrid;
-                for (const QString& g : gridStr.split(',', Qt::SkipEmptyParts))
+                bool isLock = (field1 == "L");
+                bool ok = false;
+                int gridNum = field0.toInt(&ok);
+
+                if (ok && gridNum >= 0 && gridNum < PLC_S7_MAX_GRID_COUNT)
                 {
-                    bool ok = false;
-                    int n = g.trimmed().toInt(&ok);
-                    if (ok && n > 0) vecGrid.push_back(n);
-                }
-
-                if (!vecGrid.empty())
-                {
-                    // ═══════════════════════════════════════════════════════════
-                    // ★ 锁格过滤（参照 WCSApp FrmMainV2::OnPlcS7Thread）
-                    //   多格口时：跳过已锁定的格口，选择第一个未锁定的
-                    //   全部锁定：使用第一个格口（兜底）
-                    //   单格口时：不做过滤（PLC 自行处理）
-                    // ═══════════════════════════════════════════════════════════
-                    if (vecGrid.size() > 1)
+                    if (isLock)
                     {
-                        std::vector<int> unlocked;
-                        int lockedCount = 0;
-                        for (int g : vecGrid)
+                        PLC_LOG_WARN("TCP锁格消息: grid=%d lock", gridNum);
+
+                        // 更新锁格状态缓存
                         {
-                            if (isGridLocked(g))
-                                lockedCount++;
-                            else
-                                unlocked.push_back(g);
+                            std::unique_lock<std::mutex> lock(m_lockGridPlc);
+                            m_s7Grid_200[gridNum] = true;
                         }
 
-                        if (!unlocked.empty())
+                        QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
+                        LockGridInfo info;
+                        info.gridNum = s_grid;
+                        info.type = 0;  // 锁格
                         {
-                            int chosen = unlocked[0];
-                            PLC_LOG_INFO("锁格过滤 code=%s 总格口=%d 锁定=%d → 选择=%d",
-                                code.toLocal8Bit().data(),
-                                (int)vecGrid.size(), lockedCount, chosen);
-                            vecGrid = { chosen };
+                            std::unique_lock<std::mutex> lock(m_lockGrid);
+                            m_queueLockInfo.push(info);
                         }
-                        else
-                        {
-                            // 全部锁定 → 使用第一个格口（兜底，与 WCSApp 一致）
-                            int fallback = vecGrid[0];
-                            PLC_LOG_WARN("锁格过滤 code=%s 所有格口已锁定(%d个) → 兜底=%d",
-                                code.toLocal8Bit().data(), (int)vecGrid.size(), fallback);
-                            vecGrid = { fallback };
-                        }
-                    }
 
-                    int carNum = car.toInt();
-                    if (carNum <= 0) carNum = 1;
-
-                    // ★★★ 关键：异步入池发送，防止 S7 DBWrite 同步阻塞 HP-Socket I/O 线程 ★★★
-                    // S7 DBWrite 是 Snap7 库的同步调用，会阻塞当前线程直到 PLC 响应（10~100ms）
-                    // 高并发场景下若在 I/O 线程直接调用，会耗尽 HP-Socket 工作线程导致无法接收新数据
-                    if (m_pSendPool)
-                    {
-                        m_pSendPool->commitNoWait([this, code, vecGrid, carNum, gridStr]() {
-                            sendCodeInfo(code, vecGrid, carNum);
-                            emit plcSendInfo(code, gridStr, true);
-                        });
+                        emit gridLockedByPlc(s_grid);
+                        emit gridLocked(s_grid);  // 兼容旧信号
                     }
                     else
                     {
-                        // 降级：线程池未就绪时同步发送
-                        sendCodeInfo(code, vecGrid, carNum);
-                        emit plcSendInfo(code, gridStr, true);
+                        PLC_LOG_WARN("TCP解锁消息: grid=%d unlock", gridNum);
+
+                        // 更新锁格状态缓存
+                        {
+                            std::unique_lock<std::mutex> lock(m_lockGridPlc);
+                            m_s7Grid_200[gridNum] = false;
+                        }
+
+                        QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
+                        LockGridInfo info;
+                        info.gridNum = s_grid;
+                        info.type = 1;  // 解锁
+                        {
+                            std::unique_lock<std::mutex> lock(m_lockGrid);
+                            m_queueLockInfo.push(info);
+                        }
+
+                        emit gridUnlockedByPlc(s_grid);
+                        emit gridUnlocked(s_grid);  // 兼容旧信号
                     }
                     continue;
                 }
                 else
                 {
-                    PLC_LOG_WARN("格口号解析失败: code=%s gridStr=%s",
-                        code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+                    PLC_LOG_WARN("TCP锁格消息格式异常: grid=%s type=%s", field0.toLocal8Bit().data(), field1.toLocal8Bit().data());
                     continue;
                 }
             }
-            // 条码不在波次中 → 回退，当作反馈报文处理
-            PLC_LOG_WARN("条码不在波次中，回退为反馈处理 code=%s", code.toLocal8Bit().data());
         }
 
         // ═══════════════════════════════════════════════════════════════
-        // 反馈报文: {barcode|grid|car} (≥3字段)  — PLC反馈落格确认
+        // 反馈报文: {barcode|grid|car} (3字段)  — PLC反馈落格确认
+        // 与WCSApp一致：WCS主动发送PLC指令，不等待PLC查询，2字段消息仅处理锁格/解锁
         // ═══════════════════════════════════════════════════════════════
-        if (parts.size() >= 2)
+        if (parts.size() >= 3)
         {
             QString code = parts[0].trimmed();
             QString grid = parts[1].trimmed();
-            QString car  = parts.size() >= 3 ? parts[2].trimmed() : "1";
+            QString car  = parts[2].trimmed();
 
             // 更新最近接收数据
             {
@@ -728,11 +741,6 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
 
             // 记录生命周期
             LIFE_STAGE_PLC_FEEDBACK(code, grid);
-
-            // ★ 不再逐条发射信号（避免 QueuedConnection 事件洪水卡死主线程）
-            // 统一通过 flushFeedbackBatch 的批量信号发出：
-            //   plcFeedbackBatch         → MainWindow UI 日志
-            //   plcFeedbackBusinessBatch → HttpServer 分拣标记
 
             // ★ 回调（保持兼容）
             if (m_feedbackCb)

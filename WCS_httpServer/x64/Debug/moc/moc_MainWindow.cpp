@@ -23,7 +23,7 @@ QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_MainWindow_t {
     QByteArrayData data[8];
-    char stringdata0[92];
+    char stringdata0[98];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -35,16 +35,16 @@ static const qt_meta_stringdata_MainWindow_t qt_meta_stringdata_MainWindow = {
 QT_MOC_LITERAL(0, 0, 10), // "MainWindow"
 QT_MOC_LITERAL(1, 11, 11), // "onStartStop"
 QT_MOC_LITERAL(2, 23, 0), // ""
-QT_MOC_LITERAL(3, 24, 13), // "onRefreshWave"
-QT_MOC_LITERAL(4, 38, 14), // "onManualReport"
-QT_MOC_LITERAL(5, 53, 12), // "onSaveConfig"
-QT_MOC_LITERAL(6, 66, 10), // "onClearLog"
-QT_MOC_LITERAL(7, 77, 14) // "onRefreshTimer"
+QT_MOC_LITERAL(3, 24, 17), // "onRefreshBindings"
+QT_MOC_LITERAL(4, 42, 10), // "onClearLog"
+QT_MOC_LITERAL(5, 53, 14), // "onRefreshTimer"
+QT_MOC_LITERAL(6, 68, 14), // "flushLogBuffer"
+QT_MOC_LITERAL(7, 83, 14) // "onQueryRecords"
 
     },
-    "MainWindow\0onStartStop\0\0onRefreshWave\0"
-    "onManualReport\0onSaveConfig\0onClearLog\0"
-    "onRefreshTimer"
+    "MainWindow\0onStartStop\0\0onRefreshBindings\0"
+    "onClearLog\0onRefreshTimer\0flushLogBuffer\0"
+    "onQueryRecords"
 };
 #undef QT_MOC_LITERAL
 
@@ -87,11 +87,11 @@ void MainWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         Q_UNUSED(_t)
         switch (_id) {
         case 0: _t->onStartStop(); break;
-        case 1: _t->onRefreshWave(); break;
-        case 2: _t->onManualReport(); break;
-        case 3: _t->onSaveConfig(); break;
-        case 4: _t->onClearLog(); break;
-        case 5: _t->onRefreshTimer(); break;
+        case 1: _t->onRefreshBindings(); break;
+        case 2: _t->onClearLog(); break;
+        case 3: _t->onRefreshTimer(); break;
+        case 4: _t->flushLogBuffer(); break;
+        case 5: _t->onQueryRecords(); break;
         default: ;
         }
     }

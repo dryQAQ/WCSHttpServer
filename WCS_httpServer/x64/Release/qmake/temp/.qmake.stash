@@ -9,6 +9,7 @@ QMAKE_CXX.INCDIRS = \
     D:\\WCS\\WCSApp\\WCS_httpServer\\include\\HPSocket \
     D:\\WCS\\WCSApp\\WCS_httpServer\\include\\hlog \
     D:\\WCS\\WCSApp\\WCS_httpServer\\include\\log4cxx \
+    D:\\WCS\\WCSApp\\WCS_httpServer\\include \
     D:\\vs2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include \
     D:\\vs2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\atlmfc\\include \
     D:\\vs2019\\Community\\VC\\Auxiliary\\VS\\include \

@@ -41,12 +41,23 @@ struct AppConfig
     int     plcS7Rack         = PLC_S7_RACK;            // S7 机架号
     int     plcS7Slot         = PLC_S7_SLOT;            // S7 槽位号
 
+    // ──── 相机通信 ────
+    int     cameraListenPort  = CAMERA_LISTEN_PORT;  // 相机 TCP 监听端口（默认 8193）
+    int     cameraPlatType    = 1;              // 相机协议类型: 1=DaHua({条码|小车号}), 2=Kenyence(STX{car:barcode}ETX)
+
     // ──── 线程池 ────
     int     businessPoolSize  = BUSINESS_POOL_SIZE;     // 业务线程池大小
     int     plcSendPoolSize   = PLC_SEND_POOL_SIZE;     // PLC 发送线程池大小
+    int     plcRecvPoolSize   = PLC_RECV_POOL_SIZE;     // PLC 反馈接收专用线程池大小
+    int     cameraProcPoolSize = CAMERA_PROC_POOL_SIZE; // 相机数据处理专用线程池大小
 
     // ──── RFID ────
     QString rfidUrl          = RFID_QUERY_URL;           // RFID EPC查询接口URL
+
+    // ──── API 路由（WMS 调用 WCS 的接口路径，可配置以适应 WMS 路径变更）────
+    QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① WMS 推送波次数据 (POST)
+    QString apiBindingLatticePort = API_BINDING_LATTICE_PORT;  // ② WMS 绑定格口容器 (POST)
+    QString apiInsertWaveIn       = API_INSERT_WAVE_IN;        // ③ WMS 退货任务取消 (POST)
 
     // ──── 日志 ────
     int     logRetainDays     = LOG_RETAIN_DAYS;          // 日志保留天数

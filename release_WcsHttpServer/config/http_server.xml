@@ -16,10 +16,17 @@
     <plcS7Ip>192.168.0.1</plcS7Ip>
     <plcS7Rack>0</plcS7Rack>
     <plcS7Slot>1</plcS7Slot>
+    <cameraListenPort>8193</cameraListenPort>
+    <cameraPlatType>1</cameraPlatType>
     <businessPoolSize>90</businessPoolSize>
     <plcSendPoolSize>8</plcSendPoolSize>
+    <plcRecvPoolSize>4</plcRecvPoolSize>
+    <cameraProcPoolSize>4</cameraProcPoolSize>
     <logRetainDays>30</logRetainDays>
     <rfidUrl>http://127.0.0.1:9003/query</rfidUrl>
+    <apiInsertWaveInfo>/api/DispatchSortingCommand/InsertWaveInfo</apiInsertWaveInfo>
+    <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
+    <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
     <gridName num="1">#01</gridName>
     <gridName num="10">#10</gridName>
     <gridName num="11">#11</gridName>

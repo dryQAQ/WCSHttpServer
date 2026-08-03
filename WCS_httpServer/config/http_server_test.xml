@@ -84,7 +84,16 @@
     <rfidUrl>http://127.0.0.1:9003/query</rfidUrl>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- 十、格口显示名 — 测试用简化格式 #01~#66                            -->
+    <!-- 十、API 路由路径（WMS 调用 WCS 的接口 URL）                       -->
+    <!--    默认值与 define.h 宏一致，可按需修改                             -->
+    <!--    修改后需重启服务                                               -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <apiInsertWaveInfo>/api/DispatchSortingCommand/InsertWaveInfo</apiInsertWaveInfo>
+    <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
+    <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- 十一、格口显示名 — 测试用简化格式 #01~#66                            -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <gridName num="1">#01</gridName>
     <gridName num="2">#02</gridName>
@@ -154,7 +163,7 @@
     <gridName num="66">#66</gridName>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- 十一、容器绑定 — 测试时由脚本自动填充，此处留空                     -->
+    <!-- 十二、容器绑定 — 测试时由脚本自动填充，此处留空                     -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <binding grid="00001"></binding>
     <binding grid="00002"></binding>

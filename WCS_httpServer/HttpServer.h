@@ -24,6 +24,8 @@
 #include "WaveManager.h"
 #include "ThreadPool.h"
 #include "PlcManager.h"
+#include "CameraManager.h"
+#include "SortingDatabase.h"
 #include "define.h"
 
 class ParseWorker;
@@ -63,6 +65,13 @@ public:
     GridBuffer*  gridBuffer()  { return m_pBuffer; }
     WaveManager* waveManager() { return m_pWaveMgr; }
     PlcManager*  plcManager()  { return m_pPlcMgr; }
+    CameraManager* cameraManager() { return m_pCameraMgr; }
+    SortingDatabase* sortingDb() { return m_pSortingDb; }  // ★ 分拣记录数据库
+
+    // ★ API 路由设置（从 XML 配置加载后调用）
+    void setApiInsertWaveInfo(const QString& path)     { m_apiInsertWaveInfo = path; }
+    void setApiBindingLatticePort(const QString& path) { m_apiBindingLatticePort = path; }
+    void setApiInsertWaveIn(const QString& path)       { m_apiInsertWaveIn = path; }
 
     // 获取容器绑定快照（线程安全拷贝）
     QMap<QString, QString> getContainerBindings() const {
@@ -148,9 +157,18 @@ private:
     WaveManager*   m_pWaveMgr = nullptr;
     ParseWorker*   m_pWorker  = nullptr;
     PlcManager*    m_pPlcMgr  = nullptr;
+    CameraManager*  m_pCameraMgr = nullptr;  // ★ 相机通信管理器
+    SortingDatabase* m_pSortingDb = nullptr;  // ★ 分拣记录本地数据库
+
+    // ──── API 路由（从 XML 配置读取，可动态修改）────
+    QString m_apiInsertWaveInfo     = API_INSERT_WAVE_INFO;
+    QString m_apiBindingLatticePort = API_BINDING_LATTICE_PORT;
+    QString m_apiInsertWaveIn       = API_INSERT_WAVE_IN;
 
     // ──── 业务线程池 ────
-    Hanchine::ThreadPool* m_pBusinessPool = nullptr;
+    Hanchine::ThreadPool* m_pBusinessPool   = nullptr;
+    Hanchine::ThreadPool* m_pPlcRecvPool    = nullptr;  // ★ PLC 反馈接收专用线程池（落格反馈→分拣标记→SQLite写入）
+    Hanchine::ThreadPool* m_pCameraProcPool = nullptr;  // ★ 相机数据处理专用线程池（相机扫描→格口查询→PLC发送）
 
     QMap<CONNID, ConnState> m_connStates;
     QMap<CONNID, qint64>    m_connAcceptTime;

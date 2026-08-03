@@ -27,10 +27,14 @@
 #include <QPushButton>
 #include <QAtomicInteger>
 #include <QMutex>
+#include <QLineEdit>
+#include <QDateEdit>
+#include <QTableWidget>
 #include "HttpServer.h"
 #include "HttpClient.h"
 #include "PlcManager.h"
 #include "ConfigManager.h"
+#include "SortingDatabase.h"
 
 class MainWindow : public QMainWindow
 {
@@ -48,6 +52,7 @@ private slots:
     void onClearLog();        // 清空日志窗口
     void onRefreshTimer();    // 每秒定时刷新UI
     void flushLogBuffer();    // 定时批量刷新日志到UI（防高频卡死）
+    void onQueryRecords();    // ★ 查询分拣记录
 
 private:
     void setupUI();           // 构建所有UI控件
@@ -57,6 +62,7 @@ private:
     void updateWavePanel();   // 更新波次信息面板
     void updatePlcPanel();    // 刷新PLC状态面板（连接数/收发统计/运行时间）
     void updateBindingPanel();// 刷新容器绑定面板（66格口×容器号）
+    void updateCameraPanel();   // 刷新相机状态面板
 
     // ──── 核心组件 ────
     HttpServer*  m_pServer  = nullptr;   // HTTP Server（内部持有 PlcManager/WaveManager/TaskQueue 等）
@@ -83,6 +89,12 @@ private:
     QLabel*      m_lblS7Send       = nullptr;  // S7发送统计
     QLabel*      m_lblS7SendErr    = nullptr;  // S7发送失败统计
     QLabel*      m_lblS7LockGrids  = nullptr;  // S7锁格数量
+
+    // ──── 相机状态 UI ────
+    QLabel*      m_lblCamStatus    = nullptr;  // 相机连接状态
+    QLabel*      m_lblCamScanCount = nullptr;  // 相机扫描计数
+    QLabel*      m_lblCamNoRead    = nullptr;  // 相机未识别计数
+    QLabel*      m_lblCamLastCode  = nullptr;  // 相机最近扫描条码
 
     // ──── 最近数据 UI ────
     QLabel*      m_lblLastSendCode = nullptr;  // 最近发送条码
@@ -132,4 +144,15 @@ private:
     QAtomicInteger<qint64> m_plcFeedbackCount{0}; // ★ PLC反馈计数（无锁，高并发安全）
     bool         m_lastTcpConnected = false;   // ★ 缓存TCP状态（避免冗余setStyleSheet）
     bool         m_lastS7Connected  = false;   // ★ 缓存S7状态
+
+    // ──── 分拣记录查询 UI ────
+    QLineEdit*   m_editQueryBarcode = nullptr;   // 条码查询输入
+    QDateEdit*   m_editQueryDateFrom = nullptr;   // 查询起始日期
+    QDateEdit*   m_editQueryDateTo   = nullptr;   // 查询结束日期
+    QPushButton* m_btnQueryRecords   = nullptr;   // 查询按钮
+    QPushButton* m_btnQueryClear     = nullptr;   // 清空结果
+    QTableWidget* m_tblRecords       = nullptr;   // 查询结果表格
+    QLabel*      m_lblRecordCount    = nullptr;   // 记录统计标签
+    QLabel*      m_lblDbStats        = nullptr;   // 数据库统计标签
+    QTimer*      m_dbCleanupTimer    = nullptr;   // ★ 数据库清理定时器（每日凌晨）
 };
