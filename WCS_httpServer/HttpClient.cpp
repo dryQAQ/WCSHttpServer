@@ -232,6 +232,8 @@ void HttpClient::queryRfid(const QJsonArray& epcList, const QString& context)
     rpr.reply   = reply;
     rpr.timer   = timer;
     rpr.context = context;
+    rpr.epcList = epcList;  // ★ 保存原始EPC列表用于重试
+    rpr.retryCount = 0;     // ★ 初始化重试计数
     m_rfidPending.insert(reply, rpr);
 
     connect(reply, &QNetworkReply::finished, this, &HttpClient::onRfidReplyFinished);
@@ -264,18 +266,57 @@ void HttpClient::onRfidReplyFinished()
         QJsonArray dataArr  = dataObj["data"].toArray();
         HTTP_INFO("RFID查询成功 context=%s status=%d epcMatched=%d",
             rpr.context.toLocal8Bit().data(), statusCode, dataArr.size());
+        emit rfidQueryResult(result, rpr.context);
+        m_rfidPending.erase(it);
     }
     else
     {
         QString errMsg = result["msg"].toString();
-        HTTP_WARN("RFID查询失败 context=%s status=%d msg=%s body=%s",
+        HTTP_WARN("RFID查询失败 context=%s status=%d msg=%s retry=%d/%d",
             rpr.context.toLocal8Bit().data(), statusCode,
             errMsg.toLocal8Bit().data(),
-            QString::fromUtf8(respBody).left(RESP_BODY_LOG_TRUNCATE).toLocal8Bit().data());
-    }
+            rpr.retryCount, m_rfidRetryMax);
 
-    emit rfidQueryResult(result, rpr.context);
-    m_rfidPending.erase(it);
+        // ★ S4 重试机制（T-S4-03）
+        if (rpr.retryCount < m_rfidRetryMax)
+        {
+            rpr.retryCount++;
+            // 重新发起请求（使用已保存的 epcList）
+            QJsonObject reqBody;
+            reqBody["epcList"] = rpr.epcList;
+            QByteArray postData = QJsonDocument(reqBody).toJson(QJsonDocument::Compact);
+            QUrl url(m_rfidUrl);
+            QNetworkRequest request(url);
+            request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
+            QNetworkReply* newReply = m_pNetworkMgr->post(request, postData);
+
+            QTimer* newTimer = new QTimer(this);
+            newTimer->setSingleShot(true);
+            newTimer->setInterval(m_rfidTimeoutMs);
+
+            RfidPendingRequest newRpr;
+            newRpr.reply      = newReply;
+            newRpr.timer      = newTimer;
+            newRpr.context    = rpr.context;
+            newRpr.epcList    = rpr.epcList;
+            newRpr.retryCount = rpr.retryCount;
+
+            m_rfidPending.erase(it);
+            m_rfidPending.insert(newReply, newRpr);
+
+            connect(newReply, &QNetworkReply::finished, this, &HttpClient::onRfidReplyFinished);
+            connect(newTimer, &QTimer::timeout, this, &HttpClient::onRfidReplyTimeout);
+            newTimer->start();
+        }
+        else
+        {
+            // 重试耗尽，返回失败
+            HTTP_ERROR("RFID查询重试耗尽 context=%s retry=%d",
+                rpr.context.toLocal8Bit().data(), rpr.retryCount);
+            emit rfidQueryResult(result, rpr.context);
+            m_rfidPending.erase(it);
+        }
+    }
 }
 
 void HttpClient::onRfidReplyTimeout()
@@ -288,8 +329,9 @@ void HttpClient::onRfidReplyTimeout()
         if (it->timer == timer)
         {
             RfidPendingRequest& rpr = it.value();
-            HTTP_WARN("RFID查询超时 context=%s timeout=%dms",
-                rpr.context.toLocal8Bit().data(), m_rfidTimeoutMs);
+            HTTP_WARN("RFID查询超时 context=%s timeout=%dms retry=%d/%d",
+                rpr.context.toLocal8Bit().data(), m_rfidTimeoutMs,
+                rpr.retryCount, m_rfidRetryMax);
 
             if (rpr.reply) {
                 disconnect(rpr.reply, &QNetworkReply::finished, this, &HttpClient::onRfidReplyFinished);
@@ -297,8 +339,45 @@ void HttpClient::onRfidReplyTimeout()
                 rpr.reply->deleteLater();
             }
             rpr.timer->deleteLater();
-            emit rfidQueryResult(QJsonObject(), rpr.context);
-            m_rfidPending.erase(it);
+
+            // ★ S4 重试机制（T-S4-03）
+            if (rpr.retryCount < m_rfidRetryMax)
+            {
+                rpr.retryCount++;
+                // 重新发起请求
+                QJsonObject reqBody;
+                reqBody["epcList"] = rpr.epcList;
+                QByteArray postData = QJsonDocument(reqBody).toJson(QJsonDocument::Compact);
+                QUrl url(m_rfidUrl);
+                QNetworkRequest request(url);
+                request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
+                QNetworkReply* newReply = m_pNetworkMgr->post(request, postData);
+
+                QTimer* newTimer = new QTimer(this);
+                newTimer->setSingleShot(true);
+                newTimer->setInterval(m_rfidTimeoutMs);
+
+                RfidPendingRequest newRpr;
+                newRpr.reply      = newReply;
+                newRpr.timer      = newTimer;
+                newRpr.context    = rpr.context;
+                newRpr.epcList    = rpr.epcList;
+                newRpr.retryCount = rpr.retryCount;
+
+                m_rfidPending.erase(it);
+                m_rfidPending.insert(newReply, newRpr);
+
+                connect(newReply, &QNetworkReply::finished, this, &HttpClient::onRfidReplyFinished);
+                connect(newTimer, &QTimer::timeout, this, &HttpClient::onRfidReplyTimeout);
+                newTimer->start();
+            }
+            else
+            {
+                HTTP_ERROR("RFID查询超时重试耗尽 context=%s retry=%d",
+                    rpr.context.toLocal8Bit().data(), rpr.retryCount);
+                emit rfidQueryResult(QJsonObject(), rpr.context);
+                m_rfidPending.erase(it);
+            }
             break;
         }
     }

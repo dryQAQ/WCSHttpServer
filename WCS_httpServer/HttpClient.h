@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QMap>
 #include <QString>
+#include <QJsonArray>
 
 #include "define.h"
 
@@ -92,6 +93,9 @@ private:
         QNetworkReply* reply;
         QTimer*        timer;
         QString        context;     // 请求上下文（如波次号）
+        QJsonArray     epcList;     // ★ 原始请求EPC列表（重试用）
+        int            retryCount = 0; // ★ 已重试次数
     };
     QMap<QNetworkReply*, RfidPendingRequest> m_rfidPending;
+    int m_rfidRetryMax = RFID_RETRY_MAX; // ★ RFID 最大重试次数
 };

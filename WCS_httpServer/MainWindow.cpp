@@ -27,6 +27,15 @@ MainWindow::MainWindow(QWidget* parent)
     resize(960, 1100);
     setMinimumSize(860, 950);
 
+    // ★ UI 查询数据库独立打开，不受服务启停影响
+    {
+        QString dbPath = QCoreApplication::applicationDirPath() + "/" + SORTING_DB_FILE;
+        if (m_queryDb.open(dbPath))
+        {
+            // 静默成功，不刷日志
+        }
+    }
+
     setupUI();
     ConfigManager::instance()->load();
     applyConfig();
@@ -80,13 +89,14 @@ void MainWindow::setupUI()
     setCentralWidget(central);
 
     QVBoxLayout* mainLayout = new QVBoxLayout(central);
-    mainLayout->setSpacing(8);
+    mainLayout->setSpacing(2);
 
     // ═══════════════════════════════════════════
     // 第一行：服务控制区
     // ═══════════════════════════════════════════
     QGroupBox* grpServer = new QGroupBox("服务控制");
-    QHBoxLayout* serverLayout = new QHBoxLayout(grpServer);
+    QVBoxLayout* serverLayout = new QVBoxLayout(grpServer);
+    serverLayout->setAlignment(Qt::AlignCenter);
 
     m_btnStartStop = new QPushButton("开始启动");
     m_btnStartStop->setMinimumWidth(120);
@@ -98,16 +108,34 @@ void MainWindow::setupUI()
 
     m_lblServerStatus = new QLabel(QCoreApplication::translate("MainWindow", "● 已停止"));
     m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
+    m_lblServerStatus->setAlignment(Qt::AlignCenter);
 
     // ★ 端口标签直接从配置读取（避免硬编码，确保重启后显示正确）
     ConfigManager* cfgMgr = ConfigManager::instance();
     cfgMgr->load();
     m_lblPort = new QLabel(QString("端口: %1").arg(cfgMgr->config().wmsListenPort));
+    m_lblPort->setAlignment(Qt::AlignCenter);
+
+    // ★ 期望绑定数量输入（默认66，每批次可配置不同数量）
+    QHBoxLayout* bindCountRow = new QHBoxLayout();
+    m_lblBindCountHint = new QLabel(QCoreApplication::translate("MainWindow", "期望绑定数量:"));
+    m_lblBindCountHint->setStyleSheet("font-size: 13px;");
+    m_spinBindCount = new QSpinBox();
+    m_spinBindCount->setMinimum(1);
+    m_spinBindCount->setMaximum(999);
+    m_spinBindCount->setValue(cfgMgr->config().expectedBindCount);
+    m_spinBindCount->setToolTip(QCoreApplication::translate("MainWindow", "波次下发时校验绑定数量，默认66。每批次可修改"));
+    m_spinBindCount->setStyleSheet("QSpinBox { font-size: 13px; padding: 2px; }");
+    m_spinBindCount->setFixedWidth(80);
+    bindCountRow->addStretch();
+    bindCountRow->addWidget(m_lblBindCountHint);
+    bindCountRow->addWidget(m_spinBindCount);
+    bindCountRow->addStretch();
 
     serverLayout->addWidget(m_btnStartStop);
     serverLayout->addWidget(m_lblServerStatus);
-    serverLayout->addStretch();
     serverLayout->addWidget(m_lblPort);
+    serverLayout->addLayout(bindCountRow);
 
     // ═══════════════════════════════════════════
     // 第二行：PLC 综合状态面板
@@ -176,23 +204,6 @@ void MainWindow::setupUI()
     s7Row2->addWidget(m_lblS7LockGrids);
     s7Row2->addStretch();
 
-    // ── 相机状态 ──
-    QFrame* lineCam = new QFrame();
-    lineCam->setFrameShape(QFrame::HLine);
-    lineCam->setFrameShadow(QFrame::Sunken);
-
-    QHBoxLayout* camRow = new QHBoxLayout();
-    m_lblCamStatus = new QLabel(QCoreApplication::translate("MainWindow", "相机: 未启动"));
-    m_lblCamStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
-    m_lblCamScanCount = new QLabel("扫描: 0");
-    m_lblCamScanCount->setStyleSheet("font-size: 13px; color: #2196F3;");
-    m_lblCamNoRead = new QLabel("未识别: 0");
-    m_lblCamNoRead->setStyleSheet("font-size: 13px; color: #f44336;");
-    camRow->addWidget(m_lblCamStatus);
-    camRow->addWidget(m_lblCamScanCount);
-    camRow->addWidget(m_lblCamNoRead);
-    camRow->addStretch();
-
     // ── 最近数据 ──
     QHBoxLayout* lastDataRow1 = new QHBoxLayout();
     m_lblLastSendCode = new QLabel(QCoreApplication::translate("MainWindow", "最近发送: --"));
@@ -228,8 +239,6 @@ void MainWindow::setupUI()
     plcOuterLayout->addWidget(lineS7);
     plcOuterLayout->addLayout(s7Row1);
     plcOuterLayout->addLayout(s7Row2);
-    plcOuterLayout->addWidget(lineCam);
-    plcOuterLayout->addLayout(camRow);
     plcOuterLayout->addWidget(line1);
     plcOuterLayout->addLayout(lastDataRow1);
     plcOuterLayout->addLayout(lastDataRow2);
@@ -279,7 +288,7 @@ void MainWindow::setupUI()
 
     QHBoxLayout* bindBtnRow = new QHBoxLayout();
     QPushButton* btnRefreshBind = new QPushButton("刷新绑定状态");
-    btnRefreshBind->setMinimumHeight(32);
+    btnRefreshBind->setMinimumHeight(30);
     btnRefreshBind->setStyleSheet(
         "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 16px; }"
@@ -303,8 +312,8 @@ void MainWindow::setupUI()
     // 可滚动区域——容纳所有格口绑定指示器
     QScrollArea* scrollBinding = new QScrollArea();
     scrollBinding->setWidgetResizable(true);
-    scrollBinding->setMinimumHeight(260);
-    scrollBinding->setMaximumHeight(400);
+    scrollBinding->setMinimumHeight(180);
+    scrollBinding->setMaximumHeight(180);
     scrollBinding->setStyleSheet("QScrollArea { border: 1px solid #ddd; }");
 
     m_bindingWidget = new QWidget();
@@ -417,7 +426,7 @@ void MainWindow::setupUI()
 
     // ── 结果表格 ──
     m_tblRecords = new QTableWidget();
-    m_tblRecords->setColumnCount(8);
+    m_tblRecords->setColumnCount(9);
     m_tblRecords->setHorizontalHeaderLabels({
         QCoreApplication::translate("MainWindow", "序号"),
         QCoreApplication::translate("MainWindow", "波次号"),
@@ -426,7 +435,8 @@ void MainWindow::setupUI()
         QCoreApplication::translate("MainWindow", "小车号"),
         QCoreApplication::translate("MainWindow", "件数"),
         QCoreApplication::translate("MainWindow", "库位"),
-        QCoreApplication::translate("MainWindow", "分拣时间")
+        QCoreApplication::translate("MainWindow", "分拣时间"),
+        QCoreApplication::translate("MainWindow", "状态")
     });
     m_tblRecords->setMinimumHeight(180);
     m_tblRecords->setMaximumHeight(300);
@@ -475,17 +485,38 @@ void MainWindow::setupUI()
     // ═══════════════════════════════════════════
     // 组装布局
     // ═══════════════════════════════════════════
-    mainLayout->addWidget(grpServer);
-    mainLayout->addWidget(grpPlc);
-    mainLayout->addWidget(grpWave);
+    // 第一行：服务控制 + PLC 综合状态（水平）
+    QHBoxLayout* rowTop = new QHBoxLayout();
+    grpServer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    rowTop->addWidget(grpServer);
+    rowTop->addWidget(grpPlc, 1);
+    mainLayout->addLayout(rowTop);
+
+    // 第二行：波次信息 + 运行日志（水平）
+    QHBoxLayout* rowMid = new QHBoxLayout();
+    grpWave->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    rowMid->addWidget(grpWave);
+    rowMid->addWidget(grpLog, 1);
+    mainLayout->addLayout(rowMid, 1); // 占剩余垂直空间
+
     mainLayout->addWidget(grpBinding);
     mainLayout->addWidget(grpQuery);  // ★ 分拣记录查询面板
-    mainLayout->addWidget(grpLog, 1); // 日志区占剩余空间
 }
 
 void MainWindow::setupConnections()
 {
     connect(m_btnStartStop, &QPushButton::clicked, this, &MainWindow::onStartStop);
+
+    // ★ 期望绑定数量变更 → 保存到配置，并实时更新到 HttpServer
+    connect(m_spinBindCount, QOverload<int>::of(&QSpinBox::valueChanged), this,
+        [this](int value) {
+            AppConfig& cfg = ConfigManager::instance()->config();
+            cfg.expectedBindCount = value;
+            ConfigManager::instance()->save();  // 延迟保存到 XML
+            if (m_pServer)
+                m_pServer->setExpectedBindCount(value);
+            appendLog(QString("[配置] 期望绑定数量已更新: %1").arg(value));
+        });
 
     // 定时刷新（每秒）
     m_timerRefresh = new QTimer(this);
@@ -497,6 +528,8 @@ void MainWindow::applyConfig()
 {
     AppConfig& cfg = ConfigManager::instance()->config();
     m_lblPort->setText(QString("端口: %1").arg(cfg.wmsListenPort));
+    if (m_spinBindCount)
+        m_spinBindCount->setValue(cfg.expectedBindCount);
 }
 
 // ============================================================================
@@ -546,11 +579,6 @@ void MainWindow::onStartStop()
         m_lastTcpConnected = false;  // ★ 重置缓存状态
         m_lastS7Connected  = false;
 
-        m_lblCamStatus->setText(QCoreApplication::translate("MainWindow", "相机: 未启动"));
-        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
-        m_lblCamScanCount->setText("扫描: 0");
-        m_lblCamNoRead->setText("未识别: 0");
-
         // ★ 停止时清除容器绑定（内存 + XML + UI）
         {
             AppConfig& c = ConfigManager::instance()->config();
@@ -584,6 +612,9 @@ void MainWindow::onStartStop()
         // ★ 从配置文件恢复容器绑定
         m_pServer->loadContainerBindings(cfg.containerBindings);
         m_bindingDirty = true;  // ★ 初始加载后标记为脏，首次刷新时更新面板
+
+        // ★ 设置期望绑定数量（从配置文件加载，默认66）
+        m_pServer->setExpectedBindCount(cfg.expectedBindCount);
         m_pClient = new HttpClient(this);
         m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
         m_pClient->setUrl(cfg.activeFeedbackUrl());
@@ -627,9 +658,46 @@ void MainWindow::onStartStop()
                 });
 
             // ★ 回传结果处理：成功→已完成，失败→异常（避免状态卡在"回传中"）
+            // S5 更新：区分完结回传（H8）和满箱回传（H7）
             connect(m_pClient, &HttpClient::reportResult, this,
                 [this](const QString& orderCode, bool success, const QString& body) {
                     Q_UNUSED(body);
+
+                    // ★ S5: 满箱回传（H7，context 以 "fullbox_" 开头）
+                    if (orderCode.startsWith("fullbox_"))
+                    {
+                        QString msgId = orderCode.mid(8); // 去掉 "fullbox_" 前缀
+                        if (m_pServer)
+                        {
+                            m_pServer->onFullboxReplyFinished(msgId, success, body);
+                        }
+                        appendLog(QString("[满箱回传] 回传结果 msgId=%1 success=%2")
+                            .arg(msgId).arg(success));
+                        return;
+                    }
+
+                    // ★ S5: 锁格回传（context 以 "lockGrid_" 开头）
+                    if (orderCode.startsWith("lockGrid_"))
+                    {
+                        appendLog(QString("[锁格] 回传结果 grid=%1 success=%2")
+                            .arg(orderCode.mid(9)).arg(success));
+                        return;
+                    }
+
+                    // ★ S6: 完结回传 Outbox（H8，context 以 "end_" 开头）
+                    if (orderCode.startsWith("end_"))
+                    {
+                        QString msgId = orderCode.mid(4); // 去掉 "end_" 前缀
+                        if (m_pServer)
+                        {
+                            m_pServer->onEndReplyFinished(msgId, success, body);
+                        }
+                        appendLog(QString("[完结回传] 回传结果 msgId=%1 success=%2")
+                            .arg(msgId).arg(success));
+                        return;
+                    }
+
+                    // ★ 完结回传（H8 波次完结通知WMS，原有逻辑）
                     WaveManager* wm = m_pServer ? m_pServer->waveManager() : nullptr;
                     if (!wm) return;
                     if (success)
@@ -652,6 +720,26 @@ void MainWindow::onStartStop()
                         .toObject()["targetLocation"].toString();
                     appendLog(QString("[锁格] 发送回传 grid=%1").arg(grid));
                     m_pClient->sendGenericFeedback(reportJson, "lockGrid_" + grid);
+                });
+
+            // ★ S5 满箱回传 → WMS（H7 满箱同步，T-S5-04）
+            // fullboxReportReady 携带 msgId，HttpClient 返回后路由到 onFullboxReplyFinished
+            connect(m_pServer, &HttpServer::fullboxReportReady, this,
+                [this](const QJsonObject& payload, const QString& msgId) {
+                    if (!m_pClient) return;
+                    QString orderCode = payload["head"].toObject()["orderCode"].toString();
+                    appendLog(QString("[满箱回传] 发送回传 msgId=%1 order=%2").arg(msgId).arg(orderCode));
+                    m_pClient->sendGenericFeedback(payload, "fullbox_" + msgId);
+                });
+
+            // ★ S6 完结回传 → WMS（H8 波次完结通知，T-S6-03）
+            // endReportReady 携带 msgId，HttpClient 返回后路由到 onEndReplyFinished
+            connect(m_pServer, &HttpServer::endReportReady, this,
+                [this](const QJsonObject& payload, const QString& msgId) {
+                    if (!m_pClient) return;
+                    QString orderCode = payload["head"].toObject()["orderCode"].toString();
+                    appendLog(QString("[完结回传] 发送回传 msgId=%1 order=%2").arg(msgId).arg(orderCode));
+                    m_pClient->sendGenericFeedback(payload, "end_" + msgId);
                 });
 
             // ★ 连接HttpServer日志信号到UI日志区
@@ -783,20 +871,7 @@ void MainWindow::onStartStop()
                 m_pPlcMgr->connectS7();
             }
 
-            // ★ 相机状态信号
-            if (m_pServer->cameraManager())
-            {
-                connect(m_pServer->cameraManager(), &CameraManager::cameraConnected, this, [this](const QString& ip, int port) {
-                    updateCameraPanel();
-                    appendLog(QString("[相机] 连接 %1:%2").arg(ip).arg(port));
-                }, Qt::QueuedConnection);
-                connect(m_pServer->cameraManager(), &CameraManager::cameraDisconnected, this, [this](const QString& ip, int port) {
-                    updateCameraPanel();
-                    appendLog(QString("[相机] 断开 %1:%2").arg(ip).arg(port), true);
-                }, Qt::QueuedConnection);
-                // ★ 相机扫描结果已改为回调机制（CodeRecvCallBack），不再通过信号通知
-                //    UI 更新通过 MainWindow 定时器轮询 CameraManager::stats() 实现
-            }
+            
 
             // ★ 启动后清理过期数据库记录
             if (m_pServer->sortingDb())
@@ -817,7 +892,6 @@ void MainWindow::onRefreshTimer()
     {
         updateWavePanel();
         updatePlcPanel();
-        updateCameraPanel();
         // ★ 仅绑定数据变更时才刷新绑定面板（避免每秒66次findChildren）
         if (m_bindingDirty)
         {
@@ -1018,30 +1092,7 @@ void MainWindow::updatePlcPanel()
     }
 }
 
-void MainWindow::updateCameraPanel()
-{
-    if (!m_pServer || !m_pServer->cameraManager()) return;
-    CameraStats s = m_pServer->cameraManager()->stats();
-    
-    if (s.running && s.clientCount > 0)
-    {
-        m_lblCamStatus->setText(QString::fromUtf8("● 相机: 已连接(%1)").arg(s.clientCount));
-        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
-    }
-    else if (s.running)
-    {
-        m_lblCamStatus->setText(QCoreApplication::translate("MainWindow", "● 相机: 监听中"));
-        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #FF9800; font-weight: bold;");
-    }
-    else
-    {
-        m_lblCamStatus->setText(QCoreApplication::translate("MainWindow", "相机: 未启动"));
-        m_lblCamStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
-    }
-    
-    m_lblCamScanCount->setText(QString("扫描: %1").arg(s.scanCount));
-    m_lblCamNoRead->setText(QString("未识别: %1").arg(s.noReadCount));
-}
+
 
 // ============================================================================
 // 容器绑定状态
@@ -1200,11 +1251,16 @@ void MainWindow::flushLogBuffer()
 
 void MainWindow::onQueryRecords()
 {
-    SortingDatabase* db = m_pServer ? m_pServer->sortingDb() : nullptr;
-    if (!db || !db->isOpen())
+    SortingDatabase* db = &m_queryDb;
+    if (!db->isOpen())
     {
-        appendLog("[查询] 数据库未就绪", true);
-        return;
+        // ★ 重试打开（构造函数执行时 data 目录可能尚未创建，首次查询时补开）
+        QString dbPath = QCoreApplication::applicationDirPath() + "/" + SORTING_DB_FILE;
+        if (!db->open(dbPath))
+        {
+            appendLog("[查询] 数据库未就绪，请检查 data/sorting_records.db 是否存在", true);
+            return;
+        }
     }
 
     QString barcode = m_editQueryBarcode->text().trimmed();
@@ -1215,13 +1271,13 @@ void MainWindow::onQueryRecords()
 
     if (!barcode.isEmpty())
     {
-        // 按条码查询
+        // 按条码查询（已分拣 + 待分拣，用 NOT EXISTS 去重）
         records = db->queryByBarcode(barcode, SORTING_QUERY_MAX_RESULTS);
     }
     else
     {
-        // 按时间范围查询
-        records = db->queryByTime(from, to, SORTING_QUERY_MAX_RESULTS);
+        // 留空查全部：已分拣 + 待分拣（queryAllWithPending 自动用 NOT EXISTS 去重）
+        records = db->queryAllWithPending(SORTING_QUERY_MAX_RESULTS);
     }
 
     // 填充表格
@@ -1247,6 +1303,16 @@ void MainWindow::onQueryRecords()
 
         m_tblRecords->setItem(i, 6, new QTableWidgetItem(rec.volu));
         m_tblRecords->setItem(i, 7, new QTableWidgetItem(rec.sortTime));
+
+        // 状态列：已分拣=绿色，待分拣=橙色
+        auto* statusItem = new QTableWidgetItem(rec.status);
+        statusItem->setTextAlignment(Qt::AlignCenter);
+        if (rec.status == QString::fromUtf8("已分拣")) {
+            statusItem->setForeground(QColor("#228B22"));  // 森林绿
+        } else if (rec.status == QString::fromUtf8("待分拣")) {
+            statusItem->setForeground(QColor("#FF8C00"));  // 暗橙色
+        }
+        m_tblRecords->setItem(i, 8, statusItem);
     }
 
     // 更新统计标签

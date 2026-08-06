@@ -13,9 +13,11 @@
 //
 // 通信协议（与 WCSApp 完全兼容）：
 //   S7 发送: DB1 Offset 1000, 42 bytes (条码+格口二进制包)
-//   TCP 发送: {条码|格口|小车号}  — TCP 文本，格口和小车号 3位补零
+//   TCP 发送: {识别码|格口|小车号}  — TCP 文本，格口和小车号 3位补零
+//      TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+//      TODO: 小车号应由RFID提供，客户尚未提供RFID小车号字段（2026-08-04）
 //      示例: {ST1234567890123|015|001}
-//   TCP 反馈: {条码|格口|小车号}  — 落格确认
+//   TCP 反馈: {识别码|格口|小车号}  — 落格确认
 //           {start}              — 批次开始
 //           {stop}               — 批次停止
 //   TCP 锁格: {格口号|L}          — PLC主动锁格（如 {222|L}）
@@ -137,8 +139,9 @@ struct PlcStats
 // 回调类型
 typedef std::function<void(std::string ip, int port, bool status)> PlcStatusCallback;
 typedef std::function<void(QString code, QString grid, QString car)> PlcFeedbackCallback;
-// ★ 格口查询回调：相机扫到 {条码|小车号} 时调用，返回格口字符串（如 "15" 或 "1,2,3"）
-typedef std::function<QString(const QString& barcode)> PlcLookupCallback;
+// ★ 格口查询回调：PLC/相机扫到识别码时调用，返回格口字符串（如 "15" 或 "1,2,3"）
+// TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+typedef std::function<QString(const QString& code)> PlcLookupCallback;
 
 class PlcManager : public QObject, public CTcpServerListener
 {
@@ -174,10 +177,13 @@ public:
     void setLookupCallback(PlcLookupCallback cb) { m_lookupCb = std::move(cb); }
 
     // ──── 发送指令 ────
-    bool sendCodeInfo(const QString& barcode, const std::vector<int>& vecGrid, int car = 1);
+    // TODO: code 可能为条码或EPC，客户尚未确定（2026-08-04）
+    // TODO: car 小车号应由RFID提供，客户尚未提供RFID小车号字段，当前默认=1（2026-08-04）
+    bool sendCodeInfo(const QString& code, const std::vector<int>& vecGrid, int car = 1);
     bool sendRawCommand(const QString& command);
-    // ★ 主动发送模式：批量发送波次条码到PLC（不等待PLC查询，与WCSApp一致）
-    // codeGridMap: 条码→格口字符串（如 "15" 或 "1,2,3"）
+    // ★ 主动发送模式：批量发送波次识别码到PLC（不等待PLC查询，与WCSApp一致）
+    // TODO: codeGridMap 的 key 可能为条码或EPC，客户尚未确定（2026-08-04）
+    // codeGridMap: 识别码→格口字符串（如 "15" 或 "1,2,3"）
     bool sendBatchCodes(const QMap<QString, QString>& codeGridMap);
 
     int  connectedClientCount() const;
@@ -240,9 +246,14 @@ signals:
     std::atomic<int64_t> m_s7SendCount{0};
     std::atomic<int64_t> m_s7SendErrCount{0};
 
-    // ──── S7 锁格状态（由TCP锁格消息 {grid|L}/{grid|U} 更新，与WCSApp一致）────
+    // ──── S7 锁格状态（双重检测：S7 DB77边沿轮询 + TCP主动消息 {grid|L}/{grid|U}，与WCSApp一致）────
     bool        m_s7Grid_200[PLC_S7_MAX_GRID_COUNT]{ false }; // 当前锁格状态（200位）
+    byte        m_s7PlcLastData[PLC_S7_LOCK_READ_SIZE]{ 0 };  // ★ 上一次S7锁格数据（边沿检测用，与WCSApp一致）
     mutable std::mutex m_lockGridPlc;       // 保护 m_s7Grid_200
+
+    // ──── S7 锁格轮询定时器 ────
+    QTimer*     m_s7LockTimer = nullptr;     // ★ S7锁格轮询定时器（1秒间隔，与WCSApp S7边沿检测一致）
+    void pollS7LockStatus();                 // ★ S7锁格轮询：读DB77→边沿检测→发射信号
 
     // ──── S7 心跳线程（与 WCSApp simensS7::OnHeartThread 一致）────
     std::thread m_heartThread;              // ★ S7 心跳线程

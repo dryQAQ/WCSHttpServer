@@ -1,0 +1,21 @@
+2026-08-03 16:23:30.830 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::CameraManager:13] CameraManager created platType=1 (1=DaHua, 2=Kenyence)
+2026-08-03 16:23:30.876 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnPrepareListen:56] Camera listen ready port=8193 platType=1
+2026-08-03 16:23:30.879 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::start:23] Camera started port=8193 platType=1
+2026-08-03 16:23:45.186 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnShutdown:81] Camera shutdown
+2026-08-03 16:23:45.187 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::stop:33] Camera stopped
+2026-08-03 16:24:37.519 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::CameraManager:13] CameraManager created platType=1 (1=DaHua, 2=Kenyence)
+2026-08-03 16:24:37.526 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnPrepareListen:56] Camera listen ready port=8193 platType=1
+2026-08-03 16:24:37.528 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::start:23] Camera started port=8193 platType=1
+2026-08-03 16:24:48.551 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnShutdown:81] Camera shutdown
+2026-08-03 16:24:48.552 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::stop:33] Camera stopped
+2026-08-03 16:24:49.584 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::CameraManager:13] CameraManager created platType=1 (1=DaHua, 2=Kenyence)
+2026-08-03 16:24:49.591 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnPrepareListen:56] Camera listen ready port=8193 platType=1
+2026-08-03 16:24:49.593 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::start:23] Camera started port=8193 platType=1
+2026-08-03 16:24:54.141 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnShutdown:81] Camera shutdown
+2026-08-03 16:24:54.141 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::stop:33] Camera stopped
+2026-08-03 16:24:55.166 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::CameraManager:13] CameraManager created platType=1 (1=DaHua, 2=Kenyence)
+2026-08-03 16:24:55.173 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnPrepareListen:56] Camera listen ready port=8193 platType=1
+2026-08-03 16:24:55.174 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::start:23] Camera started port=8193 platType=1
+2026-08-03 16:24:55.640 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::OnShutdown:81] Camera shutdown
+2026-08-03 16:24:55.641 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::stop:33] Camera stopped
+2026-08-03 16:24:58.756 [0x000044ac] INFO  CAM - [TID-1785745410811-efb429e4][CameraManager::~CameraManager:16] CameraManager destroyed

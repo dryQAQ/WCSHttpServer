@@ -44,23 +44,32 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "goodsOwner")         goodsOwner = xml.readElementText();
         else if (name == "waveTimeoutMin")     waveTimeoutMin = xml.readElementText().toInt();
         else if (name == "maxRetryCount")      maxRetryCount = xml.readElementText().toInt();
+        else if (name == "expectedBindCount")  expectedBindCount = xml.readElementText().toInt();
         else if (name == "httpTimeoutMs")      httpTimeoutMs = xml.readElementText().toInt();
         else if (name == "waveCompleteTimeoutMs") waveCompleteTimeoutMs = xml.readElementText().toInt();
         else if (name == "plcListenPort")      plcListenPort = xml.readElementText().toInt();
         else if (name == "plcS7Ip")            plcS7Ip = xml.readElementText();
         else if (name == "plcS7Rack")          plcS7Rack = xml.readElementText().toInt();
         else if (name == "plcS7Slot")          plcS7Slot = xml.readElementText().toInt();
-        else if (name == "cameraListenPort")   cameraListenPort = xml.readElementText().toInt();
-        else if (name == "cameraPlatType")     cameraPlatType = xml.readElementText().toInt();
+        
         else if (name == "businessPoolSize")   businessPoolSize = xml.readElementText().toInt();
         else if (name == "plcSendPoolSize")    plcSendPoolSize = xml.readElementText().toInt();
         else if (name == "plcRecvPoolSize")    plcRecvPoolSize = xml.readElementText().toInt();
-        else if (name == "cameraProcPoolSize") cameraProcPoolSize = xml.readElementText().toInt();
+        
         else if (name == "logRetainDays")      logRetainDays = xml.readElementText().toInt();
         else if (name == "apiInsertWaveInfo")    apiInsertWaveInfo = xml.readElementText();
         else if (name == "apiBindingLatticePort") apiBindingLatticePort = xml.readElementText();
         else if (name == "apiInsertWaveIn")      apiInsertWaveIn = xml.readElementText();
         else if (name == "rfidUrl")            rfidUrl = xml.readElementText();
+        else if (name == "h7FromLocationSource")    fullboxFromLocationSource = xml.readElementText();
+        else if (name == "h7DefaultFromLocation") fullboxDefaultFromLocation = xml.readElementText();
+        // ──── S7 分拣增强配置 ────
+        // bool 类型：XML 中写 "true"/"false"，读取时转为小写比较
+        else if (name == "sortingEpcDedup")         sortingEpcDedup = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "sortingGridCapPolicy")    sortingGridCapPolicy = xml.readElementText();
+        else if (name == "sortingOrderQtyValidate") sortingOrderQtyValidate = xml.readElementText();
+        else if (name == "sortingConflictPolicy")   sortingConflictPolicy = xml.readElementText();
+        else if (name == "sortingAllowOverrecv")    sortingAllowOverrecv = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "binding")
         {
             // 容器绑定: <binding grid="00001">BOX001</binding>
@@ -104,20 +113,28 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("goodsOwner",       goodsOwner);
     xml.writeTextElement("waveTimeoutMin",   QString::number(waveTimeoutMin));
     xml.writeTextElement("maxRetryCount",    QString::number(maxRetryCount));
+    xml.writeTextElement("expectedBindCount", QString::number(expectedBindCount));
     xml.writeTextElement("httpTimeoutMs",    QString::number(httpTimeoutMs));
     xml.writeTextElement("waveCompleteTimeoutMs", QString::number(waveCompleteTimeoutMs));
     xml.writeTextElement("plcListenPort",    QString::number(plcListenPort));
     xml.writeTextElement("plcS7Ip",          plcS7Ip);
     xml.writeTextElement("plcS7Rack",        QString::number(plcS7Rack));
     xml.writeTextElement("plcS7Slot",        QString::number(plcS7Slot));
-    xml.writeTextElement("cameraListenPort",  QString::number(cameraListenPort));
-    xml.writeTextElement("cameraPlatType",    QString::number(cameraPlatType));
+    
     xml.writeTextElement("businessPoolSize", QString::number(businessPoolSize));
     xml.writeTextElement("plcSendPoolSize",  QString::number(plcSendPoolSize));
     xml.writeTextElement("plcRecvPoolSize",   QString::number(plcRecvPoolSize));
-    xml.writeTextElement("cameraProcPoolSize", QString::number(cameraProcPoolSize));
+    
     xml.writeTextElement("logRetainDays",    QString::number(logRetainDays));
     xml.writeTextElement("rfidUrl",          rfidUrl);
+    xml.writeTextElement("h7FromLocationSource",   fullboxFromLocationSource);
+    xml.writeTextElement("h7DefaultFromLocation",  fullboxDefaultFromLocation);
+    // ──── S7 分拣增强配置 ────
+    xml.writeTextElement("sortingEpcDedup",          sortingEpcDedup ? "true" : "false");
+    xml.writeTextElement("sortingGridCapPolicy",     sortingGridCapPolicy);
+    xml.writeTextElement("sortingOrderQtyValidate",  sortingOrderQtyValidate);
+    xml.writeTextElement("sortingConflictPolicy",    sortingConflictPolicy);
+    xml.writeTextElement("sortingAllowOverrecv",     sortingAllowOverrecv ? "true" : "false");
     xml.writeTextElement("apiInsertWaveInfo",     apiInsertWaveInfo);
     xml.writeTextElement("apiBindingLatticePort", apiBindingLatticePort);
     xml.writeTextElement("apiInsertWaveIn",       apiInsertWaveIn);

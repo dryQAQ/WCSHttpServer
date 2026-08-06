@@ -10,14 +10,13 @@
 //   POST /api/DispatchSortingCommand/InsertWaveIn            — WMS退货任务取消
 //
 // 日志系统:
-//   hlog (log4cxx) → ./log/WCS/WCS.log  (WCS_INFO)
-//                   → ./log/HTTP/http.log (HTTP_INFO)
-//                   → ./log/Run/run.log              (LOG_INFO)
-//                   → ./log/PLC/PLC.log              (PLC_INFO)
-//                   → ./log/LIFECYCLE/lifecycle.log   (LIFE_LOG)
-// ============================================================================
-//                   → ./log/Image/data.log            (ImageSave_INFO)
-//                   → ./log/PLCWarn/PLCWarn.log        (PLCWarn_INFO)
+//   hlog (log4cxx) → ./log/WCS/WCS.log       (WCS_INFO/WCS_WARN/WCS_ERROR)
+//                   → ./log/HTTP/http.log     (HTTP_INFO/HTTP_WARN/HTTP_ERROR)
+//                   → ./log/Run/run.log        (LOG_INFO/LOG_WARN/LOG_ERROR)
+//                   → ./log/PLC/PLC.log        (PLC_INFO/PLC_WARN/PLC_ERROR)
+//                   → ./log/LIFECYCLE/lifecycle.log (LIFE_LOG)
+//                   → ./log/JT/JT.log          (JT_INFO)
+//                   → ./log/DataBase/DataBase.log (Data_INFO)
 // ============================================================================
 
 #include <QApplication>
@@ -46,10 +45,9 @@ int main(int argc, char* argv[])
     QDir().mkpath(exeDir + "/log/Run");
     QDir().mkpath(exeDir + "/log/PLC");         // PLC通信日志
     QDir().mkpath(exeDir + "/log/LIFECYCLE");   // 条码生命周期日志
-    QDir().mkpath(exeDir + "/log/JT");          // 极兔分拣日志
     QDir().mkpath(exeDir + "/log/DataBase");    // 数据库操作日志
-    QDir().mkpath(exeDir + "/log/Image");       // 图片处理日志
-    QDir().mkpath(exeDir + "/log/PLCWarn");     // PLC告警日志
+    QDir().mkpath(exeDir + "/log/JT");          // 极兔分拣日志
+    QDir().mkpath(exeDir + "/data");            // 分拣数据库目录（UI 查询独立于服务，需提前创建）
 
     ConfigManager::instance()->load();
 

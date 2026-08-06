@@ -1,0 +1,10 @@
+2026-08-06 10:10:27.250 [0x000033c4] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 14:57:26.665 [0x0000cd54] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 14:58:28.825 [0x0000cd54] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 15:01:19.503 [0x0000cd54] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 15:14:17.704 [0x00001c40] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 15:21:21.972 [0x00001c40] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 15:30:32.387 [0x0000a038] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 16:16:13.500 [0x00002700] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 16:37:03.005 [0x00002700] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 16:44:53.264 [0x0000caec] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200

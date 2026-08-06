@@ -114,7 +114,6 @@
     <ClCompile Include="PlcManager.cpp" />
     <ClCompile Include="SiemensPLC.cpp" />
     <ClCompile Include="snap7.cpp" />
-    <ClCompile Include="CameraManager.cpp" />
     <ClCompile Include="SortingDatabase.cpp" />
     <ClCompile Include="sqlite3.c" />
     <ClCompile Include="WaveManager.cpp" />
@@ -139,7 +138,6 @@
     <QtMoc Include="PlcManager.h" />
     <QtMoc Include="MainWindow.h" />
     <QtMoc Include="HttpServer.h" />
-    <QtMoc Include="CameraManager.h" />
     <QtMoc Include="HttpClient.h" />
     <ClInclude Include="SiemensPLC.h" />
     <ClInclude Include="snap7.h" />

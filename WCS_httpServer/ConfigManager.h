@@ -30,6 +30,7 @@ struct AppConfig
     // ──── 波次配置 ────
     int     waveTimeoutMin    = WAVE_TIMEOUT_MIN_DEFAULT; // 波次超时(分钟, 0=不超时)
     int     maxRetryCount     = WAVE_MAX_RETRY;           // 异常 SKU 最大重试次数
+    int     expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT; // 期望绑定数量（波次下发时校验全部绑定用，默认66）
 
     // ──── 网络超时 ────
     int     httpTimeoutMs         = HTTP_TIMEOUT_MS;          // HTTP 请求超时(ms)
@@ -41,23 +42,30 @@ struct AppConfig
     int     plcS7Rack         = PLC_S7_RACK;            // S7 机架号
     int     plcS7Slot         = PLC_S7_SLOT;            // S7 槽位号
 
-    // ──── 相机通信 ────
-    int     cameraListenPort  = CAMERA_LISTEN_PORT;  // 相机 TCP 监听端口（默认 8193）
-    int     cameraPlatType    = 1;              // 相机协议类型: 1=DaHua({条码|小车号}), 2=Kenyence(STX{car:barcode}ETX)
-
     // ──── 线程池 ────
     int     businessPoolSize  = BUSINESS_POOL_SIZE;     // 业务线程池大小
     int     plcSendPoolSize   = PLC_SEND_POOL_SIZE;     // PLC 发送线程池大小
     int     plcRecvPoolSize   = PLC_RECV_POOL_SIZE;     // PLC 反馈接收专用线程池大小
-    int     cameraProcPoolSize = CAMERA_PROC_POOL_SIZE; // 相机数据处理专用线程池大小
+    
 
     // ──── RFID ────
     QString rfidUrl          = RFID_QUERY_URL;           // RFID EPC查询接口URL
 
+    // ──── 满箱回传配置（H7 满箱同步到WMS）────
+    QString fullboxFromLocationSource = FULLBOX_FROM_LOCATION_SOURCE;  // fromLocation 取值来源（config/volu）
+    QString fullboxDefaultFromLocation = FULLBOX_DEFAULT_FROM_LOCATION; // 来源库位默认值（config模式时使用）
+
+    // ──── S7 分拣增强配置（修改后需重启服务）────
+    bool    sortingEpcDedup     = SORTING_EPC_DEDUP;          // EPC 任务内防重（true/false）
+    QString sortingGridCapPolicy = SORTING_GRID_CAP_POLICY;   // 格口上限策略（reject/exception/allow）
+    QString sortingOrderQtyValidate = SORTING_ORDERQTY_VALIDATE; // orderQty校验模式（strict/loose）
+    QString sortingConflictPolicy = SORTING_CONFLICT_POLICY;   // 冲突策略（STRICT_EXCEPTION/LOOSE_FIRST）
+    bool    sortingAllowOverrecv = SORTING_ALLOW_OVERRECV;     // 允许超收（true/false）
+
     // ──── API 路由（WMS 调用 WCS 的接口路径，可配置以适应 WMS 路径变更）────
-    QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① WMS 推送波次数据 (POST)
-    QString apiBindingLatticePort = API_BINDING_LATTICE_PORT;  // ② WMS 绑定格口容器 (POST)
-    QString apiInsertWaveIn       = API_INSERT_WAVE_IN;        // ③ WMS 退货任务取消 (POST)
+    QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① 波次下发（H4 WMS推送波次数据）(POST)
+    QString apiBindingLatticePort = API_BINDING_LATTICE_PORT;  // ② 容器绑定（H6 格口容器绑定）(POST)
+    QString apiInsertWaveIn       = API_INSERT_WAVE_IN;        // ③ 波次取消（H5 退货任务取消）(POST)
 
     // ──── 日志 ────
     int     logRetainDays     = LOG_RETAIN_DAYS;          // 日志保留天数

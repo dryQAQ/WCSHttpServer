@@ -24,8 +24,9 @@
 #include "WaveManager.h"
 #include "ThreadPool.h"
 #include "PlcManager.h"
-#include "CameraManager.h"
+
 #include "SortingDatabase.h"
+#include "EpcCache.h"
 #include "define.h"
 
 class ParseWorker;
@@ -33,8 +34,8 @@ class ParseWorker;
 // ★ 格口分拣记录（锁格时回传 WMS 用）
 struct GridSortRecord
 {
-    QString inco;          // 条码
-    QString car;           // 小车号
+    QString inco;          // 识别码（条码或EPC，客户尚未确定 2026-08-04）
+    QString car;           // 小车号（TODO: 应由RFID提供，客户尚未提供 2026-08-04）
     int     gridCount = 0; // 配货件数
     QString volu;          // 来源库位
     qint64  timeMs   = 0;  // 分拣时间
@@ -65,7 +66,7 @@ public:
     GridBuffer*  gridBuffer()  { return m_pBuffer; }
     WaveManager* waveManager() { return m_pWaveMgr; }
     PlcManager*  plcManager()  { return m_pPlcMgr; }
-    CameraManager* cameraManager() { return m_pCameraMgr; }
+    
     SortingDatabase* sortingDb() { return m_pSortingDb; }  // ★ 分拣记录数据库
 
     // ★ API 路由设置（从 XML 配置加载后调用）
@@ -85,10 +86,14 @@ public:
         m_containerBindings = bindings;
     }
 
-    // 检查所有格口是否已绑定容器（线程安全）
+    // 设置期望绑定数量（波次下发时校验全部绑定用，默认66）
+    void setExpectedBindCount(int count) { m_expectedBindCount = count; }
+    int  expectedBindCount() const { return m_expectedBindCount; }
+
+    // 检查所有格口是否已绑定容器（使用可配置的期望数量，线程安全）
     bool areAllBindingsComplete() const {
         std::lock_guard<std::mutex> lock(m_containerMutex);
-        return (int)m_containerBindings.size() >= BINDING_SLOT_COUNT;
+        return (int)m_containerBindings.size() >= m_expectedBindCount;
     }
 
     // 获取已绑定数量（线程安全）
@@ -100,17 +105,24 @@ public:
     // ★ RFID查询：接收RFID服务返回的EPC→SKU映射结果
     void onRfidQueryResult(const QJsonObject& result, const QString& context);
 
-    // ★ RFID查询：根据EPC获取对应的SKU/条码
+    // ★ RFID查询：根据EPC获取对应的SKU/条码（T-S4-04 EpcCache TTL缓存）
     QString getSkuByEpc(const QString& epc) const {
-        std::lock_guard<std::mutex> lock(m_epcSkuMutex);
-        return m_epcSkuMap.value(epc);
+        if (m_pEpcCache) return m_pEpcCache->get(epc);
+        return QString();
     }
 
-    // ★ RFID查询：获取EPC→SKU映射快照
-    QMap<QString, QString> getEpcSkuMap() const {
-        std::lock_guard<std::mutex> lock(m_epcSkuMutex);
-        return m_epcSkuMap;
-    }
+    // ★ S5 满箱回传结果处理（H7 满箱同步到WMS，MainWindow 回调，必须 public）
+    void onFullboxReplyFinished(const QString& msgId, bool success, const QString& body);
+
+    // ──── S6 新增：完结回传（H8 波次完结通知WMS，T-S6-01~T-S6-05）────
+    QJsonObject buildEndPayload(const QString& orderCode, int sumLocation); // ★ 构建完结报文（H8 波次完结通知WMS）
+    void sendEnd();                                 // ★ 完结触发入口（T-S6-01/02）
+    void sendEndToWms(const QString& msgId, const QJsonObject& payload); // ★ 发送完结回传到 WMS（H8 波次完结通知WMS，T-S6-03）
+    void onEndReplyFinished(const QString& msgId, bool success, const QString& body); // ★ 完结回传结果处理（H8 波次完结通知WMS，T-S6-04）
+    void pollOutboxEnd();                           // ★ Outbox 完结回传重试调度（H8 波次完结通知WMS，T-S6-03）
+
+    // ──── S8 新增：对账（T-S8-01/02）────
+    WaveReconciliation getReconciliation() const;          // ★ 波次对账（T-S8-01/02）
 
 signals:
     void serverStarted(int port);
@@ -120,6 +132,8 @@ signals:
     void bindingUpdated();  // 容器绑定变更通知
     void gridLockReportReady(const QJsonObject& reportJson);  // ★ 锁格回传 WMS
     void waveCompleteReportReady(const QJsonObject& reportJson); // ★ 波次完成回传（异步入池构建后发出）
+    void fullboxReportReady(const QJsonObject& payload, const QString& msgId); // ★ S5 满箱回传（H7 满箱同步到WMS，T-S5-04）
+    void endReportReady(const QJsonObject& payload, const QString& msgId);     // ★ S6 完结回传（H8 波次完结通知WMS，T-S6-03）
     void rfidQueryRequested(const QJsonArray& epcList, const QString& context); // ★ 请求RFID查询EPC→SKU
 
 protected:
@@ -141,9 +155,17 @@ private:
     void processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState& state);
     QJsonObject handleBindingLatticePort(const QString& latticehole, const QString& boxcode); // 格口容器绑定
     QJsonObject handleCancelWave(const QJsonObject& req);                           // 退货任务取消
+    QJsonObject validateInsertWaveInfo(const QJsonObject& root);                  // 波次下发参数校验（H4 WMS推送波次数据）
     void sendGridLockFeedback(const QString& grid);  // ★ 锁格时回传分拣明细到 WMS
     QJsonObject buildReportFromRecords(const QString& orderCode,
                                        const QMap<QString, QVector<GridSortRecord>>& records); // ★ 从记录副本构建 33.md JSON（线程安全）
+
+    // ──── S5 新增：满箱同步（H7 满箱同步到WMS，T-S5-01~T-S5-07）────
+    QJsonObject buildFullboxPayload(const QString& orderCode, const QString& grid,
+                                     const QString& boxCode, const QVector<GridSortRecord>& records); // ★ 构建满箱报文（H7 满箱同步到WMS）
+    void sendFullbox(const QString& grid);                // ★ 满箱触发入口（T-S5-01）
+    void sendFullboxToWms(const QString& msgId, const QJsonObject& payload); // ★ 发送满箱回传到 WMS（H7 满箱同步到WMS，T-S5-04）
+    void pollOutboxFullbox();                              // ★ Outbox 重试调度（T-S5-04）
     void sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
                           const QJsonObject& json, USHORT status = 200);
     QJsonObject okResponse(const QString& msg = "");
@@ -157,8 +179,9 @@ private:
     WaveManager*   m_pWaveMgr = nullptr;
     ParseWorker*   m_pWorker  = nullptr;
     PlcManager*    m_pPlcMgr  = nullptr;
-    CameraManager*  m_pCameraMgr = nullptr;  // ★ 相机通信管理器
+    
     SortingDatabase* m_pSortingDb = nullptr;  // ★ 分拣记录本地数据库
+    EpcCache*       m_pEpcCache  = nullptr;  // ★ S4 EPC短缓存（T-S4-04）
 
     // ──── API 路由（从 XML 配置读取，可动态修改）────
     QString m_apiInsertWaveInfo     = API_INSERT_WAVE_INFO;
@@ -168,7 +191,7 @@ private:
     // ──── 业务线程池 ────
     Hanchine::ThreadPool* m_pBusinessPool   = nullptr;
     Hanchine::ThreadPool* m_pPlcRecvPool    = nullptr;  // ★ PLC 反馈接收专用线程池（落格反馈→分拣标记→SQLite写入）
-    Hanchine::ThreadPool* m_pCameraProcPool = nullptr;  // ★ 相机数据处理专用线程池（相机扫描→格口查询→PLC发送）
+    
 
     QMap<CONNID, ConnState> m_connStates;
     QMap<CONNID, qint64>    m_connAcceptTime;
@@ -181,6 +204,10 @@ private:
     std::atomic<int>        m_activeConns{0};
     QTimer*                 m_healthTimer = nullptr;
 
+    // ──── S5 新增：Outbox 满箱回传重试调度（H7 满箱同步到WMS）────
+    QTimer*                 m_outboxTimer = nullptr;  // ★ 满箱回传出站重试调度器（H7 满箱同步到WMS，T-S5-04）
+    QTimer*                 m_outboxEndTimer = nullptr;  // ★ S6 完结回传出站重试调度器（H8 波次完结通知WMS，T-S6-03）
+
     // ──── PLC发送失败日志限流 ────
     QSet<QString>           m_warnedPlcFailCodes;
     std::mutex              m_warnMutex;
@@ -188,12 +215,13 @@ private:
     // ──── 格口容器绑定 ────
     QMap<QString, QString>  m_containerBindings;  // latticehole(格口号) → boxcode(容器号)
     mutable std::mutex       m_containerMutex;     // 保护 m_containerBindings（const方法中需加锁）
+    int                      m_expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT;  // 期望绑定数量（波次下发时校验全部绑定用，默认66）
 
     // ──── 格口分拣记录（锁格回传用）────
     QMap<QString, QVector<GridSortRecord>> m_gridSortRecords;  // 格口号 → 分拣明细列表
     std::mutex m_gridRecordMutex;                               // 保护 m_gridSortRecords
 
-    // ──── EPC→SKU 映射（RFID查询结果）────
-    QMap<QString, QString>  m_epcSkuMap;      // EPC → 条码/SKU 映射
-    mutable std::mutex       m_epcSkuMutex;    // 保护 m_epcSkuMap（const方法中需加锁）
+    // ──── S7 格口分拣计数（T-S7-06 格口上限检查）────
+    QMap<QString, int>      m_gridSortedCount;   // 格口号 → 已分拣件数
+    std::mutex              m_gridCountMutex;     // 保护 m_gridSortedCount
 };

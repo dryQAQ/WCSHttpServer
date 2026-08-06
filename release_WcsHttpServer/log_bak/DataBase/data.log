@@ -1,0 +1,8 @@
+2026-08-05 13:25:42.399 [0x0000d580] WARN  DataBase - <494>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=SIM-WV-001 inco=WV00000001 grid=1 err=NOT NULL constraint failed: return_wave_item.volu Unable to fetch row
+2026-08-05 13:36:21.910 [0x00008fa4] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-05 13:45:21.531 [0x0000d588] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-05 14:18:04.785 [0x00005898] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-05 17:02:46.587 [0x000058bc] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-05 17:14:24.755 [0x0000a650] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 09:27:40.168 [0x00000730] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200
+2026-08-06 09:34:09.248 [0x0000b760] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=SIM-WV-001 count=200

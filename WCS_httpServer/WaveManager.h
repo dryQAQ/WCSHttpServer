@@ -3,15 +3,10 @@
 // WaveManager.h — 波次生命周期管理 + 分拣状态跟踪
 //
 // 职责:
-//   ① 维护波次状态机 (IDLE→RECEIVED→SORTING→COMPLETING→CLEANED)
+//   ① 维护波次状态机（10 状态，S0 升级）
 //   ② 跟踪每个 inco 的分拣状态（已分拣/异常/处理中/重试次数）
 //   ③ 判定波次完结条件（全部完成 或 超时）
 //   ④ 提供查询接口供 UI 和内部 API 使用
-//
-// 状态机转换:
-//   IDLE → RECEIVED → SORTING → COMPLETING → CLEANED → IDLE
-//              ↓                              ↑
-//         CANCELLED ──────────────────────────┘
 //
 // 并发安全:
 //   - m_waveStatus: std::atomic<int>（跨线程读写无需加锁）
@@ -29,15 +24,24 @@
 #include "DoubleBuffer.h"
 #include "define.h"
 
-// ──── 波次状态枚举 ────
+// ──── 波次状态枚举（S0 升级：与需求 §3.1 对齐）────
 enum WaveStatus
 {
-    WAVE_IDLE       = 0,  // 空闲，可接收新波次
-    WAVE_RECEIVED   = 1,  // 已接收波次数据，等待分拣开始
-    WAVE_SORTING    = 2,  // 分拣进行中
-    WAVE_COMPLETING = 3,  // 回传中（正在向WMS发送完结通知）
-    WAVE_CLEANED    = 4,  // 已完成，数据已清理
-    WAVE_ERROR      = 5,  // 异常状态
+    WAVE_IDLE         = 0,  // 空闲，可接收新波次
+    WAVE_CREATED      = 1,  // 已下发（波次下发成功落库，尚未绑定或未开工）
+    WAVE_BOUND        = 2,  // 已绑定（至少一个业务格口完成有效容器绑定）
+    WAVE_SORTING      = 3,  // 分拣中（已开始分拣）
+    WAVE_FULLBOX_SYNC = 4,  // 满箱同步中（正在调用/重试满箱回传）
+    WAVE_CANCEL_PENDING = 5, // 取消处理中（收到波次取消请求，判定中）
+    WAVE_CANCELLED    = 6,  // 已取消（波次取消成功，终态）
+    WAVE_ENDING       = 7,  // 完结中（正在调用/重试完结回传）
+    WAVE_FINISHED     = 8,  // 已完成（完结回传成功，终态）
+    WAVE_HELD         = 9,  // 异常挂起（接口失败/数据冲突，待人工）
+
+    // 兼容旧名称别名
+    WAVE_COMPLETING   = WAVE_ENDING,   // 回传进行中
+    WAVE_CLEANED      = WAVE_FINISHED, // 回传成功
+    WAVE_ERROR        = WAVE_HELD,     // 回传失败
 };
 
 // ──── 波次快照（供UI展示，只读数据拷贝）────
@@ -57,14 +61,56 @@ struct WaveSnapshot
     static QString statusToString(int s)
     {
         switch (s) {
-        case WAVE_IDLE:       return QString::fromUtf8("空闲");       // 空闲
-        case WAVE_RECEIVED:   return QString::fromUtf8("已接收");     // 已接收
-        case WAVE_SORTING:    return QString::fromUtf8("分拣中");     // 分拣中
-        case WAVE_COMPLETING: return QString::fromUtf8("回传中");     // 回传中
-        case WAVE_CLEANED:    return QString::fromUtf8("已完成");     // 已完成
-        case WAVE_ERROR:      return QString::fromUtf8("异常");       // 异常
-        default:              return QString::fromUtf8("未知");       // 未知
+        case WAVE_IDLE:           return QString::fromUtf8("空闲");
+        case WAVE_CREATED:        return QString::fromUtf8("已下发");
+        case WAVE_BOUND:          return QString::fromUtf8("已绑定");
+        case WAVE_SORTING:        return QString::fromUtf8("分拣中");
+        case WAVE_FULLBOX_SYNC:   return QString::fromUtf8("满箱同步中");
+        case WAVE_CANCEL_PENDING: return QString::fromUtf8("取消处理中");
+        case WAVE_CANCELLED:      return QString::fromUtf8("已取消");
+        case WAVE_ENDING:         return QString::fromUtf8("完结中");
+        case WAVE_FINISHED:       return QString::fromUtf8("已完成");
+        case WAVE_HELD:           return QString::fromUtf8("异常挂起");
+        default:                  return QString::fromUtf8("未知");
         }
+    }
+};
+
+// ──── S8 波次对账结果（T-S8-01/02，需求 §14.2）────
+struct WaveReconciliation
+{
+    QString orderCode;          // 波次号
+    int     planQty    = 0;     // 计划总件数（orderQty）
+    int     sortedQty  = 0;     // 实分成功件数（Σ sorted）
+    int     exceptionQty = 0;   // 实分异常件数（Σ exception）
+    int     totalRecv  = 0;     // 波次接收到的总识别码数（= sorted + exception）
+    int     fullboxSuccessCount = 0; // 满箱回传成功次数（H7，DB查询）
+    int     fullboxPendingCount = 0; // 满箱回传待发送/重试中次数（H7，DB查询）
+    int     unhandledException = 0; // 未处理异常记录数（DB查询）
+    int     waveStatus = WAVE_IDLE; // 当前波次状态
+    QString statusText;          // 状态文本
+    bool    endReportSuccess = false;   // 完结回传是否已成功（H8，FINISHED状态）
+
+    // 差异指标
+    bool    hasDiff() const      // 是否存在差异
+    {
+        return (planQty > 0 && (sortedQty + exceptionQty) != totalRecv)
+            || (fullboxPendingCount > 0)
+            || (unhandledException > 0)
+            || (waveStatus == WAVE_HELD);
+    }
+    QString diffSummary() const  // 差异摘要
+    {
+        QStringList diffs;
+        if (planQty > 0 && (sortedQty + exceptionQty) != totalRecv)
+            diffs << QString("计划%1≠接收%2").arg(planQty).arg(totalRecv);
+        if (fullboxPendingCount > 0)
+            diffs << QString("H7待发送%1条").arg(fullboxPendingCount);
+        if (unhandledException > 0)
+            diffs << QString("未处理异常%1条").arg(unhandledException);
+        if (waveStatus == WAVE_HELD)
+            diffs << "任务异常挂起";
+        return diffs.isEmpty() ? QString::fromUtf8("无差异") : diffs.join(", ");
     }
 };
 
@@ -99,8 +145,10 @@ public:
     void markSorted(const QString& code);       // 标记已分拣
     void markException(const QString& code);    // 标记异常
     bool isSorted(const QString& code) const;   // 是否已分拣
+    bool isCodeSorted(const QString& code) const; // ★ S7 是否已分拣（含DB防重，T-S7-02）
     bool isException(const QString& code) const;// 是否异常
     int  retryCount(const QString& code) const; // 获取重试次数
+    int  sortedCountByGrid(const QString& grid) const; // ★ S7 按格口统计已分拣数（T-S7-06）
 
     // ──── 波次判定 ────
     bool isWaveComplete() const;                // 检查波次是否完成（无锁读）
@@ -110,14 +158,42 @@ public:
     WaveSnapshot snapshot() const;              // 获取波次快照（供UI）
     int status() const { return m_waveStatus.load(); }
     bool setState(int newStatus);               // 状态转换（带合法性校验）
+    bool startSorting();                        // ★ S4 开工：BOUND→SORTING（T-S4-05）
+    // ──── S0 新增：已开始分拣判定（T-S0-04）────
+    // 满足任一条件即视为已开始分拣（需求 §3.3）：
+    //   1. 任务状态 ∈ {SORTING, FULLBOX_SYNC, ENDING, FINISHED, HELD}
+    //   2. 成功分拣计数 > 0（sorted > 0）
+    //   3. 已存在任意成功的满箱回传记录（H7，通过 hasFullboxRecord 查询）
+    //   4. 现场已点击「开始分拣」（m_bSortingStarted == true）
+    bool isSortingStarted() const;
+
+    // 获取当前波次 sortedQty 总数（用于波次取消判定）
+    int sortedQty() const { return sorted(); }
+
+    // 是否已存在满箱回传记录（用于波次取消判定，S5 阶段通过 DB 查询实现）
+    bool hasFullboxRecord() const;
+
+    // ──── S5 新增：满箱管理 ────
+    bool triggerFullbox();                           // 满箱触发：SORTING→FULLBOX_SYNC（T-S5-01）
+    bool resumeSorting();                            // 满箱成功后恢复：FULLBOX_SYNC→SORTING（T-S5-05）
+    bool holdAfterFullboxFail();                     // 满箱失败耗尽：FULLBOX_SYNC→HELD（T-S5-04）
+
+    // ──── S6 新增：完结回传管理（H8）────
+    bool canComplete() const;                        // 可完结条件检查（T-S6-01）
+    bool completeToEnding();                         // 手动触发完结：SORTING→ENDING（T-S6-01/04）
     QString orderCode() const { return m_orderCode; }
     int     totalRecv() const;
     int     sorted() const;
     int     exception() const;
     int     sumLocation() const;                // 去重格口总数（供WMS回传的sumLocation字段）
+    int     orderQty() const { return m_orderQty; }  // ★ S8 波次总件数（对账用，T-S8-01）
+
+    // ──── S8 新增：对账 + H5互斥（T-S8-01/02/06）────
+    WaveReconciliation reconcile() const;            // 波次对账：计划/实分/异常/完结状态
+    bool tryCancelWave();                            // ★ H5取消：加锁后判定isSortingStarted+原子迁移（T-S8-06）
 
     // ──── 管理 ────
-    void clearWave();                           // 清理当前波次数据，状态→CLEANED
+    void clearWave();                           // 清理当前波次数据，状态→IDLE
     void setMaxRetry(int n) { m_maxRetry = n; }
     void setWaveTimeoutMin(int m) { m_waveTimeoutMin = m; }
 
@@ -126,6 +202,7 @@ signals:
     void waveSortingStarted(const QString& orderCode);     // 首次分拣时触发
     void waveReadyToReport(const QString& orderCode);      // 波次可回传（全部完成或超时）
     void waveStatusChanged(int newStatus);
+    void waveBound(const QString& orderCode);  // 波次绑定完成（容器绑定全部绑完时触发）
     void codeMarked(const QString& code, bool sorted);     // sorted=true=分拣完成, false=异常
 
 private:
@@ -138,6 +215,7 @@ private:
     std::atomic<int> m_waveStatus{WAVE_IDLE};// 波次状态（原子操作，跨线程安全）
     QDateTime       m_waveStartTime;         // 波次开始时间
     bool            m_bSortingStarted  = false;  // 是否已开始分拣（防止重复发射 waveSortingStarted）
+    std::atomic<bool> m_hasFullboxRecord{false}; // ★ S5：是否已存在成功满箱回传记录（波次取消判定用，HttpServer成功时设置）
     int             m_maxRetry         = WAVE_MAX_RETRY;
     int             m_waveTimeoutMin   = WAVE_TIMEOUT_MIN_DEFAULT;
 
@@ -151,4 +229,5 @@ private:
     // ──── 并发控制 ────
     mutable std::mutex m_lock;               // 保护所有分拣状态集（QSet/QMap）
     std::atomic<bool>  m_bReported{false};   // 防重复回传：exchange(true)保证只有一个线程执行回传
+    mutable std::mutex m_cancelSortMutex;         // ★ S8 H5取消与首件分拣互斥锁（T-S8-06）
 };

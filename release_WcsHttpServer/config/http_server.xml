@@ -10,20 +10,25 @@
     <goodsOwner>BXH_ZS</goodsOwner>
     <waveTimeoutMin>0</waveTimeoutMin>
     <maxRetryCount>3</maxRetryCount>
+    <expectedBindCount>66</expectedBindCount>
     <httpTimeoutMs>3000</httpTimeoutMs>
     <waveCompleteTimeoutMs>2000</waveCompleteTimeoutMs>
     <plcListenPort>8192</plcListenPort>
-    <plcS7Ip>192.168.0.1</plcS7Ip>
+    <plcS7Ip>127.0.0.1</plcS7Ip>
     <plcS7Rack>0</plcS7Rack>
     <plcS7Slot>1</plcS7Slot>
-    <cameraListenPort>8193</cameraListenPort>
-    <cameraPlatType>1</cameraPlatType>
     <businessPoolSize>90</businessPoolSize>
     <plcSendPoolSize>8</plcSendPoolSize>
     <plcRecvPoolSize>4</plcRecvPoolSize>
-    <cameraProcPoolSize>4</cameraProcPoolSize>
     <logRetainDays>30</logRetainDays>
-    <rfidUrl>http://127.0.0.1:9003/query</rfidUrl>
+    <rfidUrl>http://127.0.0.1:9100/open-api/rfid/query</rfidUrl>
+    <h7FromLocationSource>volu</h7FromLocationSource>
+    <h7DefaultFromLocation>A-01</h7DefaultFromLocation>
+    <sortingEpcDedup>true</sortingEpcDedup>
+    <sortingGridCapPolicy>reject</sortingGridCapPolicy>
+    <sortingOrderQtyValidate>strict</sortingOrderQtyValidate>
+    <sortingConflictPolicy>STRICT_EXCEPTION</sortingConflictPolicy>
+    <sortingAllowOverrecv>false</sortingAllowOverrecv>
     <apiInsertWaveInfo>/api/DispatchSortingCommand/InsertWaveInfo</apiInsertWaveInfo>
     <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
     <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>

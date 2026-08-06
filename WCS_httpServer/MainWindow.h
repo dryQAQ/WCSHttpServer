@@ -30,6 +30,7 @@
 #include <QLineEdit>
 #include <QDateEdit>
 #include <QTableWidget>
+#include <QSpinBox>
 #include "HttpServer.h"
 #include "HttpClient.h"
 #include "PlcManager.h"
@@ -62,17 +63,18 @@ private:
     void updateWavePanel();   // 更新波次信息面板
     void updatePlcPanel();    // 刷新PLC状态面板（连接数/收发统计/运行时间）
     void updateBindingPanel();// 刷新容器绑定面板（66格口×容器号）
-    void updateCameraPanel();   // 刷新相机状态面板
-
     // ──── 核心组件 ────
     HttpServer*  m_pServer  = nullptr;   // HTTP Server（内部持有 PlcManager/WaveManager/TaskQueue 等）
     HttpClient*  m_pClient  = nullptr;   // WMS回传客户端
     PlcManager*  m_pPlcMgr  = nullptr;   // PLC管理器引用（生命周期由 HttpServer 管理，此处仅持有句柄）
+    SortingDatabase m_queryDb;           // ★ UI 查询专用数据库（独立于服务，随时可查）
 
     // ──── 服务控制区 UI ────
     QPushButton* m_btnStartStop    = nullptr;  // 启动/停止按钮
     QLabel*      m_lblServerStatus = nullptr;  // 服务状态指示（●运行中/○已停止）
     QLabel*      m_lblPort         = nullptr;  // 监听端口显示
+    QSpinBox*    m_spinBindCount   = nullptr;  // 期望绑定数量（波次下发时校验全部绑定用，默认66）
+    QLabel*      m_lblBindCountHint = nullptr;  // 期望绑定数量提示标签
 
     // ──── TCP 连接状态 UI ────
     QLabel*      m_lblTcpStatus    = nullptr;  // TCP连接状态
@@ -89,12 +91,6 @@ private:
     QLabel*      m_lblS7Send       = nullptr;  // S7发送统计
     QLabel*      m_lblS7SendErr    = nullptr;  // S7发送失败统计
     QLabel*      m_lblS7LockGrids  = nullptr;  // S7锁格数量
-
-    // ──── 相机状态 UI ────
-    QLabel*      m_lblCamStatus    = nullptr;  // 相机连接状态
-    QLabel*      m_lblCamScanCount = nullptr;  // 相机扫描计数
-    QLabel*      m_lblCamNoRead    = nullptr;  // 相机未识别计数
-    QLabel*      m_lblCamLastCode  = nullptr;  // 相机最近扫描条码
 
     // ──── 最近数据 UI ────
     QLabel*      m_lblLastSendCode = nullptr;  // 最近发送条码

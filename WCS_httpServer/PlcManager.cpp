@@ -128,12 +128,14 @@ void PlcManager::stop()
 // ============================================================================
 // 发送指令（S7 DBWrite + TCP 文本协议）
 // S7: DB1 Offset 1000, 42 bytes (与 WCSApp 完全兼容)
-// TCP: {条码|格口|小车号}
+// TCP: {识别码|格口|小车号}
+//      TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+//      TODO: 小车号应由RFID提供，客户尚未提供RFID小车号字段，当前默认=1（2026-08-04）
 // 格口号格式: 3位补零，如格口15 → "015"
 // 小车号格式: 3位补零，如小车1 → "001"
 // ============================================================================
 
-bool PlcManager::sendCodeInfo(const QString& barcode, const std::vector<int>& vecGrid, int car)
+bool PlcManager::sendCodeInfo(const QString& code, const std::vector<int>& vecGrid, int car)
 {
     if (!m_bRunning.load())
     {
@@ -141,15 +143,15 @@ bool PlcManager::sendCodeInfo(const QString& barcode, const std::vector<int>& ve
         bool firstWarn = false;
         {
             std::lock_guard<std::mutex> lock(m_warnMutex);
-            if (!m_warnedBarcodes.contains(barcode))
+            if (!m_warnedBarcodes.contains(code))
             {
-                m_warnedBarcodes.insert(barcode);
+                m_warnedBarcodes.insert(code);
                 firstWarn = true;
             }
         }
         if (firstWarn)
         {
-            PLC_LOG_WARN("发送失败: %s barcode=%s", m_lastError.toLocal8Bit().data(), barcode.toLocal8Bit().data());
+            PLC_LOG_WARN("发送失败: %s code=%s", m_lastError.toLocal8Bit().data(), code.toLocal8Bit().data());
         }
         return false;
     }
@@ -158,7 +160,7 @@ bool PlcManager::sendCodeInfo(const QString& barcode, const std::vector<int>& ve
     bool s7Success = false;
     if (m_S7Plc && m_S7Plc->isConnected())
     {
-        QByteArray sSend = barcode.toLatin1();
+        QByteArray sSend = code.toLatin1();
         s7Success = m_S7Plc->writeCodeInfo(sSend, vecGrid);
         if (s7Success)
             m_s7SendCount.fetch_add(1);
@@ -168,7 +170,7 @@ bool PlcManager::sendCodeInfo(const QString& barcode, const std::vector<int>& ve
     else
     {
         // S7 未连接时仅记录，不阻断（后续可配置为强制要求）
-        PLC_LOG_WARN("S7未连接，跳过S7发送 barcode=%s", barcode.toLocal8Bit().data());
+        PLC_LOG_WARN("S7未连接，跳过S7发送 code=%s", code.toLocal8Bit().data());
     }
 
     // ── 2. TCP 文本发送（与 WCSApp 一致）──
@@ -181,7 +183,7 @@ bool PlcManager::sendCodeInfo(const QString& barcode, const std::vector<int>& ve
 
         QString b = QString("%1").arg(nGrid, 3, 10, QChar('0'));
         QString carStr = QString("%1").arg(car, 3, 10, QChar('0'));
-        QString command = "{" + barcode + "|" + b + "|" + carStr + "}";
+        QString command = "{" + code + "|" + b + "|" + carStr + "}";
 
         QByteArray data = command.toLatin1();
         bool allSuccess = true;
@@ -210,7 +212,7 @@ bool PlcManager::sendCodeInfo(const QString& barcode, const std::vector<int>& ve
     // ── 3. 更新最近发送数据 ──
     {
         std::lock_guard<std::mutex> lock(m_lastDataMutex);
-        m_lastBarcode = barcode;
+        m_lastBarcode = code;
         m_lastGrid = vecGrid.empty() ? "0" : QString("%1").arg(vecGrid[0], 3, 10, QChar('0'));
         m_lastCar = QString("%1").arg(car, 3, 10, QChar('0'));
         m_lastSendTimeMs = QDateTime::currentMSecsSinceEpoch();
@@ -219,17 +221,17 @@ bool PlcManager::sendCodeInfo(const QString& barcode, const std::vector<int>& ve
     // ── 4. 综合判断：S7 或 TCP 任一成功即视为成功 ──
     bool overallSuccess = s7Success || tcpSuccess;
 
-    emit plcSendInfo(barcode, m_lastGrid + "|" + m_lastCar, overallSuccess);
+    emit plcSendInfo(code, m_lastGrid + "|" + m_lastCar, overallSuccess);
 
     if (overallSuccess)
     {
         PLC_LOG_INFO("发送PLC指令成功 code=%s s7=%d tcp=%d",
-            barcode.toLocal8Bit().data(), s7Success, tcpSuccess);
+            code.toLocal8Bit().data(), s7Success, tcpSuccess);
     }
     else
     {
         PLC_LOG_ERROR("发送PLC指令失败 code=%s s7=%d tcp=%d",
-            barcode.toLocal8Bit().data(), s7Success, tcpSuccess);
+            code.toLocal8Bit().data(), s7Success, tcpSuccess);
     }
 
     return overallSuccess;
@@ -260,9 +262,10 @@ bool PlcManager::sendRawCommand(const QString& command)
 }
 
 // ============================================================================
-// sendBatchCodes — 主动发送模式：批量发送波次条码到PLC（与WCSApp一致）
-// 不等待PLC查询报文，遍历波次所有条码主动发送PLC分拣指令
-// codeGridMap: 条码→格口字符串（如 "15" 或 "1,2,3"）
+// sendBatchCodes — 主动发送模式：批量发送波次识别码到PLC（与WCSApp一致）
+// 不等待PLC查询报文，遍历波次所有识别码主动发送PLC分拣指令
+// TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+// codeGridMap: 识别码→格口字符串（如 "15" 或 "1,2,3"）
 // ============================================================================
 bool PlcManager::sendBatchCodes(const QMap<QString, QString>& codeGridMap)
 {
@@ -429,12 +432,29 @@ bool PlcManager::connectS7(const char* ip)
     m_bHeartThreadStart = true;
     m_heartThread = std::thread(&PlcManager::OnS7HeartThread, this);
 
+    // ★ 启动 S7 锁格轮询定时器（与 WCSApp FrmMainV2 S7 边沿检测一致）
+    if (!m_s7LockTimer)
+    {
+        m_s7LockTimer = new QTimer(this);
+        connect(m_s7LockTimer, &QTimer::timeout, this, &PlcManager::pollS7LockStatus);
+    }
+    m_s7LockTimer->start(PLC_S7_LOCK_INTERVAL_MS);
+    memset(m_s7PlcLastData, 0, PLC_S7_LOCK_READ_SIZE);  // 重置上次数据，避免重连后误判边沿
+    PLC_LOG_INFO("S7锁格轮询已启动 interval=%dms", PLC_S7_LOCK_INTERVAL_MS);
+
     emit s7Connected(QString::fromLocal8Bit(ip));
     return true;
 }
 
 void PlcManager::disconnectS7()
 {
+    // ★ 先停止 S7 锁格轮询定时器
+    if (m_s7LockTimer)
+    {
+        m_s7LockTimer->stop();
+        PLC_LOG_INFO("S7锁格轮询已停止");
+    }
+
     // ★ 先停止心跳线程
     m_bHeartThreadStart = false;
     if (m_heartThread.joinable())
@@ -453,6 +473,97 @@ void PlcManager::disconnectS7()
 bool PlcManager::isS7Connected() const
 {
     return m_S7Plc ? m_S7Plc->isConnected() : false;
+}
+
+// ============================================================================
+// S7 锁格边沿检测轮询（与 WCSApp FrmMainV2 S7 轮询完全一致）
+// DB77 Offset 0, 25 bytes (200位锁格状态)
+// 每 PLC_S7_LOCK_INTERVAL_MS(1s) 读取一次，逐位比较检测上升沿/下降沿
+// TCP 主动消息 {grid|L}/{grid|U} 作为补充机制，双重保障
+// ============================================================================
+void PlcManager::pollS7LockStatus()
+{
+    if (!m_S7Plc || !m_S7Plc->isConnected())
+        return;
+
+    byte tempData[PLC_S7_LOCK_READ_SIZE] = { 0 };
+    if (!m_S7Plc->readData(PLC_S7_DB_READ, 0, PLC_S7_LOCK_READ_SIZE, tempData))
+    {
+        // DB77 读取失败，静默跳过（避免刷屏）
+        return;
+    }
+
+    int lockCount = 0;
+    int unlockCount = 0;
+
+    // 逐位比较：25字节 × 8位 = 200位
+    for (int i = 0; i < PLC_S7_LOCK_READ_SIZE; i++)
+    {
+        for (int a = 0; a < 8; a++)
+        {
+            int gridNum = i * 8 + a;
+            if (gridNum >= PLC_S7_MAX_GRID_COUNT)
+                break;
+
+            bool bCurr = S7_GetBitAt(tempData, i, a);
+            bool bPrev = S7_GetBitAt(m_s7PlcLastData, i, a);
+
+            // 上升沿 → 锁格
+            if (bCurr && !bPrev)
+            {
+                QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
+                PLC_LOG_WARN("S7锁格检测(上升沿) grid=%d lock", gridNum);
+
+                // 更新锁格状态缓存
+                {
+                    std::unique_lock<std::mutex> lock(m_lockGridPlc);
+                    m_s7Grid_200[gridNum] = true;
+                }
+
+                // 入队 + 发射信号
+                LockGridInfo info;
+                info.gridNum = s_grid;
+                info.type = 0;  // 锁格
+                {
+                    std::unique_lock<std::mutex> lock(m_lockGrid);
+                    m_queueLockInfo.push(info);
+                }
+                emit gridLocked(s_grid);
+                lockCount++;
+            }
+
+            // 下降沿 → 解锁
+            if (!bCurr && bPrev)
+            {
+                QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
+                PLC_LOG_WARN("S7锁格检测(下降沿) grid=%d unlock", gridNum);
+
+                {
+                    std::unique_lock<std::mutex> lock(m_lockGridPlc);
+                    m_s7Grid_200[gridNum] = false;
+                }
+
+                LockGridInfo info;
+                info.gridNum = s_grid;
+                info.type = 1;  // 解锁
+                {
+                    std::unique_lock<std::mutex> lock(m_lockGrid);
+                    m_queueLockInfo.push(info);
+                }
+                emit gridUnlocked(s_grid);
+                unlockCount++;
+            }
+        }
+    }
+
+    // 保存本次数据，供下次边沿检测
+    memcpy(m_s7PlcLastData, tempData, PLC_S7_LOCK_READ_SIZE);
+
+    if (lockCount > 0 || unlockCount > 0)
+    {
+        PLC_LOG_INFO("S7锁格轮询完成 lock=%d unlock=%d totalLocked=%d",
+            lockCount, unlockCount, lockedGridCount());
+    }
 }
 
 // ============================================================================

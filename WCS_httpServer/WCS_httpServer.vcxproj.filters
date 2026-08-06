@@ -70,9 +70,6 @@
     <ClCompile Include="snap7.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="CameraManager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="SortingDatabase.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -105,10 +102,7 @@
     <QtMoc Include="HttpServer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="CameraManager.h">
-      <Filter>Header Files</Filter>
-    </QtMoc>
-  </ItemGroup>
+    </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DoubleBuffer.h">
       <Filter>Header Files</Filter>
