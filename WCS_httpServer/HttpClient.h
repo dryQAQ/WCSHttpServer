@@ -28,8 +28,7 @@ public:
     void setUrl(const QString& url)  { m_url = url; }        // WMS回传接口地址
     void setAppkey(const QString& k) { m_appkey = k; }        // WMS认证AppKey（HTTP Header）
     void setTimeout(int ms)          { m_timeoutMs = ms; }    // 回传超时(ms)，默认HTTP_TIMEOUT_MS=3000
-    void setRfidUrl(const QString& url) { m_rfidUrl = url; }  // RFID查询接口地址
-    void setRfidTimeout(int ms)      { m_rfidTimeoutMs = ms; }// RFID查询超时(ms)，默认RFID_TIMEOUT_MS=2000
+    void setRfidQueryUrl(const QString& url) { m_rfidQueryUrl = url; }  // ★ RFID SKU-EPC 绑定查询 URL
 
     // ──── 业务 ────
     // 回传波次完结通知到WMS（异步，不阻塞主线程）
@@ -40,10 +39,10 @@ public:
     // ★ 锁格回传：发送预构建 JSON 到 WMS（异步）
     void sendGenericFeedback(const QJsonObject& json, const QString& context = QString());
 
-    // ★ RFID查询：向RFID服务查询EPC对应的SKU/条码信息（异步）
-    // epcList: EPC列表（每批最多 RFID_MAX_BATCH_SIZE 个）
-    // context: 请求上下文（用于回调时标识，如波次号）
-    void queryRfid(const QJsonArray& epcList, const QString& context = QString());
+    // ★ SKU-EPC 绑定查询：向 RFID 查询 EPC→barcode 映射（异步批量）
+    //    epcList: EPC 列表，一次查询多个
+    //    完成后通过 rfidBindingResult 信号返回结果
+    void queryRfidBinding(const QStringList& epcList);
 
 signals:
     // 回传结果通知
@@ -52,16 +51,14 @@ signals:
     // body:      WMS返回的原始响应体（失败时为空）
     void reportResult(const QString& orderCode, bool success, const QString& body);
 
-    // ★ RFID查询结果
-    // result: RFID服务返回的原始JSON（包含data.data数组）
-    // context: 请求上下文（如波次号）
-    void rfidQueryResult(const QJsonObject& result, const QString& context);
+    // ★ SKU-EPC 绑定查询结果（epc → barcode）
+    //    epcBarcodeMap: EPC → barcode 映射，查询失败返回空 Map
+    void rfidBindingResult(const QMap<QString, QString>& epcBarcodeMap);
 
 private slots:
     void onReplyFinished();     // WMS回传 QNetworkReply::finished 回调
     void onReplyTimeout();      // WMS回传 QTimer::timeout 回调（超时保护）
-    void onRfidReplyFinished(); // RFID查询 QNetworkReply::finished 回调
-    void onRfidReplyTimeout();  // RFID查询 QTimer::timeout 回调（超时保护）
+    void onRfidBindingReplyFinished();  // ★ RFID 绑定查询 QNetworkReply::finished 回调
 
 private:
     // ★ 必须为成员变量：QNetworkAccessManager 作为 parent 管理 QNetworkReply 和 QTimer，
@@ -72,8 +69,7 @@ private:
     QString m_url;              // WMS回传目标URL
     QString m_appkey;           // WMS认证AppKey（放入HTTP Header: AppKey=xxx）
     int     m_timeoutMs = HTTP_TIMEOUT_MS;  // 超时时间(ms)，默认3000
-    QString m_rfidUrl;          // RFID查询接口URL
-    int     m_rfidTimeoutMs = RFID_TIMEOUT_MS; // RFID查询超时(ms)
+    QString m_rfidQueryUrl;     // ★ RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
 
     // ──── 请求追踪 ────
     // 跟踪进行中的异步请求，用于超时处理和响应匹配
@@ -87,15 +83,4 @@ private:
     //    当 onReplyFinished 或 onReplyTimeout 触发时，通过 sender() 获取 reply/timer，
     //    再从此映射中查找对应的 PendingRequest 以获取波次信息
     QMap<QNetworkReply*, PendingRequest> m_pending;
-
-    // ★ RFID 查询请求追踪（独立于 WMS 回传）
-    struct RfidPendingRequest {
-        QNetworkReply* reply;
-        QTimer*        timer;
-        QString        context;     // 请求上下文（如波次号）
-        QJsonArray     epcList;     // ★ 原始请求EPC列表（重试用）
-        int            retryCount = 0; // ★ 已重试次数
-    };
-    QMap<QNetworkReply*, RfidPendingRequest> m_rfidPending;
-    int m_rfidRetryMax = RFID_RETRY_MAX; // ★ RFID 最大重试次数
 };

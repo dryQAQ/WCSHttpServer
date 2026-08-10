@@ -142,6 +142,8 @@ typedef std::function<void(QString code, QString grid, QString car)> PlcFeedback
 // ★ 格口查询回调：PLC/相机扫到识别码时调用，返回格口字符串（如 "15" 或 "1,2,3"）
 // TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
 typedef std::function<QString(const QString& code)> PlcLookupCallback;
+// ★ 小车号查询回调：从 EpcCache 获取 RFID 提供的小车号，返回 "001" 兜底
+typedef std::function<QString(const QString& code)> PlcCarNumCallback;
 
 class PlcManager : public QObject, public CTcpServerListener
 {
@@ -175,6 +177,8 @@ public:
     void registerStatusCallback(PlcStatusCallback cb) { m_statusCb = std::move(cb); }
     void registerFeedbackCallback(PlcFeedbackCallback cb) { m_feedbackCb = std::move(cb); }
     void setLookupCallback(PlcLookupCallback cb) { m_lookupCb = std::move(cb); }
+    // ★ 设置小车号查询回调（从 EpcCache 获取 RFID 提供的小车号）
+    void setCarNumCallback(PlcCarNumCallback cb) { m_carNumCb = std::move(cb); }
 
     // ──── 发送指令 ────
     // TODO: code 可能为条码或EPC，客户尚未确定（2026-08-04）
@@ -185,6 +189,9 @@ public:
     // TODO: codeGridMap 的 key 可能为条码或EPC，客户尚未确定（2026-08-04）
     // codeGridMap: 识别码→格口字符串（如 "15" 或 "1,2,3"）
     bool sendBatchCodes(const QMap<QString, QString>& codeGridMap);
+
+    // ★ 从 EpcCache 获取小车号发送（RFID 提供小车号，carNum 默认 "001"）
+    bool sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGridMap);
 
     int  connectedClientCount() const;
     bool hasConnectedClients() const { return connectedClientCount() > 0; }
@@ -235,6 +242,7 @@ signals:
     PlcStatusCallback m_statusCb;
     PlcFeedbackCallback m_feedbackCb;
     PlcLookupCallback  m_lookupCb;   // ★ 相机查询回调：查格口
+    PlcCarNumCallback  m_carNumCb;   // ★ 小车号查询回调：从 EpcCache 获取 RFID 小车号
 
     // ──── TCP 统计 ────
     std::atomic<int64_t> m_tcpSendCount{0};

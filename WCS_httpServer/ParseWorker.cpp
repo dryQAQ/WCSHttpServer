@@ -5,6 +5,11 @@
 #include <QJsonArray>
 #include <QElapsedTimer>
 #include "log_center.h"
+#include "define.h"
+
+// ★ 波次明细日志宏（写入 ./log/WAVE_ITEM/wave_item.log）
+//   每个 items[] 子项单独记录，避免原始报文因截断而无法查看完整内容
+#define WAVE_ITEM_INFO(fmt, ...) hlog_format(HLOG_LEVEL_INFO, "WAVE_ITEM", "\t" fmt, ##__VA_ARGS__)
 
 ParseWorker::ParseWorker(TaskQueue* pQueue, GridBuffer* pBuffer, QObject* parent)
     : QThread(parent), m_pQueue(pQueue), m_pBuffer(pBuffer)
@@ -30,13 +35,20 @@ void ParseWorker::run()
         QElapsedTimer timer;
         timer.start();
 
-        // 解析JSON
+        // 解析JSON — 剥离 BOM 头（UTF-8 BOM: EF BB BF）
+        QByteArray cleanBody = task.rawBody;
+        if (cleanBody.startsWith("\xEF\xBB\xBF"))
+            cleanBody.remove(0, 3);
+        cleanBody.replace('\x00', "");  // 移除 null 字节
+        cleanBody = cleanBody.trimmed();
+
         QJsonParseError err;
-        QJsonDocument doc = QJsonDocument::fromJson(task.rawBody, &err);
+        QJsonDocument doc = QJsonDocument::fromJson(cleanBody, &err);
         if (doc.isNull())
         {
             LogCenter::Instance()->wcs_run_log_warn(false,
-                QString("[Parse] JSON解析失败: %1").arg(err.errorString()));
+                QString("[Parse] JSON解析失败: %1 offset=%2")
+                    .arg(err.errorString()).arg(err.offset));
             emit parseError(err.errorString());
             continue;
         }
@@ -63,6 +75,7 @@ void ParseWorker::run()
             QString gridNum  = item["gridNum"].toString().trimmed();
             QString gridType = item["gridType"].toString().trimmed();
             QString volu     = item["volu"].toString().trimmed();   // ★ 来源库位
+            QString obxCode  = item["obxCode"].toString().trimmed();               // ★ 容器号
             // ★ 兼容整数和字符串两种类型
             int gridNumber = 0;
             {
@@ -85,6 +98,28 @@ void ParseWorker::run()
             if (!epcn.isEmpty() && !epcList.contains(epcn))
                 epcList.append(epcn);
 
+            // ★ 波次明细日志：每个 items[] 子项单独记录完整报文
+            //   避免原始报文日志因截断导致无法查看完整 item 内容
+            {
+                QJsonObject itemLog;
+                itemLog["orderCode"] = orderCode;
+                itemLog["orderQty"]  = orderQty;
+                QJsonArray itemArr;
+                QJsonObject itemCopy;
+                itemCopy["obxCode"]    = obxCode;
+                itemCopy["inco"]       = inco;
+                if (!epcn.isEmpty()) itemCopy["epcn"] = epcn;
+                itemCopy["gridNum"]    = gridNum;
+                itemCopy["gridNumber"] = gridNumber;
+                itemCopy["gridType"]   = gridType;
+                if (!volu.isEmpty()) itemCopy["volu"] = volu;
+                itemArr.append(itemCopy);
+                itemLog["items"] = itemArr;
+                QByteArray itemJson = QJsonDocument(itemLog).toJson(QJsonDocument::Compact);
+                WAVE_ITEM_INFO("[原始报文] %s body=%s(%d字节)",
+                    task.fullUrl.toLocal8Bit().data(), itemJson.constData(), itemJson.size());
+            }
+
             // 同品多格口合并
             if (newMap->contains(inco))
             {
@@ -99,6 +134,7 @@ void ParseWorker::run()
                 entry.gridType  = gridType.isEmpty() ? "普通格口" : gridType;
                 entry.gridCount = gridNumber;
                 entry.volu      = volu;                      // ★ 来源库位
+                entry.obxCode   = obxCode;                   // ★ 容器号
                 // 批次信息：每个条码都关联到所属批次
                 entry.orderCode = orderCode;
                 entry.orderQty  = orderQty;

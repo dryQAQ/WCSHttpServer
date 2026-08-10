@@ -106,3 +106,155 @@
 2026-08-06 16:44:53.263 [0x0000caec] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
 2026-08-06 16:44:53.263 [0x0000caec] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
 2026-08-06 16:44:53.263 [0x0000caec] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=SIM-WV-001
+2026-08-07 14:03:29.481 [0x0000e4c0] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=100 elapsed=0ms
+2026-08-07 14:03:29.483 [0x00000228] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=100 SKU=1
+2026-08-07 14:03:29.483 [0x00000228] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-07 14:03:29.483 [0x00000228] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-07 14:03:29.483 [0x00000228] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-07 14:03:29.483 [0x00000228] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-07 14:03:29.483 [0x00000228] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-07 14:05:17.044 [0x0000e4c0] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=100 elapsed=0ms
+2026-08-07 14:05:17.045 [0x00000228] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PB202203200003 status=3
+2026-08-07 14:05:17.045 [0x00000228] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-07 14:05:17.045 [0x00000228] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 0(空闲)
+2026-08-07 14:05:17.046 [0x00000228] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=100 SKU=1
+2026-08-07 14:05:17.046 [0x00000228] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 1(已下发)
+2026-08-07 14:05:17.046 [0x00000228] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-07 14:05:41.884 [0x0000e4c0] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=100 elapsed=0ms
+2026-08-07 14:05:41.885 [0x00000228] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PB202203200003 status=3
+2026-08-07 14:05:41.885 [0x00000228] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-07 14:05:41.885 [0x00000228] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 0(空闲)
+2026-08-07 14:05:41.885 [0x00000228] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=100 SKU=1
+2026-08-07 14:05:41.885 [0x00000228] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 1(已下发)
+2026-08-07 14:05:41.885 [0x00000228] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-07 14:07:11.713 [0x0000e4c0] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=100 elapsed=0ms
+2026-08-07 14:07:11.714 [0x00000228] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PB202203200003 status=3
+2026-08-07 14:07:11.714 [0x00000228] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-07 14:07:11.714 [0x00000228] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 0(空闲)
+2026-08-07 14:07:11.714 [0x00000228] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=100 SKU=1
+2026-08-07 14:07:11.714 [0x00000228] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 1(已下发)
+2026-08-07 14:07:11.714 [0x00000228] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 11:41:37.079 [0x00002ad4] INFO  WCS - [TID-1786333297027-e1572fe2][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 12:14:29.654 [0x00004618] INFO  WCS - [TID-1786335269601-6573e68f][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 12:22:47.825 [0x00005290] INFO  WCS - [TID-1786335767784-5f0222f6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 12:37:42.706 [0x00005290] INFO  WCS - [TID-1786335767784-5f0222f6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 12:38:27.573 [0x000047d0] INFO  WCS - [TID-1786336707526-7ae2c7ed][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 12:50:05.774 [0x0000be14] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=1 elapsed=0ms
+2026-08-10 12:50:05.775 [0x000047d0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=1 SKU=1
+2026-08-10 12:50:05.775 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 12:50:05.775 [0x000047d0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 12:50:05.775 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 12:50:05.775 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 12:50:05.775 [0x000047d0] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 12:57:07.499 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 3(分拣中) -> 4(满箱同步中)
+2026-08-10 12:57:07.499 [0x000047d0] INFO  WCS - 	[WaveMgr] 满箱触发成功 SORTING→FULLBOX_SYNC orderCode=PB202203200003
+2026-08-10 12:57:07.499 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 4(满箱同步中) -> 3(分拣中)
+2026-08-10 12:57:07.499 [0x000047d0] INFO  WCS - 	[WaveMgr] 满箱成功恢复分拣 FULLBOX_SYNC→SORTING orderCode=PB202203200003
+2026-08-10 13:02:17.530 [0x000047d0] INFO  WCS - [TID-1786336707526-7ae2c7ed][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 13:02:23.700 [0x000047d0] INFO  WCS - [TID-1786336707526-7ae2c7ed][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 13:05:33.336 [0x00003b78] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=1 elapsed=0ms
+2026-08-10 13:05:33.337 [0x000047d0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=1 SKU=1
+2026-08-10 13:05:33.337 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 13:05:33.337 [0x000047d0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 13:05:33.337 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 13:05:33.337 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 13:05:33.337 [0x000047d0] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 13:06:54.591 [0x000047d0] INFO  WCS - [TID-1786336707526-7ae2c7ed][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 13:07:16.284 [0x0000a57c] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=1 elapsed=0ms
+2026-08-10 13:07:16.284 [0x000047d0] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=1 SKU=1
+2026-08-10 13:07:16.284 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 13:07:16.284 [0x000047d0] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 13:07:16.284 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 13:07:16.284 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 13:07:16.284 [0x000047d0] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 13:10:16.807 [0x00003fa8] INFO  WCS - 	[WaveMgr] 波次完成 orderCode=PB202203200003 sorted=1 exception=0 total=1
+2026-08-10 13:10:16.807 [0x00003fa8] INFO  WCS - 	[WaveMgr] 状态转换 3(分拣中) -> 7(完结中)
+2026-08-10 13:10:19.809 [0x000047d0] INFO  WCS - 	[WaveMgr] 状态转换 7(完结中) -> 9(异常挂起)
+2026-08-10 15:08:51.603 [0x000047d0] INFO  WCS - [TID-1786336707526-7ae2c7ed][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:11:34.088 [0x00001c70] INFO  WCS - [TID-1786349493736-2a29a3f5][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:21:13.869 [0x00001c70] INFO  WCS - [TID-1786349493736-2a29a3f5][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:21:29.698 [0x00001c70] INFO  WCS - [TID-1786349493736-2a29a3f5][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:23:03.956 [0x00001c70] INFO  WCS - [TID-1786349493736-2a29a3f5][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:28:09.350 [0x0000b7bc] INFO  WCS - [TID-1786350489269-2451a2cf][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:30:11.874 [0x000052b4] INFO  WCS - [TID-1786350611811-66d9a3d6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:30:41.801 [0x000041d8] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=2 SKU=2 qty=2 elapsed=1ms
+2026-08-10 16:30:41.801 [0x000052b4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=2 SKU=2
+2026-08-10 16:30:41.802 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 16:30:41.802 [0x000052b4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=2
+2026-08-10 16:30:41.802 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 16:30:41.802 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 16:30:41.802 [0x000052b4] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 16:30:51.830 [0x000052b4] INFO  WCS - [TID-1786350611811-66d9a3d6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:30:54.980 [0x000052b4] INFO  WCS - [TID-1786350611811-66d9a3d6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:30:59.742 [0x000052b4] INFO  WCS - [TID-1786350611811-66d9a3d6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:31:24.065 [0x000083d8] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=2 SKU=2 qty=2 elapsed=2ms
+2026-08-10 16:31:24.066 [0x000052b4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=2 SKU=2
+2026-08-10 16:31:24.066 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 16:31:24.066 [0x000052b4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=2
+2026-08-10 16:31:24.066 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 16:31:24.066 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 16:31:24.066 [0x000052b4] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 16:32:47.810 [0x00008638] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=PB202203200003
+2026-08-10 16:32:47.810 [0x00008638] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=PB202203200003
+2026-08-10 16:32:47.810 [0x00008638] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=1 status=3 sorted=0 exception=0 order=PB202203200003
+2026-08-10 16:32:47.810 [0x00008638] WARN  WCS - <591>	<WaveManager::tryCancelWave>,[WaveMgr] H5取消失败 已分拣 order=PB202203200003 sorted=0 exception=0 status=3
+2026-08-10 16:38:01.474 [0x000083d8] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=1 elapsed=0ms
+2026-08-10 16:38:01.475 [0x000052b4] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PB202203200003 status=3
+2026-08-10 16:38:01.476 [0x000052b4] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-10 16:38:01.476 [0x000052b4] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 0(空闲)
+2026-08-10 16:38:01.476 [0x000052b4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=1 SKU=1
+2026-08-10 16:38:01.476 [0x000052b4] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 1(已下发)
+2026-08-10 16:38:01.476 [0x000052b4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 16:41:18.832 [0x000052b4] INFO  WCS - [TID-1786350611811-66d9a3d6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:41:28.267 [0x0000c280] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=1 elapsed=0ms
+2026-08-10 16:41:28.270 [0x000052b4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=1 SKU=1
+2026-08-10 16:41:28.270 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 16:41:28.270 [0x000052b4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 16:41:28.270 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 16:41:28.270 [0x000052b4] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 16:41:28.270 [0x000052b4] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 16:41:34.457 [0x000052b4] INFO  WCS - [TID-1786350611811-66d9a3d6][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:46:32.474 [0x00009870] INFO  WCS - [TID-1786351592409-5ee5cd6d][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 16:46:39.840 [0x00006804] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=2 SKU=2 qty=2 elapsed=0ms
+2026-08-10 16:46:39.840 [0x00009870] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=2 SKU=2
+2026-08-10 16:46:39.840 [0x00009870] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 16:46:39.840 [0x00009870] INFO  WCS - 	[WaveMgr] 接收inco集合 size=2
+2026-08-10 16:46:39.840 [0x00009870] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 16:46:39.842 [0x00009870] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 16:46:39.842 [0x00009870] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 16:46:59.217 [0x00006804] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=1 elapsed=0ms
+2026-08-10 16:46:59.220 [0x00009870] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PB202203200003 status=3
+2026-08-10 16:46:59.220 [0x00009870] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-10 16:46:59.220 [0x00009870] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 0(空闲)
+2026-08-10 16:46:59.220 [0x00009870] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=1 SKU=1
+2026-08-10 16:46:59.220 [0x00009870] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 1(已下发)
+2026-08-10 16:46:59.220 [0x00009870] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 16:47:08.498 [0x00006804] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=2 SKU=2 qty=2 elapsed=0ms
+2026-08-10 16:47:08.498 [0x00009870] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PB202203200003 status=3
+2026-08-10 16:47:08.499 [0x00009870] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-10 16:47:08.499 [0x00009870] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 0(空闲)
+2026-08-10 16:47:08.499 [0x00009870] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=2 SKU=2
+2026-08-10 16:47:08.499 [0x00009870] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 1(已下发)
+2026-08-10 16:47:08.499 [0x00009870] INFO  WCS - 	[WaveMgr] 接收inco集合 size=2
+2026-08-10 17:25:02.300 [0x00009870] INFO  WCS - [TID-1786351592409-5ee5cd6d][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 17:28:56.655 [0x00004ac8] INFO  WCS - [TID-1786354136587-4c285895][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 17:29:25.567 [0x00008068] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=2 SKU=2 qty=2 elapsed=0ms
+2026-08-10 17:29:25.570 [0x00004ac8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=2 SKU=2
+2026-08-10 17:29:25.570 [0x00004ac8] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-10 17:29:25.570 [0x00004ac8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=2
+2026-08-10 17:29:25.571 [0x00004ac8] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-10 17:29:25.571 [0x00004ac8] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-10 17:29:25.571 [0x00004ac8] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PB202203200003
+2026-08-10 17:29:28.104 [0x00008068] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=1 SKU=1 qty=1 elapsed=0ms
+2026-08-10 17:29:28.104 [0x00004ac8] INFO  WCS - 	[WaveMgr] 覆盖旧波次 old=PB202203200003 status=3
+2026-08-10 17:29:28.104 [0x00004ac8] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-10 17:29:28.104 [0x00004ac8] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 0(空闲)
+2026-08-10 17:29:28.104 [0x00004ac8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=1 SKU=1
+2026-08-10 17:29:28.104 [0x00004ac8] WARN  WCS - <273>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 3(分拣中) -> 1(已下发)
+2026-08-10 17:29:28.104 [0x00004ac8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-10 17:29:39.337 [0x0000b120] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=PB202203200003
+2026-08-10 17:29:39.337 [0x0000b120] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=PB202203200003
+2026-08-10 17:29:39.337 [0x0000b120] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=1 status=3 sorted=0 exception=0 order=PB202203200003
+2026-08-10 17:29:39.338 [0x0000b120] WARN  WCS - <591>	<WaveManager::tryCancelWave>,[WaveMgr] H5取消失败 已分拣 order=PB202203200003 sorted=0 exception=0 status=3
+2026-08-10 23:10:25.887 [0x00004ac8] INFO  WCS - [TID-1786354136587-4c285895][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-10 23:11:18.860 [0x0000b7c8] INFO  WCS - [TID-1786374678753-1b4421da][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1

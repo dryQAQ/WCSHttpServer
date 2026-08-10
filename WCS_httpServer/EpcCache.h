@@ -3,14 +3,15 @@
 // EpcCache.h — EPC 短缓存（T-S4-04）
 //
 // 功能：
-//   - 缓存 EPC→barcode 映射，减少 RFID 调用
+//   - 缓存 EPC→barcode+carNum 映射，减少 RFID 调用
 //   - TTL 过期自动失效（RFID_CACHE_TTL_SEC）
 //   - 线程安全（mutex 保护）
 //
 // 使用：
 //   EpcCache cache;
-//   cache.set("EPC123", "barcode456");
-//   QString barcode = cache.get("EPC123");  // 返回 barcode 或空字符串
+//   cache.set("EPC123", "barcode456", "002");
+//   QString barcode = cache.get("EPC123");     // 返回 barcode
+//   QString carNum  = cache.getCarNum("EPC123"); // 返回 carNum
 // ============================================================================
 
 #include <QString>
@@ -19,6 +20,28 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include "define.h"
+#include "hlog1.h"
+
+// 辅助宏：将 carNum 数字转为 3 位补零字符串
+#define CAR_NUM_STR(n) QString("%1").arg(n, 3, 10, QChar('0'))
+#define DEFAULT_CAR_STR CAR_NUM_STR(DEFAULT_CAR_NUM)
+
+// ──── EpcCache 专用日志宏（写入 ./log/EPC/epc.log）────
+#define EPC_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "EPC", "\t" fmt, ##__VA_ARGS__)
+#define EPC_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "EPC", "\t" fmt, ##__VA_ARGS__)
+#define EPC_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "EPC", "\t" fmt, ##__VA_ARGS__)
+
+// ★ 缓存条目：barcode + carNum + SKU 绑定状态 + 过期时间
+struct EpcCacheEntry
+{
+    QString barcode;
+    QString carNum;      // ★ 来自 RFID 的小车号，默认 DEFAULT_CAR_STR("001")
+    bool    skuBound = false;  // ★ SKU-EPC 绑定是否完成（通过 RFID 查询获取）
+    QDateTime expireTime;
+
+    bool isExpired() const { return expireTime <= QDateTime::currentDateTime(); }
+    bool isReadyForPlc() const { return skuBound && !carNum.isEmpty(); }  // ★ 两个条件都满足才能发 PLC
+};
 
 class EpcCache
 {
@@ -34,16 +57,49 @@ public:
         QMutexLocker locker(&m_mutex);
         auto it = m_cache.find(epc);
         if (it == m_cache.end())
-            return QString();
-
-        // 检查是否过期
-        if (it->second <= QDateTime::currentDateTime())
         {
-            m_cache.erase(it);  // 惰性清理
+            EPC_WARN("get 缓存未命中 epc=%s cacheSize=%d", epc.toLocal8Bit().data(), m_cache.size());
             return QString();
         }
 
-        return it->first;  // 返回 barcode（key 是 epc, value 是 (barcode, expireTime)）
+        if (it->isExpired())
+        {
+            EPC_WARN("get 缓存已过期 epc=%s barcode=%s expire=%s cacheSize=%d",
+                epc.toLocal8Bit().data(), it->barcode.toLocal8Bit().data(),
+                it->expireTime.toString("HH:mm:ss").toLocal8Bit().data(), m_cache.size());
+            m_cache.erase(it);
+            return QString();
+        }
+
+        return it->barcode;
+    }
+
+    // ★ 获取EPC对应的小车号，如果过期或不存在返回空字符串
+    //    返回空字符串表示缓存未命中，调用方应使用 DEFAULT_CAR_NUM 兜底
+    QString getCarNum(const QString& epc) const
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end())
+        {
+            EPC_WARN("getCarNum 缓存未命中 epc=%s cacheSize=%d", epc.toLocal8Bit().data(), m_cache.size());
+            return QString();
+        }
+
+        if (it->isExpired())
+        {
+            EPC_WARN("getCarNum 缓存已过期 epc=%s carNum=%s expire=%s cacheSize=%d",
+                epc.toLocal8Bit().data(), it->carNum.toLocal8Bit().data(),
+                it->expireTime.toString("HH:mm:ss").toLocal8Bit().data(), m_cache.size());
+            m_cache.erase(it);
+            return QString();
+        }
+
+        QString carNum = it->carNum.isEmpty() ? DEFAULT_CAR_STR : it->carNum;
+        EPC_INFO("getCarNum 命中 epc=%s carNum=%s barcode=%s expire=%s",
+            epc.toLocal8Bit().data(), carNum.toLocal8Bit().data(),
+            it->barcode.toLocal8Bit().data(), it->expireTime.toString("HH:mm:ss").toLocal8Bit().data());
+        return carNum;
     }
 
     // 检查EPC是否在缓存中且未过期
@@ -53,7 +109,7 @@ public:
         auto it = m_cache.find(epc);
         if (it == m_cache.end())
             return false;
-        if (it->second <= QDateTime::currentDateTime())
+        if (it->isExpired())
         {
             m_cache.erase(it);
             return false;
@@ -61,27 +117,150 @@ public:
         return true;
     }
 
-    // 设置EPC→barcode映射，TTL从现在开始计时
-    void set(const QString& epc, const QString& barcode)
+    // 设置EPC→barcode+carNum映射，TTL从现在开始计时
+    void set(const QString& epc, const QString& barcode, const QString& carNum = DEFAULT_CAR_STR)
     {
         if (epc.isEmpty() || barcode.isEmpty())
+        {
+            EPC_WARN("set 跳过空值 epc=%s barcode=%s", epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
             return;
+        }
         QMutexLocker locker(&m_mutex);
-        m_cache[epc] = {barcode, QDateTime::currentDateTime().addSecs(m_ttlSec)};
+        bool overwrite = m_cache.contains(epc);
+        EpcCacheEntry entry;
+        entry.barcode    = barcode;
+        entry.carNum     = carNum.isEmpty() ? DEFAULT_CAR_STR : carNum;
+        entry.expireTime = QDateTime::currentDateTime().addSecs(m_ttlSec);
+        m_cache[epc] = entry;
+        EPC_INFO("set %s epc=%s barcode=%s carNum=%s ttl=%ds cacheSize=%d",
+            overwrite ? "覆盖" : "新增", epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
+            entry.carNum.toLocal8Bit().data(), m_ttlSec, m_cache.size());
     }
 
-    // 批量设置
+    // 批量设置（兼容旧接口：epcBarcodeMap 只含 barcode，carNum 默认 DEFAULT_CAR_STR）
     void setBatch(const QMap<QString, QString>& epcBarcodeMap)
     {
         if (epcBarcodeMap.isEmpty())
             return;
         QMutexLocker locker(&m_mutex);
         QDateTime expire = QDateTime::currentDateTime().addSecs(m_ttlSec);
+        int skipCount = 0;
         for (auto it = epcBarcodeMap.constBegin(); it != epcBarcodeMap.constEnd(); ++it)
         {
             if (!it.key().isEmpty() && !it.value().isEmpty())
-                m_cache[it.key()] = {it.value(), expire};
+            {
+                EpcCacheEntry entry;
+                entry.barcode    = it.value();
+                entry.carNum     = DEFAULT_CAR_STR;  // 旧接口无 carNum，默认 DEFAULT_CAR_STR
+                entry.expireTime = expire;
+                m_cache[it.key()] = entry;
+            }
+            else
+            {
+                skipCount++;
+            }
         }
+        EPC_INFO("setBatch 写入 %d/%d ttl=%ds cacheSize=%d %s",
+            epcBarcodeMap.size() - skipCount, epcBarcodeMap.size(), m_ttlSec, m_cache.size(),
+            skipCount > 0 ? QString("跳过空值%1条").arg(skipCount).toLocal8Bit().data() : "");
+    }
+
+    // ★ 批量设置（含 carNum）：epc → {barcode, carNum}
+    //    如果已有 SKU 绑定数据（skuBound=true），保留已有的 barcode，只更新 carNum
+    void setBatchWithCar(const QMap<QString, QPair<QString, QString>>& epcDataMap)
+    {
+        if (epcDataMap.isEmpty())
+        {
+            EPC_WARN("setBatchWithCar 跳过空数据");
+            return;
+        }
+        QMutexLocker locker(&m_mutex);
+        QDateTime expire = QDateTime::currentDateTime().addSecs(m_ttlSec);
+        int writeCount = 0, skipCount = 0, carCount = 0, readyCount = 0;
+        for (auto it = epcDataMap.constBegin(); it != epcDataMap.constEnd(); ++it)
+        {
+            if (!it.key().isEmpty())
+            {
+                auto existing = m_cache.find(it.key());
+                bool hasExisting = (existing != m_cache.end() && !existing->isExpired());
+
+                EpcCacheEntry entry;
+                // ★ 保留已有的 SKU 绑定数据（barcode + skuBound），不覆盖
+                if (hasExisting && existing->skuBound)
+                {
+                    entry.barcode = existing->barcode;
+                    entry.skuBound = true;
+                }
+                else if (!it.value().first.isEmpty())
+                {
+                    entry.barcode = it.value().first;
+                }
+                // ★ 更新 carNum（RFID 推送的）
+                entry.carNum = it.value().second.isEmpty() ? DEFAULT_CAR_STR : it.value().second;
+                entry.expireTime = expire;
+                m_cache[it.key()] = entry;
+                writeCount++;
+                if (!it.value().second.isEmpty() && it.value().second != DEFAULT_CAR_STR)
+                    carCount++;
+                if (entry.isReadyForPlc())
+                    readyCount++;
+            }
+            else
+            {
+                skipCount++;
+            }
+        }
+        EPC_INFO("setBatchWithCar 写入 %d/%d carNum=%d ready=%d ttl=%ds cacheSize=%d %s",
+            writeCount, epcDataMap.size(), carCount, readyCount, m_ttlSec, m_cache.size(),
+            skipCount > 0 ? QString("跳过空值%1条").arg(skipCount).toLocal8Bit().data() : "");
+    }
+
+    // ★ SKU-EPC 绑定：从 RFID 查询获取 EPC→barcode 映射（逐条调用，标记 skuBound=true）
+    //    与 setBatchWithCar 的区别：setSkuBinding 只设置 barcode 和 skuBound 标记，
+    //    不覆盖已有的 carNum（carNum 由 RFID 推送独立设置）
+    void setSkuBinding(const QString& epc, const QString& barcode)
+    {
+        if (epc.isEmpty() || barcode.isEmpty())
+        {
+            EPC_WARN("setSkuBinding 跳过空值 epc=%s barcode=%s", epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
+            return;
+        }
+        QMutexLocker locker(&m_mutex);
+        bool exists = m_cache.contains(epc);
+        EpcCacheEntry& entry = m_cache[epc];
+        entry.barcode = barcode;
+        entry.skuBound = true;
+        if (!exists)
+        {
+            entry.expireTime = QDateTime::currentDateTime().addSecs(m_ttlSec);
+        }
+        // 如果已有 carNum，标记为就绪
+        bool ready = entry.isReadyForPlc();
+        EPC_INFO("setSkuBinding %s epc=%s barcode=%s skuBound carNum=%s ready=%d cacheSize=%d",
+            exists ? "覆盖" : "新增", epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
+            entry.carNum.toLocal8Bit().data(), ready, m_cache.size());
+    }
+
+    // ★ 判断 EPC 是否已就绪可发送 PLC（SKU 已绑定 + carNum 已获取）
+    bool isReadyForPlc(const QString& epc) const
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return false;
+        if (it->isExpired()) return false;
+        return it->isReadyForPlc();
+    }
+
+    // ★ 获取 EPC 对应的 barcode 和 carNum（用于就绪后发送 PLC）
+    //    返回 {barcode, carNum}，未就绪返回空
+    QPair<QString, QString> getPlcData(const QString& epc) const
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return {};
+        if (it->isExpired()) return {};
+        if (!it->isReadyForPlc()) return {};
+        return {it->barcode, it->carNum};
     }
 
     // 清理所有过期条目
@@ -89,12 +268,18 @@ public:
     {
         QMutexLocker locker(&m_mutex);
         QDateTime now = QDateTime::currentDateTime();
+        int beforeSize = m_cache.size();
         for (auto it = m_cache.begin(); it != m_cache.end(); )
         {
-            if (it->second <= now)
+            if (it->expireTime <= now)
                 it = m_cache.erase(it);
             else
                 ++it;
+        }
+        int purged = beforeSize - m_cache.size();
+        if (purged > 0)
+        {
+            EPC_INFO("purge 清理过期 %d/%d cacheSize=%d", purged, beforeSize, m_cache.size());
         }
     }
 
@@ -102,7 +287,9 @@ public:
     void clear()
     {
         QMutexLocker locker(&m_mutex);
+        int beforeSize = m_cache.size();
         m_cache.clear();
+        EPC_WARN("clear 清空全部缓存 beforeSize=%d", beforeSize);
     }
 
     // 当前缓存条目数
@@ -116,8 +303,8 @@ public:
     void setTtl(int sec) { m_ttlSec = sec; }
 
 private:
-    // key = epc, value = (barcode, expireTime)
-    mutable QMap<QString, QPair<QString, QDateTime>> m_cache;
+    // key = epc, value = EpcCacheEntry
+    mutable QMap<QString, EpcCacheEntry> m_cache;
     mutable QMutex m_mutex;
     int m_ttlSec = RFID_CACHE_TTL_SEC;
 };

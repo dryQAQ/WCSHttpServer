@@ -7,12 +7,12 @@
   moc LifecycleLogger.h
   moc log_center.h
   moc WaveManager.h
-   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   moc ParseWorker.h
   moc PlcManager.h
   moc MainWindow.h
   moc HttpServer.h
   moc HttpClient.h
+   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   ConfigManager.cpp
   HttpClient.cpp
   HttpServer.cpp

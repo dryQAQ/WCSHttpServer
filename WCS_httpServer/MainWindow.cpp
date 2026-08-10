@@ -4,6 +4,7 @@
 #include "hlog1.h"
 #include "SortingDatabase.h"
 #include "define.h"
+#include "LifecycleLogger.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -23,7 +24,7 @@
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("WMS退货HTTP服务 -- 默鑫 V1.0");
+    setWindowTitle("WCS退货HTTP服务 -- V1.0");
     resize(960, 1100);
     setMinimumSize(860, 950);
 
@@ -620,13 +621,14 @@ void MainWindow::onStartStop()
         m_pClient->setUrl(cfg.activeFeedbackUrl());
         m_pClient->setAppkey(cfg.activeAppkey());
         m_pClient->setTimeout(cfg.httpTimeoutMs);
-        m_pClient->setRfidUrl(cfg.rfidUrl);               // ★ RFID查询URL
-        m_pClient->setRfidTimeout(RFID_TIMEOUT_MS);        // ★ RFID查询超时
+        m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);  // ★ RFID SKU-EPC 绑定查询 URL
+        m_pServer->setHttpClient(m_pClient);              // ★ 设置 HttpClient 供 RFID 查询使用
 
         // ★ 从配置文件加载 API 路由路径
         m_pServer->setApiInsertWaveInfo(cfg.apiInsertWaveInfo);
         m_pServer->setApiBindingLatticePort(cfg.apiBindingLatticePort);
         m_pServer->setApiInsertWaveIn(cfg.apiInsertWaveIn);
+        m_pServer->setApiRfidCarNumReport(cfg.apiRfidCarNumReport);  // ★ RFID 小车号推送
 
         m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
         m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
@@ -644,9 +646,50 @@ void MainWindow::onStartStop()
             m_lblServerStatus->setText("● 运行中");
             m_lblServerStatus->setStyleSheet("font-size: 14px; color: #4CAF50;");
 
-            m_lblPort->setText(QString("端口: %1").arg(port));
+            m_lblPort->setText(QString("端口: %1 %2")
+                .arg(port)
+                .arg(cfg.useTestEnv ? "(测试)" : "(正式)"));
+            m_lblPort->setStyleSheet(cfg.useTestEnv
+                ? "font-size: 14px; color: #FF9800; font-weight: bold;"
+                : "font-size: 14px; color: #f44336; font-weight: bold;");
 
-            appendLog(QString("HTTP服务已启动 端口=%1").arg(port));
+            appendLog(QString("HTTP服务已启动 端口=%1 环境=%2")
+                .arg(port)
+                .arg(cfg.useTestEnv ? "测试" : "正式"));
+
+            // ★ 配置摘要日志
+            {
+                QString summary;
+                summary += "\n══════════════════ 配置摘要 ══════════════════\n";
+                summary += QString(" 监听端口:        %1 (WMS) / %2 (PLC)\n")
+                    .arg(port).arg(cfg.plcListenPort);
+                summary += QString(" 回传URL:         %1 (%2)\n")
+                    .arg(cfg.activeFeedbackUrl())
+                    .arg(cfg.useTestEnv ? "测试" : "正式");
+                summary += QString(" AppKey:          %1\n").arg(cfg.activeAppkey());
+                summary += QString(" 仓库:            %1\n").arg(cfg.warehouseCode);
+                summary += QString(" 货主:            %1\n").arg(cfg.goodsOwner);
+                summary += QString(" 波次超时:        %1分钟(%2), 期望绑定: %3\n")
+                    .arg(cfg.waveTimeoutMin)
+                    .arg(cfg.waveTimeoutMin == 0 ? "不超时" : QString::number(cfg.waveTimeoutMin) + "分钟")
+                    .arg(cfg.expectedBindCount);
+                summary += QString(" 重试:            %1次, 间隔: %2秒\n")
+                    .arg(OUTBOX_RETRY_MAX_DEFAULT).arg(OUTBOX_RETRY_INTERVAL_SEC);
+                summary += QString(" 日志:            保留%1天\n").arg(cfg.logRetainDays);
+                summary += QString(" 配置文件版本:    %1 (软件版本: %2)\n")
+                    .arg(cfg.configVersion).arg(CONFIG_VERSION);
+                if (cfg.configVersion != CONFIG_VERSION)
+                {
+                    summary += QString(" ⚠ 配置文件版本不匹配! 请检查配置\n");
+                }
+                summary += "══════════════════════════════════════════════";
+                appendLog(summary);
+                WCS_LOG_INFO("配置摘要: 端口=%d/%d URL=%s env=%s warehouse=%s goodsOwner=%s waveTimeout=%d bindCount=%d",
+                    port, cfg.plcListenPort, cfg.activeFeedbackUrl().toLocal8Bit().data(),
+                    cfg.useTestEnv ? "test" : "prod",
+                    cfg.warehouseCode.toLocal8Bit().data(), cfg.goodsOwner.toLocal8Bit().data(),
+                    cfg.waveTimeoutMin, cfg.expectedBindCount);
+            }
 
             // ★ 波次完成回传 → WMS（HttpServer 异步入池构建 JSON，HttpClient 发送）
             connect(m_pServer, &HttpServer::waveCompleteReportReady, this,
@@ -754,36 +797,6 @@ void MainWindow::onStartStop()
                 c.containerBindings = m_pServer->getContainerBindings();
                 ConfigManager::instance()->save();
             });
-
-            // ★ RFID查询：HttpServer触发 → HttpClient发送请求
-            connect(m_pServer, &HttpServer::rfidQueryRequested, this,
-                [this](const QJsonArray& epcList, const QString& context) {
-                    if (!m_pClient) return;
-                    m_pClient->queryRfid(epcList, context);
-                });
-
-            // ★ RFID查询结果：HttpClient返回 → HttpServer存储 + UI日志
-            connect(m_pClient, &HttpClient::rfidQueryResult, this,
-                [this](const QJsonObject& result, const QString& context) {
-                    if (m_pServer) m_pServer->onRfidQueryResult(result, context);
-
-                    // UI日志
-                    if (result.isEmpty())
-                    {
-                        appendLog(QString("[RFID] 查询超时或失败 context=%1").arg(context), true);
-                    }
-                    else
-                    {
-                        bool success = result["success"].toBool(false);
-                        QJsonArray dataArr = result["data"].toObject()["data"].toArray();
-                        if (success)
-                            appendLog(QString("[RFID] 查询成功 context=%1 返回%2条EPC映射")
-                                .arg(context).arg(dataArr.size()));
-                        else
-                            appendLog(QString("[RFID] 查询失败 context=%1 msg=%2")
-                                .arg(context).arg(result["msg"].toString()), true);
-                    }
-                });
 
             // ★ 连接PLC状态信号到UI（全部使用 QueuedConnection，确保跨线程安全）
             if (m_pPlcMgr)

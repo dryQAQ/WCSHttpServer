@@ -1,12 +1,14 @@
 #include "PlcManager.h"
 #include "SiemensPLC.h"
 #include "ConfigManager.h"
+#include "EpcCache.h"
 #include <QRegularExpression>
 #include <QRegularExpressionMatchIterator>
 #include <QDebug>
 #include <QThread>
 #include <tchar.h>
 #include <Windows.h>
+#include "define.h"
 
 // ============================================================================
 // 构造 / 析构
@@ -132,7 +134,7 @@ void PlcManager::stop()
 //      TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
 //      TODO: 小车号应由RFID提供，客户尚未提供RFID小车号字段，当前默认=1（2026-08-04）
 // 格口号格式: 3位补零，如格口15 → "015"
-// 小车号格式: 3位补零，如小车1 → "001"
+// 小车号格式: 3位补零，如小车1 → CAR_NUM_STR(DEFAULT_CAR_NUM)="001"
 // ============================================================================
 
 bool PlcManager::sendCodeInfo(const QString& code, const std::vector<int>& vecGrid, int car)
@@ -322,12 +324,12 @@ bool PlcManager::sendBatchCodes(const QMap<QString, QString>& codeGridMap)
         if (m_pSendPool)
         {
             m_pSendPool->commitNoWait([this, code, vecGrid]() {
-                sendCodeInfo(code, vecGrid, 1);
+                sendCodeInfo(code, vecGrid, DEFAULT_CAR_NUM);
             });
         }
         else
         {
-            sendCodeInfo(code, vecGrid, 1);
+            sendCodeInfo(code, vecGrid, DEFAULT_CAR_NUM);
         }
 
         successCount++;
@@ -335,6 +337,96 @@ bool PlcManager::sendBatchCodes(const QMap<QString, QString>& codeGridMap)
 
     PLC_LOG_INFO("sendBatchCodes: 批量发送完成 success=%d fail=%d total=%d",
         successCount, failCount, codeGridMap.size());
+
+    return failCount == 0;
+}
+
+// ============================================================================
+// sendBatchCodesWithEpcCache — 从回调获取 RFID 小车号的批量发送
+// 通过 m_carNumCb(code) 查询每个识别码的小车号，默认 DEFAULT_CAR_NUM
+// ============================================================================
+bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGridMap)
+{
+    if (codeGridMap.isEmpty())
+    {
+        PLC_LOG_WARN("sendBatchCodesWithEpcCache: 条码映射为空，跳过");
+        return false;
+    }
+
+    PLC_LOG_INFO("sendBatchCodesWithEpcCache: 开始批量发送（RFID小车号） total=%d", codeGridMap.size());
+
+    int successCount = 0;
+    int failCount = 0;
+    int rfidCarCount = 0;  // 使用 RFID 小车号的数量
+
+    for (auto it = codeGridMap.constBegin(); it != codeGridMap.constEnd(); ++it)
+    {
+        const QString& code = it.key();
+        const QString& gridStr = it.value();
+
+        // 解析格口
+        std::vector<int> vecGrid;
+        for (const QString& g : gridStr.split(',', Qt::SkipEmptyParts))
+        {
+            bool ok = false;
+            int n = g.trimmed().toInt(&ok);
+            if (ok && n > 0) vecGrid.push_back(n);
+        }
+
+        if (vecGrid.empty())
+        {
+            PLC_LOG_WARN("sendBatchCodesWithEpcCache: 格口解析失败 code=%s gridStr=%s",
+                code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+            failCount++;
+            continue;
+        }
+
+        // 锁格过滤
+        if (vecGrid.size() > 1)
+        {
+            std::vector<int> unlocked;
+            for (int g : vecGrid)
+            {
+                if (!isGridLocked(g))
+                    unlocked.push_back(g);
+            }
+            if (!unlocked.empty())
+                vecGrid = { unlocked[0] };
+        }
+
+        // ★ 从回调获取 RFID 小车号，默认 DEFAULT_CAR_NUM
+        int car = DEFAULT_CAR_NUM;
+        if (m_carNumCb)
+        {
+            QString carStr = m_carNumCb(code);
+            if (!carStr.isEmpty() && carStr != CAR_NUM_STR(DEFAULT_CAR_NUM))
+            {
+                bool ok = false;
+                int n = carStr.toInt(&ok);
+                if (ok && n > 0)
+                {
+                    car = n;
+                    rfidCarCount++;
+                }
+            }
+        }
+
+        if (m_pSendPool)
+        {
+            m_pSendPool->commitNoWait([this, code, vecGrid, car]() {
+                sendCodeInfo(code, vecGrid, car);
+            });
+        }
+        else
+        {
+            sendCodeInfo(code, vecGrid, car);
+        }
+
+        successCount++;
+    }
+
+    PLC_LOG_INFO("sendBatchCodesWithEpcCache: 发送完成 success=%d fail=%d total=%d rfidCar=%d",
+        successCount, failCount, codeGridMap.size(), rfidCarCount);
 
     return failCount == 0;
 }

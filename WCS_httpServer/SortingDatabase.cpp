@@ -599,6 +599,7 @@ bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<Re
             q.addBindValue(item.gridType.isEmpty() ? "普通格口" : item.gridType);
             q.addBindValue(item.planQty);
             q.addBindValue(item.volu.isNull() ? QString("") : item.volu);
+            q.addBindValue(item.obxCode.isNull() ? QString("") : item.obxCode);   // ★ 容器号
             if (!q.exec())
             {
                 Data_WARN("[SortingDB] 插入明细失败 orderCode=%s inco=%s grid=%s err=%s",
@@ -647,6 +648,7 @@ QVector<ReturnWaveItemRecord> SortingDatabase::getWaveItems(const QString& order
         rec.planQty = q.value(5).toInt();
         rec.sortedQty = q.value(6).toInt();
         rec.volu = q.value(7).toString();
+        rec.obxCode = q.value(8).toString();  // ★ 容器号
         result.append(rec);
     }
     return result;

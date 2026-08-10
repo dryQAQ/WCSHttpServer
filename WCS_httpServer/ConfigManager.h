@@ -23,6 +23,9 @@ struct AppConfig
     QString appkeyTest        = WMS_APPKEY_TEST;       // 测试环境 AppKey
     bool    useTestEnv        = true;                  // true=使用测试环境
 
+    // ──── RFID 查询配置（WCS → RFID，SKU-EPC 绑定查询）────
+    QString rfidQueryUrl      = RFID_QUERY_URL;        // RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
+
     // ──── WMS 业务参数 ────
     QString warehouseCode    = WMS_WAREHOUSE_CODE;    // 仓库编码
     QString goodsOwner       = WMS_GOODS_OWNER;       // 货主编码
@@ -48,8 +51,8 @@ struct AppConfig
     int     plcRecvPoolSize   = PLC_RECV_POOL_SIZE;     // PLC 反馈接收专用线程池大小
     
 
-    // ──── RFID ────
-    QString rfidUrl          = RFID_QUERY_URL;           // RFID EPC查询接口URL
+    // ──── 配置文件版本 ────
+    int     configVersion     = CONFIG_VERSION;           // 配置文件版本号（与软件版本匹配检查）
 
     // ──── 满箱回传配置（H7 满箱同步到WMS）────
     QString fullboxFromLocationSource = FULLBOX_FROM_LOCATION_SOURCE;  // fromLocation 取值来源（config/volu）
@@ -66,6 +69,7 @@ struct AppConfig
     QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① 波次下发（H4 WMS推送波次数据）(POST)
     QString apiBindingLatticePort = API_BINDING_LATTICE_PORT;  // ② 容器绑定（H6 格口容器绑定）(POST)
     QString apiInsertWaveIn       = API_INSERT_WAVE_IN;        // ③ 波次取消（H5 退货任务取消）(POST)
+    QString apiRfidCarNumReport   = API_RFID_CAR_NUM_REPORT;   // ④ RFID 小车号推送（RFID 主动推送小车号）(POST)
 
     // ──── 日志 ────
     int     logRetainDays     = LOG_RETAIN_DAYS;          // 日志保留天数

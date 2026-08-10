@@ -29,6 +29,7 @@ struct GridEntry
     QString gridType = "普通格口";
     int     gridCount = 0;
     QString volu;           // 来源库位编码（fromLocation，锁格回传 WMS 用）
+    QString obxCode;        // 容器号（WMS 下发时携带，后续可能用于追溯）
 
     // ── 批次信息 ──
     QString orderCode;      // 批次号（所属波次）

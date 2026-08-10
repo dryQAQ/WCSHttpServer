@@ -106,7 +106,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // 定时器/监控配置
 // ═══════════════════════════════════════════════════════════════════════════
-#define HEALTH_CHECK_INTERVAL_MS 10000  // 健康检查定时器周期(ms)
+#define HEALTH_CHECK_INTERVAL_MS 60*1000  // 健康检查定时器周期(ms)
 #define WORKER_WAIT_MS           3000   // 等待 ParseWorker 线程退出超时(ms)
 #define CONN_LONG_DURATION_MS   10000   // 连接持续超过此值视为"长连接"(ms)
 #define DOUBLE_BUFFER_CLEANUP_S     5   // DoubleBuffer 旧 Map 延迟清理时间(秒)
@@ -140,6 +140,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 #define CONFIG_DIR               "config"                 // 配置文件目录（exe 同目录下）
 #define CONFIG_FILE              "config/http_server.xml" // 配置文件路径（exe 同目录 config 文件夹内）
+#define CONFIG_VERSION            1                        // 配置文件版本号（与软件版本匹配，不匹配时告警）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS → WCS HTTP API 路由（WMS 调用 WCS_httpServer 的接口路径）
@@ -149,6 +150,7 @@
 #define API_INSERT_WAVE_INFO      "/api/DispatchSortingCommand/InsertWaveInfo"  // ① 波次下发（H4 WMS 推送波次数据 (POST)）
 #define API_BINDING_LATTICE_PORT  "/api/DispatchSortingCommand/BindingLatticePort" // ② 容器绑定（H6 WMS 绑定格口容器 (POST)）
 #define API_INSERT_WAVE_IN        "/api/DispatchSortingCommand/InsertWaveIn"   // ③ 波次取消（H5 WMS 退货任务取消 (POST)）
+#define API_RFID_CAR_NUM_REPORT   "/api/rfid/carNumReport"                    // ④ RFID 小车号推送（RFID 主动推送 EPC→barcode+carNum 映射 (POST)）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 连接监控阈值（健康检查日志分级输出 → HttpServer::logHealthStatus）
@@ -173,6 +175,14 @@
 #define GRID_KEY_PADDING           3      // 格口号零填充宽度（WMS 格式: "001"~"066"，与绑定/PLC/存储 key 一致）
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ── 小车号配置 ──
+// 小车号通过 RFID 查询返回（T-S4-02），格式为 3 位补零（如 "001"~"008"）
+// RFID 未返回或查询失败时使用 DEFAULT_CAR_NUM 兜底
+// 异常落格（无匹配/无绑定）使用 EXCEPTION_CAR_NUM，便于溯源
+#define DEFAULT_CAR_NUM           1       // 兜底小车号（RFID未返回时使用），数字 1-999
+#define EXCEPTION_CAR_NUM         0       // 异常口小车号（无匹配/无绑定时使用），数字 0=异常
+
+// ═══════════════════════════════════════════════════════════════════════════
 // UI 定时刷新间隔（MainWindow 每秒轮询所有面板）
 // ═══════════════════════════════════════════════════════════════════════════
 #define UI_REFRESH_INTERVAL_MS   1000     // UI 状态刷新周期(ms)：波次/PLC/绑定面板全量刷新
@@ -180,23 +190,22 @@
 #define LOG_FLUSH_MAX_BATCH_SIZE  100     // 单次日志刷新最大条数（防止一次刷太多卡UI）
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RFID API 配置（EPC→SKU 查询）
+// RFID 缓存配置（RFID 主动推送模式，不再主动查询）
 // ═══════════════════════════════════════════════════════════════════════════
-#define RFID_QUERY_URL          "http://{BaseURL}/open-api/rfid/query"  // EPC查询接口（{BaseURL} 通过 XML 配置替换）
-#define RFID_TIMEOUT_MS         3000                                     // RFID查询超时(ms)
-#define RFID_MAX_BATCH_SIZE     100                                      // 单次查询最大EPC数量
-
-// ═══════════════════════════════════════════════════════════════════════════
-// RFID查询（H3 RFID 查询配置）
-// ═══════════════════════════════════════════════════════════════════════════
-#define RFID_RETRY_MAX             2        // RFID 查询重试次数
 #define RFID_CACHE_TTL_SEC         300      // EPC 本地缓存 TTL（秒，默认5分钟）
+#define RFID_QUERY_URL             "http://127.0.0.1:9100/open-api/rfid/query"  // RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
+#define RFID_QUERY_TIMEOUT_MS      5000     // RFID 查询超时(ms)，默认5秒
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 回传响应日志截断（防止超长响应体撑满日志文件）
 // ═══════════════════════════════════════════════════════════════════════════
 #define RESP_BODY_LOG_TRUNCATE    200     // WMS 回传响应体在日志中截断长度（字符数）
 #define RAW_REQ_BODY_LOG_LEN      500     // 原始请求 Body 在日志中截断长度（字符数，完整记录 queryString）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 调试模式开关（联调时改为 true，发布时改回 false）
+// ═══════════════════════════════════════════════════════════════════════════
+#define DEBUG_LOG_FULL_BODY       false   // 联调时改为 true，打印完整请求/响应体（不截断）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 分拣数据本地存储（SQLite）
@@ -369,7 +378,8 @@
     "  grid_type  TEXT    NOT NULL DEFAULT '普通格口'," \
     "  plan_qty   INTEGER NOT NULL DEFAULT 0," \
     "  sorted_qty INTEGER NOT NULL DEFAULT 0," \
-    "  volu       TEXT    NOT NULL DEFAULT ''" \
+    "  volu       TEXT    NOT NULL DEFAULT ''," \
+    "  obx_code   TEXT    NOT NULL DEFAULT ''" \
     ")"
 
 // ──── 建表：格口容器绑定表 ────
@@ -501,10 +511,10 @@
 // ──── 波次明细操作 ────
 // 插入明细行
 #define SQL_INSERT_WAVE_ITEM \
-    "INSERT INTO return_wave_item (order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu) VALUES (?, ?, ?, ?, ?, 0, ?)"
+    "INSERT INTO return_wave_item (order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code) VALUES (?, ?, ?, ?, ?, 0, ?, ?)"
 // 按波次号查询所有明细
 #define SQL_SELECT_WAVE_ITEMS \
-    "SELECT id, order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu FROM return_wave_item WHERE order_code = ?"
+    "SELECT id, order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code FROM return_wave_item WHERE order_code = ?"
 // 更新已分拣件数（sorted_qty + 1）
 // 格口按整数比较，兼容 WMS "3" 与 PLC 反馈 "003"
 #define SQL_INCREMENT_SORTED_QTY \

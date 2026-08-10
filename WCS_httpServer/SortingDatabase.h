@@ -63,6 +63,7 @@ struct ReturnWaveItemRecord
     int     planQty     = 0;
     int     sortedQty   = 0;
     QString volu;
+    QString obxCode;        // 容器号（WMS 下发时携带）
 };
 
 // ──── S0 新增：格口容器绑定 ────

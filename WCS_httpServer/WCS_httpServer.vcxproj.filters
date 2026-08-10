@@ -102,7 +102,7 @@
     <QtMoc Include="HttpServer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    </ItemGroup>
+  </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DoubleBuffer.h">
       <Filter>Header Files</Filter>
@@ -132,6 +132,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="sqlite3ext.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EpcCache.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

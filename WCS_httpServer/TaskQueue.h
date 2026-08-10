@@ -16,6 +16,7 @@ struct WaveTask
 {
     QByteArray rawBody;      // JSON原始字节流（完整拷贝）
     QString    clientIP;     // 来源IP
+    QString    fullUrl;      // ★ 完整请求 URL（用于波次明细日志）
     qint64     recvTime;     // 接收时间戳
 
     WaveTask() : recvTime(0) {}

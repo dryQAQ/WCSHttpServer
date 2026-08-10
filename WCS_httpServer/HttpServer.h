@@ -29,6 +29,8 @@
 #include "EpcCache.h"
 #include "define.h"
 
+class HttpClient;  // 前向声明（避免循环依赖）
+
 class ParseWorker;
 
 // ★ 格口分拣记录（锁格时回传 WMS 用）
@@ -73,6 +75,8 @@ public:
     void setApiInsertWaveInfo(const QString& path)     { m_apiInsertWaveInfo = path; }
     void setApiBindingLatticePort(const QString& path) { m_apiBindingLatticePort = path; }
     void setApiInsertWaveIn(const QString& path)       { m_apiInsertWaveIn = path; }
+    void setApiRfidCarNumReport(const QString& path)   { m_apiRfidCarNumReport = path; }  // ★ RFID 小车号推送
+    void setHttpClient(HttpClient* client);              // ★ HTTP 客户端（用于 RFID 查询，连接 rfidBindingResult 信号）
 
     // 获取容器绑定快照（线程安全拷贝）
     QMap<QString, QString> getContainerBindings() const {
@@ -103,7 +107,12 @@ public:
     }
 
     // ★ RFID查询：接收RFID服务返回的EPC→SKU映射结果
-    void onRfidQueryResult(const QJsonObject& result, const QString& context);
+    QJsonObject handleRfidCarNumReport(const QJsonObject& body);  // ★ RFID 小车号推送（T-S4-03）
+
+    // ──── SKU-EPC 绑定查询（WCS → RFID，逐条绑定）────
+    void submitEpcBindingQueries(const QStringList& epcList);      // ★ 波次下发后提交 EPC 绑定查询
+    void onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap);  // ★ RFID 绑定查询结果回调
+    bool trySendToPlcForEpc(const QString& epc);                   // ★ 尝试发送单条 EPC 到 PLC（就绪检查），返回 true=已发送
 
     // ★ RFID查询：根据EPC获取对应的SKU/条码（T-S4-04 EpcCache TTL缓存）
     QString getSkuByEpc(const QString& epc) const {
@@ -134,7 +143,6 @@ signals:
     void waveCompleteReportReady(const QJsonObject& reportJson); // ★ 波次完成回传（异步入池构建后发出）
     void fullboxReportReady(const QJsonObject& payload, const QString& msgId); // ★ S5 满箱回传（H7 满箱同步到WMS，T-S5-04）
     void endReportReady(const QJsonObject& payload, const QString& msgId);     // ★ S6 完结回传（H8 波次完结通知WMS，T-S6-03）
-    void rfidQueryRequested(const QJsonArray& epcList, const QString& context); // ★ 请求RFID查询EPC→SKU
 
 protected:
     // CHttpServerListener 回调
@@ -182,11 +190,13 @@ private:
     
     SortingDatabase* m_pSortingDb = nullptr;  // ★ 分拣记录本地数据库
     EpcCache*       m_pEpcCache  = nullptr;  // ★ S4 EPC短缓存（T-S4-04）
+    HttpClient*     m_pHttpClient = nullptr;  // ★ HTTP 客户端（用于 RFID SKU-EPC 绑定查询）
 
     // ──── API 路由（从 XML 配置读取，可动态修改）────
     QString m_apiInsertWaveInfo     = API_INSERT_WAVE_INFO;
     QString m_apiBindingLatticePort = API_BINDING_LATTICE_PORT;
     QString m_apiInsertWaveIn       = API_INSERT_WAVE_IN;
+    QString m_apiRfidCarNumReport   = API_RFID_CAR_NUM_REPORT;  // ★ RFID 小车号推送
 
     // ──── 业务线程池 ────
     Hanchine::ThreadPool* m_pBusinessPool   = nullptr;

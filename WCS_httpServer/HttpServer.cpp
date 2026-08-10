@@ -1,5 +1,6 @@
 #include "HttpServer.h"
 #include "ParseWorker.h"
+#include "HttpClient.h"
 #include "log_center.h"
 #include "hlog1.h"
 #include "ConfigManager.h"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <windows.h>
 #include <tchar.h>
+#include "define.h"
 
 // ──── HTTP 服务专用日志宏（写入 ./log/HTTP/http.log）────
 #ifndef HTTP_INFO
@@ -63,6 +65,13 @@ HttpServer::HttpServer(QObject* parent)
         if (!m_pBuffer) return QString();
         GridEntry entry = m_pBuffer->get(code);
         return entry.gridNum;  // 返回 "15" 或 "1,2,3"（多格口逗号分隔）
+    });
+
+    // ★ 设置小车号查询回调：从 EpcCache 获取 RFID 提供的小车号
+    m_pPlcMgr->setCarNumCallback([this](const QString& code) -> QString {
+        if (!m_pEpcCache) return CAR_NUM_STR(DEFAULT_CAR_NUM);
+        QString carNum = m_pEpcCache->getCarNum(code);
+        return carNum.isEmpty() ? CAR_NUM_STR(DEFAULT_CAR_NUM) : carNum;
     });
 
     // ──── 业务线程池 ────
@@ -136,6 +145,7 @@ HttpServer::HttpServer(QObject* parent)
                             rec.gridType  = it.value().gridType.isEmpty() ? "普通格口" : it.value().gridType;
                             rec.planQty   = it.value().gridCount;
                             rec.volu      = it.value().volu;
+                            rec.obxCode   = it.value().obxCode;     // ★ 容器号
                             items.append(rec);
                         }
                     }
@@ -160,51 +170,17 @@ HttpServer::HttpServer(QObject* parent)
                 std::lock_guard<std::mutex> lock(m_gridCountMutex);
                 m_gridSortedCount.clear();
             }
-            // ★ 新波次到来，清空旧 EPC→SKU 映射
-            {
-                if (m_pEpcCache) m_pEpcCache->clear();
-            }
+            // ★ 新波次到来，清空旧波次相关数据（EpcCache 保留，RFID 推送独立于波次生命周期）
 
-            // ★ 主动发送模式：波次解析完成后，批量发送所有识别码到PLC（与WCSApp一致）
-            //   不等待PLC查询报文，主动遍历波次所有识别码发送PLC分拣指令
-            //   TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
-            if (m_pPlcMgr && m_pPlcMgr->hasConnectedClients())
-            {
-                QMap<QString, QString> codeGridMap;
-                for (const QString& code : recvSet)
-                {
-                    GridEntry entry = m_pBuffer->get(code);
-                    if (!entry.gridNum.isEmpty())
-                    {
-                        codeGridMap[code] = entry.gridNum;
-                    }
-                }
-                if (!codeGridMap.isEmpty())
-                {
-                    HTTP_LOG_INFO("波次解析完成 主动批量发送PLC指令 order=%s count=%d",
-                        orderCode.toLocal8Bit().data(), codeGridMap.size());
-                    emit logMessage(QString("[PLC] 主动批量发送 %1 条指令").arg(codeGridMap.size()));
-                    m_pPlcMgr->sendBatchCodes(codeGridMap);
-                }
-            }
-
-            // ★ 触发RFID查询：按批次大小拆分EPC列表，分批请求
+            // ★ SKU-EPC 绑定查询：波次解析完成后，收集 EPC 列表提交到 RFID 查询
+            //   查询完成后存入 EpcCache（skuBound=true），等待 RFID 推送 carNum 后才发送 PLC
             if (!epcList.isEmpty())
             {
-                HTTP_LOG_INFO("波次解析完成 触发RFID查询 order=%s epcCount=%d",
+                HTTP_LOG_INFO("波次解析完成 提交EPC绑定查询 order=%s epcCount=%d",
                     orderCode.toLocal8Bit().data(), epcList.size());
-
-                QJsonArray batch;
-                for (int i = 0; i < epcList.size(); ++i)
-                {
-                    batch.append(epcList[i]);
-                    if (batch.size() >= RFID_MAX_BATCH_SIZE || i == epcList.size() - 1)
-                    {
-                        QString batchCtx = QString("%1_batch%2").arg(orderCode).arg(i / RFID_MAX_BATCH_SIZE + 1);
-                        emit rfidQueryRequested(batch, batchCtx);
-                        batch = QJsonArray();
-                    }
-                }
+                emit logMessage(QString("[EPC] 提交 SKU-EPC 绑定查询 %1 条 orderCode=%2")
+                    .arg(epcList.size()).arg(orderCode));
+                submitEpcBindingQueries(epcList);
             }
         }, Qt::QueuedConnection);
 
@@ -680,6 +656,7 @@ EnHttpParseResult HttpServer::OnRequestLine(IHttpServer* pSender, CONNID dwConnI
 {
     std::lock_guard<std::mutex> lock(m_connMutex);
     ConnState& st = m_connStates[dwConnID];
+    st.body.clear();  // ★ 新请求到来时清空 body，防止 keep-alive 连接下 body 拼接
     st.method = QString::fromUtf8(lpszMethod);
     QString full = QString::fromUtf8(lpszUrl);
     int q = full.indexOf('?');
@@ -841,6 +818,13 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
         }
         else
         {
+#if DEBUG_LOG_FULL_BODY
+            // ★ 调试模式：打印完整请求体（不截断）
+            HTTP_INFO("[原始报文] %s  body=%s(%d字节)  req#=%lld",
+                fullUrl.toLocal8Bit().data(),
+                st.body.constData(),
+                st.body.size(), reqNum);
+#else
             // Body 截断显示
             QByteArray bodyPreview = st.body.left(RAW_REQ_BODY_LOG_LEN);
             bool truncated = st.body.size() > RAW_REQ_BODY_LOG_LEN;
@@ -849,6 +833,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
                 bodyPreview.constData(),
                 truncated ? "..." : "",
                 st.body.size(), reqNum);
+#endif
         }
     }
     emit logMessage(QString("[请求] %1 %2").arg(st.method).arg(st.path));
@@ -862,17 +847,35 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     // ═══════════════════════════════════════════════════════════════════════
     if (st.path == m_apiInsertWaveInfo && st.method == "POST")
     {
-        // 步骤1: 解析 JSON
+        // 步骤1: 解析 JSON — 剥离 BOM 头（UTF-8 BOM: EF BB BF）
+        //   部分工具导出的 JSON 文件带 BOM，QJsonDocument 可能无法正确解析
+        QByteArray cleanBody = st.body;
+        if (cleanBody.startsWith("\xEF\xBB\xBF"))
+        {
+            cleanBody.remove(0, 3);
+            HTTP_INFO("InsertWaveInfo 检测到UTF-8 BOM，已剥离");
+        }
+        // 移除 null 字节（trimmed() 不处理 \x00，用 char 重载避免 strlen("\x00")==0 的 no-op bug）
+        cleanBody.replace('\x00', "");
+        // 去除首尾空白字符（防止 curl 传参时引入的换行符等）
+        cleanBody = cleanBody.trimmed();
+
         QJsonParseError parseErr;
-        QJsonDocument doc = QJsonDocument::fromJson(st.body, &parseErr);
+        QJsonDocument doc = QJsonDocument::fromJson(cleanBody, &parseErr);
         if (doc.isNull() || !doc.isObject())
         {
-            HTTP_WARN("InsertWaveInfo JSON解析失败: %s", parseErr.errorString().toLocal8Bit().data());
-            emit logMessage(QString("[WMS] JSON解析失败: %1").arg(parseErr.errorString()), true);
+            // ★ 增强诊断：输出原始 body 前 200 字节的十六进制，便于排查编码问题
+            QByteArray hexPreview = cleanBody.left(200).toHex(' ');
+            HTTP_WARN("InsertWaveInfo JSON解析失败: %s offset=%d bodySize=%d hex=[%s]",
+                parseErr.errorString().toLocal8Bit().data(),
+                parseErr.offset, cleanBody.size(), hexPreview.constData());
+            emit logMessage(QString("[WMS] JSON解析失败: %1 (offset=%2, size=%3)")
+                .arg(parseErr.errorString()).arg(parseErr.offset).arg(cleanBody.size()), true);
             QJsonObject err;
-            err["code"] = "400";
-            err["message"] = QString("JSON解析失败: %1").arg(parseErr.errorString());
-            sendJsonResponse(pSender, dwConnID, err, 400);
+            err["code"] = "500";
+            err["message"] = QString("JSON解析失败: %1 (offset=%2)")
+                .arg(parseErr.errorString()).arg(parseErr.offset);
+            sendJsonResponse(pSender, dwConnID, err, 500);
             return;
         }
 
@@ -887,7 +890,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
                 orderCode.toLocal8Bit().data(),
                 validateErr["message"].toString().toLocal8Bit().data());
             emit logMessage(QString("[WMS] 参数校验失败: %1").arg(validateErr["message"].toString()), true);
-            sendJsonResponse(pSender, dwConnID, validateErr, 400);
+            sendJsonResponse(pSender, dwConnID, validateErr, 500);
             return;
         }
 
@@ -919,10 +922,10 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
                 .arg(boundCount).arg(expectedCount).arg(missingGrids.join(",")).arg(orderCode), true);
 
             QJsonObject err;
-            err["code"] = "400";
+            err["code"] = "500";
             err["message"] = QString("格口绑定不完整(%1/%2)，请先完成全部容器绑定后再下发波次")
                 .arg(boundCount).arg(expectedCount);
-            sendJsonResponse(pSender, dwConnID, err, 400);
+            sendJsonResponse(pSender, dwConnID, err, 500);
             return;
         }
 
@@ -943,10 +946,10 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
                         orderCode.toLocal8Bit().data(), existingStatus);
                     emit logMessage(QString("[WMS] 波次已分拣，拒绝覆盖 orderCode=%1").arg(orderCode), true);
                     QJsonObject err;
-                    err["code"] = "409";
+                    err["code"] = "500";
                     err["message"] = "波次已开始分拣，不允许覆盖";
                     err["orderCode"] = orderCode;
-                    sendJsonResponse(pSender, dwConnID, err, 409);
+                    sendJsonResponse(pSender, dwConnID, err, 500);
                     return;
                 }
                 // 未分拣，允许覆盖：先清理旧数据
@@ -963,10 +966,10 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
             HTTP_WARN("InsertWaveInfo 容器未全部绑定 bound=%d/%d", bc, BINDING_SLOT_COUNT);
             emit logMessage(QString("[WMS] 容器未全部绑定 已绑定:%1/%2 拒绝波次").arg(bc).arg(BINDING_SLOT_COUNT), true);
             QJsonObject err;
-            err["code"] = "400";
+            err["code"] = "500";
             err["message"] = QString("容器未全部绑定，已绑定: %1/%2，请等待WMS下发全部容器绑定").arg(bc).arg(BINDING_SLOT_COUNT);
             err["orderCode"] = orderCode;
-            sendJsonResponse(pSender, dwConnID, err, 400);
+            sendJsonResponse(pSender, dwConnID, err, 500);
             return;
         }
 
@@ -976,10 +979,10 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
             HTTP_WARN("InsertWaveInfo 队列已满 orderCode=%s queue=%d", orderCode.toLocal8Bit().data(), m_pQueue->size());
             emit logMessage("[WMS] 队列已满，拒绝入队 返回503", true);
             QJsonObject err;
-            err["code"] = "503";
+            err["code"] = "500";
             err["message"] = "服务器繁忙，请稍后重试";
             err["orderCode"] = orderCode;
-            sendJsonResponse(pSender, dwConnID, err, 503);
+            sendJsonResponse(pSender, dwConnID, err, 500);
             return;
         }
 
@@ -987,13 +990,14 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
         {
             WaveTask task;
             task.rawBody  = st.body;
+            task.fullUrl  = "http://" + st.rawHost + st.path;  // ★ 完整 URL 传给 ParseWorker 用于明细日志
             task.recvTime = QDateTime::currentMSecsSinceEpoch();
             m_pQueue->push(task);
 
             QJsonObject resp;
             resp["code"]      = "200";
             resp["message"]   = "";
-            resp["orderCode"] = orderCode;
+            resp["sentTime"]  = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz");
             sendJsonResponse(pSender, dwConnID, resp, 200);
 
             // 审计日志（T-S1-06）
@@ -1054,10 +1058,26 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
         return;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // 路由4: RFID 小车号推送（RFID 主动推送 → WCS 被动接收）
+    // 调用方: RFID 读卡服务
+    // 报文: POST /api/rfid/carNumReport
+    // 功能: RFID 扫描到条码后推送 EPC→barcode+carNum 映射，WCS 存入 EpcCache
+    // 需求: §7 RFID小车号（T-S4-02 由RFID主动推送，不在波次下发时主动查询）
+    // ═══════════════════════════════════════════════════════════════════════
+    if (st.path == m_apiRfidCarNumReport && st.method == "POST")
+    {
+        QJsonDocument d = QJsonDocument::fromJson(st.body);
+        QJsonObject result = handleRfidCarNumReport(d.object());
+        sendJsonResponse(pSender, dwConnID, result);
+        HTTP_INFO("RFID小车号推送 body=%d elapsed=%lldms", st.body.size(), reqTimer.elapsed());
+        return;
+    }
+
 
     // 未知路径
     HTTP_WARN("未知路径 %s elapsed=%lldms", st.path.toLocal8Bit().data(), reqTimer.elapsed());
-    sendJsonResponse(pSender, dwConnID, errResponse("Not Found", "404"), 404);
+    sendJsonResponse(pSender, dwConnID, errResponse("Not Found", "500"), 500);
     emit logMessage(QString("[请求] 未知路径 %1").arg(st.path), true);
 }
 
@@ -1112,8 +1132,8 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         emit logMessage(QString("[容器绑定] 参数缺失 boxcode=%1 latticehole=%2")
             .arg(boxcode).arg(latticehole), true);
         QJsonObject r;
-        r["code"] = 100;
-        r["Message"] = QString("参数缺失: latticehole和boxcode均为必填");
+        r["code"] = "500";
+        r["message"] = QString("参数缺失: latticehole和boxcode均为必填");
         return r;
     }
 
@@ -1127,8 +1147,8 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         emit logMessage(QString("[容器绑定] 格口号越界 latticehole=%1 (有效范围: 1~%2)")
             .arg(latticehole).arg(BINDING_SLOT_COUNT), true);
         QJsonObject r;
-        r["code"] = 100;
-        r["Message"] = QString("格口号越界，有效范围: 1~%1").arg(BINDING_SLOT_COUNT);
+        r["code"] = "500";
+        r["message"] = QString("格口号越界，有效范围: 1~%1").arg(BINDING_SLOT_COUNT);
         return r;
     }
 
@@ -1141,6 +1161,10 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         waveStatus = m_pWaveMgr->status();
     }
 
+    // ★ 统一格口号为 GRID_KEY_PADDING 位补零格式（兼容 WMS 传入 "12" 或 "012"）
+    //   UI 面板、容器绑定校验、数据库均使用补零后的 key，避免格式不一致导致查找失败
+    QString normalizedGrid = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
+
     // ──── 步骤3.1: 允许无波次时预绑定（IDLE 状态属于预绑定阶段）────
     // 容器绑定在波次下发之前执行，IDLE 状态允许绑定（预绑定）
     // 仅 CANCELLED/FINISHED/HELD 终态拒绝绑定
@@ -1151,8 +1175,8 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         emit logMessage(QString("[容器绑定] 波次已终态，拒绝绑定 latticehole=%1 orderCode=%2 status=%3")
             .arg(latticehole).arg(orderCode).arg(waveStatus), true);
         QJsonObject r;
-        r["code"] = 100;
-        r["Message"] = QString("波次已终态(status=%1)，不允许绑定新容器").arg(waveStatus);
+        r["code"] = "500";
+        r["message"] = QString("波次已终态(status=%1)，不允许绑定新容器").arg(waveStatus);
         return r;
     }
 
@@ -1169,7 +1193,7 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
                 QStringList grids = it.value().gridNum.split(',', Qt::SkipEmptyParts);
                 for (const QString& g : grids)
                 {
-                    if (g.trimmed() == latticehole)
+                    if (g.trimmed() == normalizedGrid)
                     {
                         gridExists = true;
                         break;
@@ -1185,8 +1209,8 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
             emit logMessage(QString("[容器绑定] 格口%1 不在当前波次任务中 orderCode=%2")
                 .arg(latticehole).arg(orderCode), true);
             QJsonObject r;
-            r["code"] = 100;
-            r["Message"] = QString("格口%1不在当前波次任务中").arg(latticehole);
+            r["code"] = "500";
+            r["message"] = QString("格口%1不在当前波次任务中").arg(latticehole);
             return r;
         }
     }
@@ -1196,24 +1220,24 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         std::lock_guard<std::mutex> lock(m_containerMutex);
 
         // ★ 重复绑定：旧容器归档到数据库（切箱操作）
-        auto it = m_containerBindings.find(latticehole);
+        auto it = m_containerBindings.find(normalizedGrid);
         if (it != m_containerBindings.end() && it.value() != boxcode)
         {
             HTTP_LOG_INFO("BindingLatticePort 切箱 latticehole=%s old=%s new=%s",
-                latticehole.toLocal8Bit().data(),
+                normalizedGrid.toLocal8Bit().data(),
                 it.value().toLocal8Bit().data(),
                 boxcode.toLocal8Bit().data());
             emit logMessage(QString("[容器绑定] 格口%1 切箱: %2 → %3")
-                .arg(latticehole).arg(it.value()).arg(boxcode));
+                .arg(normalizedGrid).arg(it.value()).arg(boxcode));
         }
 
-        m_containerBindings[latticehole] = boxcode;
+        m_containerBindings[normalizedGrid] = boxcode;
     }
 
     // ★ 持久化到数据库（T-S2-04 关联 orderCode）
     if (m_pSortingDb && !orderCode.isEmpty())
     {
-        m_pSortingDb->bindGridBox(latticehole, boxcode, orderCode);
+        m_pSortingDb->bindGridBox(normalizedGrid, boxcode, orderCode);
     }
 
     // ★ 状态迁移：CREATED → BOUND（需求 §3.2，TC-RT-02）
@@ -1226,15 +1250,15 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
     }
 
     HTTP_LOG_INFO("容器绑定成功 latticehole=%s → boxcode=%s orderCode=%s total=%d/%d",
-        latticehole.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
+        normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
         orderCode.toLocal8Bit().data(), boundCount(), BINDING_SLOT_COUNT);
     emit logMessage(QString("[容器绑定] 格口%1 → 容器%2 orderCode=%3 (共%4/%5)")
-        .arg(latticehole).arg(boxcode).arg(orderCode).arg(boundCount()).arg(BINDING_SLOT_COUNT));
+        .arg(normalizedGrid).arg(boxcode).arg(orderCode).arg(boundCount()).arg(BINDING_SLOT_COUNT));
     emit bindingUpdated();  // ★ 通知 UI 即时刷新
 
     QJsonObject r;
-    r["code"] = 200;
-    r["Message"] = "收到信息";
+    r["code"] = "200";
+    r["message"] = "收到信息";
     return r;
 }
 
@@ -1261,7 +1285,7 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
         HTTP_LOG_WARN("CancelWave 缺少orderCode");
         emit logMessage("[取消波次] 缺少orderCode", true);
         QJsonObject r;
-        r["code"] = "400";
+        r["code"] = "500";
         r["message"] = "缺少orderCode";
         r["cancellable"] = false;
         return r;
@@ -1290,7 +1314,7 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
             m_pWaveMgr ? m_pWaveMgr->orderCode().toLocal8Bit().data() : "null");
         emit logMessage(QString("[取消波次] 波次不匹配或不存在 req=%1").arg(orderCode), true);
         QJsonObject r;
-        r["code"] = "404";
+        r["code"] = "500";
         r["message"] = "波次不存在或已完结";
         r["cancellable"] = false;
         return r;
@@ -1324,7 +1348,7 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
         emit logMessage(QString("[取消波次] 取消失败 orderCode=%1 status=%2 sorted=%3")
             .arg(orderCode).arg(QString::fromLocal8Bit(statusText)).arg(m_pWaveMgr->sorted()), true);
         QJsonObject r;
-        r["code"] = "400";
+        r["code"] = "500";
         r["message"] = QString("波次已开始分拣(status=%1 sorted=%2)，不允许取消")
             .arg(QString::fromLocal8Bit(statusText)).arg(m_pWaveMgr->sorted());
         r["cancellable"] = false;
@@ -1386,7 +1410,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
     if (orderCode.isEmpty())
     {
         QJsonObject err;
-        err["code"] = "400";
+        err["code"] = "500";
         err["message"] = "缺少必填字段: orderCode";
         return err;
     }
@@ -1397,7 +1421,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
     if (orderQty <= 0)
     {
         QJsonObject err;
-        err["code"] = "400";
+        err["code"] = "500";
         err["message"] = QString("orderQty 必须大于0，当前值: %1").arg(orderQty);
         err["orderCode"] = orderCode;
         return err;
@@ -1408,7 +1432,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
     if (items.isEmpty())
     {
         QJsonObject err;
-        err["code"] = "400";
+        err["code"] = "500";
         err["message"] = "items 不能为空，至少需要 1 条明细";
         err["orderCode"] = orderCode;
         return err;
@@ -1425,7 +1449,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
         if (inco.isEmpty())
         {
             QJsonObject err;
-            err["code"] = "400";
+            err["code"] = "500";
             err["message"] = QString("items[%1] 缺少必填字段: inco").arg(i);
             err["orderCode"] = orderCode;
             return err;
@@ -1433,7 +1457,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
         if (gridNum.isEmpty())
         {
             QJsonObject err;
-            err["code"] = "400";
+            err["code"] = "500";
             err["message"] = QString("items[%1] 缺少必填字段: gridNum").arg(i);
             err["orderCode"] = orderCode;
             return err;
@@ -1441,7 +1465,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
         if (gridType.isEmpty())
         {
             QJsonObject err;
-            err["code"] = "400";
+            err["code"] = "500";
             err["message"] = QString("items[%1] 缺少必填字段: gridType").arg(i);
             err["orderCode"] = orderCode;
             return err;
@@ -1453,7 +1477,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
         if (gridNumber <= 0)
         {
             QJsonObject err;
-            err["code"] = "400";
+            err["code"] = "500";
             err["message"] = QString("items[%1] gridNumber 必须大于0，当前值: %2").arg(i).arg(gridNumber);
             err["orderCode"] = orderCode;
             return err;
@@ -1476,7 +1500,7 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
         if (orderQty != totalGridNumber)
         {
             QJsonObject err;
-            err["code"] = "400";
+            err["code"] = "500";
             err["message"] = QString("orderQty(%1)与明细合计(%2)不一致").arg(orderQty).arg(totalGridNumber);
             err["orderCode"] = orderCode;
             return err;
@@ -2324,67 +2348,183 @@ WaveReconciliation HttpServer::getReconciliation() const
 }
 
 // ============================================================================
-// onRfidQueryResult — 接收RFID服务返回的EPC→SKU查询结果
-// 解析格式: {"data":{"data":[{"barcode":"xxx","epc":"xxx",...}]},"success":true}
-// 将 EPC→barcode 映射存储到 m_epcSkuMap
+// handleRfidCarNumReport — RFID 主动推送 EPC→barcode+carNum 映射
+// 请求格式: {"data":[{"epc":"xxx","barcode":"xxx","carNum":"002"},...]}
+// 存入 EpcCache，后续 PLC 发送时通过回调查询小车号
 // ============================================================================
-void HttpServer::onRfidQueryResult(const QJsonObject& result, const QString& context)
+QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
 {
-    if (result.isEmpty())
-    {
-        HTTP_LOG_WARN("RFID查询结果为空 context=%s", context.toLocal8Bit().data());
-        emit logMessage(QString("[RFID] 查询结果为空 context=%1").arg(context), true);
-        return;
-    }
-
-    bool success = result["success"].toBool(false);
-    if (!success)
-    {
-        QString errMsg = result["msg"].toString();
-        HTTP_LOG_WARN("RFID查询失败 context=%s msg=%s", context.toLocal8Bit().data(), errMsg.toLocal8Bit().data());
-        emit logMessage(QString("[RFID] 查询失败 context=%1 msg=%2").arg(context).arg(errMsg), true);
-        return;
-    }
-
-    QJsonObject dataObj = result["data"].toObject();
-    QJsonArray dataArr  = dataObj["data"].toArray();
-
+    QJsonArray dataArr = body["data"].toArray();
     if (dataArr.isEmpty())
     {
-        HTTP_LOG_WARN("RFID查询成功但无数据 context=%s", context.toLocal8Bit().data());
-        emit logMessage(QString("[RFID] 查询成功但无数据 context=%1").arg(context));
-        return;
+        HTTP_LOG_WARN("RFID推送 数据为空");
+        QJsonObject r;
+        r["code"] = "500";
+        r["message"] = "data为空";
+        return r;
     }
 
-    // 解析每条 EPC→barcode 映射，存入 EpcCache（T-S4-04 TTL缓存）
+    // 解析每条 EPC→barcode+carNum 映射，存入 EpcCache（T-S4-04 TTL缓存）
     int newCount = 0;
-    QMap<QString, QString> batchMap;
+    int carCount = 0;
+    QMap<QString, QPair<QString, QString>> batchMap;  // epc → {barcode, carNum}
+    for (const QJsonValue& val : dataArr)
     {
-        for (const QJsonValue& val : dataArr)
+        QJsonObject item = val.toObject();
+        QString epc     = item["epc"].toString().trimmed();
+        QString barcode = item["barcode"].toString().trimmed();
+        QString carNum  = item["carNum"].toString().trimmed();  // ★ RFID 小车号
+
+        if (epc.isEmpty()) continue;
+
+        if (!barcode.isEmpty())
         {
-            QJsonObject item = val.toObject();
-            QString epc     = item["epc"].toString().trimmed();
-            QString barcode = item["barcode"].toString().trimmed();
-
-            if (epc.isEmpty()) continue;
-
-            if (!barcode.isEmpty())
-            {
-                batchMap[epc] = barcode;
-                newCount++;
-            }
+            batchMap[epc] = {barcode, carNum};
+            newCount++;
+            if (!carNum.isEmpty() && carNum != CAR_NUM_STR(DEFAULT_CAR_NUM)) carCount++;
         }
     }
 
-    // ★ 批量写入 EpcCache（TTL 自动管理）
+    // ★ 批量写入 EpcCache（含 carNum，TTL 自动管理，保留已有 SKU 绑定数据）
     if (m_pEpcCache && !batchMap.isEmpty())
     {
-        m_pEpcCache->setBatch(batchMap);
+        m_pEpcCache->setBatchWithCar(batchMap);
     }
 
-    HTTP_LOG_INFO("RFID查询结果已存储 context=%s total=%d new=%d",
-        context.toLocal8Bit().data(), dataArr.size(), newCount);
-    emit logMessage(QString("[RFID] EPC→SKU映射已存储 context=%1 返回%2条 有效%3条")
-        .arg(context).arg(dataArr.size()).arg(newCount));
+    // ★ 逐条检查：EPC 是否已就绪（SKU 已绑定 + carNum 已获取）
+    //   就绪则立即发送 PLC 指令
+    int sentCount = 0;
+    for (auto it = batchMap.constBegin(); it != batchMap.constEnd(); ++it)
+    {
+        if (trySendToPlcForEpc(it.key()))
+            sentCount++;
+    }
+
+    HTTP_LOG_INFO("RFID推送已存储 total=%d new=%d carNum=%d sent=%d",
+        dataArr.size(), newCount, carCount, sentCount);
+    emit logMessage(QString("[RFID] 小车号推送 接收%1条 有效%2条 小车号%3条 已发送PLC%4条")
+        .arg(dataArr.size()).arg(newCount).arg(carCount).arg(sentCount));
+
+    QJsonObject r;
+    r["code"] = "200";
+    r["message"] = "OK";
+    r["stored"] = newCount;
+    return r;
+}
+
+// ============================================================================
+// setHttpClient — 设置 HTTP 客户端，连接 RFID 绑定查询结果信号
+// ============================================================================
+void HttpServer::setHttpClient(HttpClient* client)
+{
+    m_pHttpClient = client;
+    if (m_pHttpClient)
+    {
+        connect(m_pHttpClient, &HttpClient::rfidBindingResult, this,
+            &HttpServer::onRfidBindingResult, Qt::QueuedConnection);
+    }
+}
+
+// ============================================================================
+// submitEpcBindingQueries — 波次下发后提交 EPC 绑定查询
+// 向 RFID 查询 EPC→barcode 映射，异步非阻塞，不阻塞主流程
+// ============================================================================
+void HttpServer::submitEpcBindingQueries(const QStringList& epcList)
+{
+    if (!m_pHttpClient)
+    {
+        HTTP_LOG_WARN("EPC绑定查询 HttpClient未设置，跳过 epcCount=%d", epcList.size());
+        return;
+    }
+    m_pHttpClient->queryRfidBinding(epcList);
+}
+
+// ============================================================================
+// onRfidBindingResult — RFID 绑定查询结果回调
+// 将 EPC→barcode 映射存入 EpcCache（skuBound=true），
+// 然后检查每条 EPC 是否已就绪（carNum 也已获取），就绪则发送 PLC
+// ============================================================================
+void HttpServer::onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap)
+{
+    if (epcBarcodeMap.isEmpty())
+    {
+        HTTP_LOG_WARN("EPC绑定查询结果为空（RFID无响应或超时）");
+        emit logMessage("[EPC] SKU-EPC 绑定查询结果为空，RFID 可能未响应");
+        return;
+    }
+
+    HTTP_LOG_INFO("EPC绑定查询结果 匹配数=%d", epcBarcodeMap.size());
+    emit logMessage(QString("[EPC] SKU-EPC 绑定查询完成 匹配%1条").arg(epcBarcodeMap.size()));
+
+    // 逐条存入 EpcCache（skuBound=true），并检查是否就绪
+    int readyCount = 0;
+    for (auto it = epcBarcodeMap.constBegin(); it != epcBarcodeMap.constEnd(); ++it)
+    {
+        if (m_pEpcCache)
+        {
+            m_pEpcCache->setSkuBinding(it.key(), it.value());
+        }
+
+        // 检查是否已就绪（carNum 也已获取）
+        if (trySendToPlcForEpc(it.key()))
+            readyCount++;
+    }
+
+    HTTP_LOG_INFO("EPC绑定完成 匹配=%d 就绪=%d", epcBarcodeMap.size(), readyCount);
+    emit logMessage(QString("[EPC] SKU-EPC 绑定完成 匹配%1条 已就绪发送PLC%2条")
+        .arg(epcBarcodeMap.size()).arg(readyCount));
+}
+
+// ============================================================================
+// trySendToPlcForEpc — 尝试发送单条 EPC 到 PLC（就绪检查）
+// 就绪条件：SKU 已绑定（skuBound=true）+ carNum 已获取
+// 通过 EpcCache 获取 barcode + carNum，再从 GridBuffer 获取 gridNum
+// 返回 true 表示已发送 PLC 指令
+// ============================================================================
+bool HttpServer::trySendToPlcForEpc(const QString& epc)
+{
+    if (!m_pEpcCache || !m_pPlcMgr || !m_pBuffer)
+        return false;
+
+    // 检查是否就绪
+    if (!m_pEpcCache->isReadyForPlc(epc))
+        return false;
+
+    // 获取 barcode 和 carNum
+    QPair<QString, QString> plcData = m_pEpcCache->getPlcData(epc);
+    QString barcode = plcData.first;
+    QString carNum  = plcData.second;
+    if (barcode.isEmpty())
+        return false;
+
+    // 从 GridBuffer 获取格口号
+    GridEntry entry = m_pBuffer->get(barcode);
+    if (entry.gridNum.isEmpty())
+    {
+        HTTP_LOG_WARN("trySendToPlcForEpc 格口未找到 epc=%s barcode=%s",
+            epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
+        return false;
+    }
+
+    // 检查 PLC 连接
+    if (!m_pPlcMgr->hasConnectedClients())
+    {
+        HTTP_LOG_WARN("trySendToPlcForEpc PLC未连接 epc=%s barcode=%s", 
+            epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
+        return false;
+    }
+
+    // 发送单条 PLC 指令
+    QMap<QString, QString> codeGridMap;
+    codeGridMap[barcode] = entry.gridNum;
+    m_pPlcMgr->sendBatchCodesWithEpcCache(codeGridMap);
+
+    HTTP_LOG_INFO("PLC发送就绪 epc=%s barcode=%s grid=%s carNum=%s",
+        epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
+        entry.gridNum.toLocal8Bit().data(), carNum.toLocal8Bit().data());
+    emit logMessage(QString("[PLC] 发送 %1 → 格口%2 小车%3 (epc=%4)")
+        .arg(barcode).arg(entry.gridNum).arg(carNum).arg(epc));
+
+    return true;
 }
 

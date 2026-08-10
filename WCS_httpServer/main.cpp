@@ -47,6 +47,7 @@ int main(int argc, char* argv[])
     QDir().mkpath(exeDir + "/log/LIFECYCLE");   // 条码生命周期日志
     QDir().mkpath(exeDir + "/log/DataBase");    // 数据库操作日志
     QDir().mkpath(exeDir + "/log/JT");          // 极兔分拣日志
+    QDir().mkpath(exeDir + "/log/EPC");         // EpcCache 日志
     QDir().mkpath(exeDir + "/data");            // 分拣数据库目录（UI 查询独立于服务，需提前创建）
 
     ConfigManager::instance()->load();
