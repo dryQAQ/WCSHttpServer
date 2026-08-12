@@ -3,18 +3,18 @@
 // PlcManager.h — PLC 管理器（TCP 文本协议 + S7 协议 + 锁格）
 //
 // 职责：
-//   ① 通过 S7 DBWrite 发送条码+格口分拣指令到 PLC（与 WCSApp 一致）
+//   ① 通过 S7 DBWrite 发送EPC编码+格口分拣指令到 PLC（与 WCSApp 一致）
 //   ② 通过 TCP 文本协议发送指令 + 接收 PLC 落格反馈
 //   ③ 监听TCP端口，接受PLC主动连接（HP-Socket CTcpServerListener）
 //   ④ 接收 PLC 主动发送的 TCP 锁格消息 {grid|L}/{grid|U}（与WCSApp一致，PLC主动发，WCS被动接收执行）
 //   ⑤ 管理多PLC客户端连接（m_mapClient）
 //   ⑥ S7 心跳线程：每2秒检测连接，断线自动重连（与 WCSApp simensS7 一致）
-//   ⑦ 支持主动发送模式：批量发送波次所有条码到PLC（不等待PLC查询，与WCSApp一致）
+//   ⑦ 支持主动发送模式：批量发送波次所有EPC编码到PLC（不等待PLC查询，与WCSApp一致）
 //
 // 通信协议（与 WCSApp 完全兼容）：
-//   S7 发送: DB1 Offset 1000, 42 bytes (条码+格口二进制包)
+//   S7 发送: DB1 Offset 1000, 42 bytes (EPC编码+格口二进制包)
 //   TCP 发送: {识别码|格口|小车号}  — TCP 文本，格口和小车号 3位补零
-//      TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+//      识别码 = EPC编码，客户已确认（2026-08-10）
 //      TODO: 小车号应由RFID提供，客户尚未提供RFID小车号字段（2026-08-04）
 //      示例: {ST1234567890123|015|001}
 //   TCP 反馈: {识别码|格口|小车号}  — 落格确认
@@ -140,7 +140,7 @@ struct PlcStats
 typedef std::function<void(std::string ip, int port, bool status)> PlcStatusCallback;
 typedef std::function<void(QString code, QString grid, QString car)> PlcFeedbackCallback;
 // ★ 格口查询回调：PLC/相机扫到识别码时调用，返回格口字符串（如 "15" 或 "1,2,3"）
-// TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+// 识别码 = EPC编码，客户已确认（2026-08-10）
 typedef std::function<QString(const QString& code)> PlcLookupCallback;
 // ★ 小车号查询回调：从 EpcCache 获取 RFID 提供的小车号，返回 "001" 兜底
 typedef std::function<QString(const QString& code)> PlcCarNumCallback;
@@ -181,12 +181,12 @@ public:
     void setCarNumCallback(PlcCarNumCallback cb) { m_carNumCb = std::move(cb); }
 
     // ──── 发送指令 ────
-    // TODO: code 可能为条码或EPC，客户尚未确定（2026-08-04）
+    // code 为 EPC编码，客户已确认（2026-08-10）
     // TODO: car 小车号应由RFID提供，客户尚未提供RFID小车号字段，当前默认=1（2026-08-04）
     bool sendCodeInfo(const QString& code, const std::vector<int>& vecGrid, int car = 1);
     bool sendRawCommand(const QString& command);
     // ★ 主动发送模式：批量发送波次识别码到PLC（不等待PLC查询，与WCSApp一致）
-    // TODO: codeGridMap 的 key 可能为条码或EPC，客户尚未确定（2026-08-04）
+    // codeGridMap 的 key 为 EPC编码，客户已确认（2026-08-10）
     // codeGridMap: 识别码→格口字符串（如 "15" 或 "1,2,3"）
     bool sendBatchCodes(const QMap<QString, QString>& codeGridMap);
 
@@ -277,7 +277,7 @@ signals:
     QString m_lastBarcode;
     QString m_lastGrid;             // 最近一次发送的格口
     QString m_lastCar;
-    QString m_lastRecvCode;         // 最近一次接收的条码
+    QString m_lastRecvCode;         // 最近一次接收的EPC编码
     QString m_lastRecvGrid;         // 最近一次接收的格口
     QString m_lastRecvCar;          // 最近一次接收的小车
     qint64  m_lastSendTimeMs = 0;   // 最近发送时间戳
@@ -294,7 +294,7 @@ signals:
     QByteArray m_recvBuffer;
 
     // ──── PLC发送失败日志限流 ────
-    QSet<QString> m_warnedBarcodes;  // 已警告过的条码（PLC连接时重置）
+    QSet<QString> m_warnedBarcodes;  // 已警告过的EPC编码（PLC连接时重置）
     std::mutex    m_warnMutex;       // 保护m_warnedBarcodes
 
     // ──── 批量反馈机制（减少高并发下的信号频率）────

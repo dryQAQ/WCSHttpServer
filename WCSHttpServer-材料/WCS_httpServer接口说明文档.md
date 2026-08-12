@@ -51,7 +51,7 @@ flowchart TB
 |------|------|
 | **HP-Socket** | 端口 8191，接收 WMS HTTP 请求，路由到具体 Handler |
 | **ParseWorker** | 独立线程解析波次 JSON，构建 inco→grid 映射 |
-| **GridBuffer** | DoubleBuffer 无锁读写，存储条码→格口映射 |
+| **GridBuffer** | DoubleBuffer 无锁读写，存储EPC→格口映射 |
 | **WaveManager** | 波次状态机（10 状态），分拣标记，完结判定 |
 | **PlcManager** | 端口 8192 TCP Server，接收 PLC 落格反馈，批量缓冲 |
 | **HttpClient** | 向 WMS 回传满箱/完结报文；向 RFID 主动查询 EPC→barcode |
@@ -103,7 +103,7 @@ stateDiagram-v2
 
 ### 3.1 接口概述
 
-WMS 将退货波次数据推送到 WCS，包含每个 SKU 的条码（inco）、分配的格口号、计划数量等。WCS 解析后建立 `inco→grid` 映射，持久化到数据库，并向 PLC 发送分拣指令。
+WMS 将退货波次数据推送到 WCS，包含每个 SKU 的 EPC（商品编码，即 inco 字段）、分配的格口号、计划数量等。WCS 解析后建立 `inco→grid` 映射，持久化到数据库，并向 PLC 发送分拣指令。
 
 | 属性 | 值 |
 |------|-----|
@@ -136,7 +136,7 @@ WMS 将退货波次数据推送到 WCS，包含每个 SKU 的条码（inco）、
 | orderCode | string | 波次号（唯一标识） |
 | orderQty | int/string | 波次总件数 |
 | items[].obxCode | string | 出库箱号 |
-| items[].inco | string | 识别码（条码/EPC） |
+| items[].inco | string | EPC编码（商品编码），WMS侧称为商品编码，即EPC标签值 |
 | items[].epcn | string | EPC编码（可选，用于RFID查询） |
 | items[].gridNum | string | 格口号（3位零填充，如 "001"） |
 | items[].gridNumber | int/string | 该格口计划数量 |
@@ -572,7 +572,7 @@ sequenceDiagram
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | data[].epc | string | 是 | EPC 编码 |
-| data[].barcode | string | 是 | 条码/识别码 |
+| data[].barcode | string | 是 | EPC/识别码 |
 | data[].carNum | string | 否 | 小车号（3位补零，如 "002"），为空时使用 `DEFAULT_CAR_NUM` 兜底 |
 
 **响应**（WCS → RFID）：
@@ -609,7 +609,7 @@ flowchart TD
     A["PLC 发送指令时需要小车号"] --> B{"EpcCache 中是否有该 epc?"}
     B -->|"有且未过期"| C["返回 RFID 推送的 carNum"]
     B -->|"无 或 已过期"| D["使用 DEFAULT_CAR_NUM 兜底<br>(define.h 配置，默认 '001')"]
-    C --> E["TCP {条码|格口|小车号}"]
+    C --> E["TCP {EPC|格口|小车号}"]
     D --> E
 ```
 
@@ -628,7 +628,7 @@ flowchart TD
 
 ### 7.1 接口概述
 
-WCS 在波次下发后，如需补充查询 EPC 对应的条码（barcode）信息，可**主动向 RFID 服务发起 HTTP 查询**。RFID 返回 `epc→barcode` 映射关系，WCS 将结果存入 EpcCache。
+WCS 在波次下发后，如需补充查询 EPC 对应的商品编码（barcode）信息，可**主动向 RFID 服务发起 HTTP 查询**。RFID 返回 `epc→barcode` 映射关系，WCS 将结果存入 EpcCache。
 
 | 属性 | 值 |
 |------|-----|
@@ -665,7 +665,7 @@ WCS 在波次下发后，如需补充查询 EPC 对应的条码（barcode）信�
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | data[].epc | string | EPC 编码 |
-| data[].barcode | string | 对应的条码/识别码 |
+| data[].barcode | string | 对应的EPC/识别码 |
 
 ### 7.3 时序图
 
@@ -1092,6 +1092,6 @@ erDiagram
 | 2 | 容器格口绑定 | `/api/DispatchSortingCommand/BindingLatticePort` | POST | WMS→WCS | 容器号与格口号绑定，支持切箱归档 |
 | 3 | 退货任务取消 | `/api/DispatchSortingCommand/InsertWaveIn` | POST | WMS→WCS | 取消波次（未开工），清理绑定和分拣记录 |
 | 4 | RFID 小车号推送 | `/api/rfid/carNumReport` | POST | RFID→WCS | RFID 实时推送 EPC→barcode+carNum，存入 EpcCache |
-| 5 | RFID SKU-EPC 查询 | `/open-api/rfid/query` | POST | WCS→RFID | WCS 主动查询 EPC 对应的条码信息 |
+| 5 | RFID SKU-EPC 查询 | `/open-api/rfid/query` | POST | WCS→RFID | WCS 主动查询 EPC 对应的商品编码信息 |
 | 6 | 满箱切箱同步 | PLC 锁格触发 | 内部 | WCS→WMS | H7 满箱回传，Outbox 可靠投递，容器归档切箱 |
 | 7 | 完结数据回传 | 全部分拣完成触发 | 内部 | WCS→WMS | H8 完结回传，33.md 格式，波次状态→FINISHED |

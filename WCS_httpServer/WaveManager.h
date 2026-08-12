@@ -125,7 +125,7 @@ public:
     bool      contains(const QString& code) const { return m_pBuffer->contains(code); }
     int       gridCount() const { return m_pBuffer->size(); }
 
-    // 获取波次中所有条码列表（快照诊断用）
+    // 获取波次中所有EPC编码列表（快照诊断用）
     QStringList allCodes() const
     {
         QStringList codes;

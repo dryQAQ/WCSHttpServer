@@ -3,6 +3,7 @@
   uic WCS_httpServer.ui
   rcc WCS_httpServer.qrc
   moc WCS_httpServer.h
+   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   moc ConfigManager.h
   moc LifecycleLogger.h
   moc log_center.h
@@ -12,7 +13,6 @@
   moc MainWindow.h
   moc HttpServer.h
   moc HttpClient.h
-   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   ConfigManager.cpp
   HttpClient.cpp
   HttpServer.cpp

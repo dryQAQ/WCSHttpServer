@@ -114,7 +114,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // PLC 通信配置（与 WCSApp 一致，TCP 文本协议 + S7 协议）
 //
-// TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+// 识别码 = EPC编码，客户已确认EPC（商品编码）即EPC编码（2026-08-10）
 // TODO: 小车号应由RFID提供，客户尚未提供RFID小车号字段，当前默认=1（2026-08-04）
 // ═══════════════════════════════════════════════════════════════════════════
 // ── TCP 文本协议 ──
@@ -132,8 +132,8 @@
 #define PLC_S7_LOCK_READ_SIZE   25             // S7 锁格读取大小（字节，25字节=200位）
 #define PLC_S7_LOCK_INTERVAL_MS 1000           // S7 锁格轮询间隔(ms)
 #define PLC_S7_MAX_GRID_COUNT   200            // 最大格口数（锁格位图覆盖范围）
-#define PLC_S7_CODE_MAX_LEN      25             // S7 包中条码字段最大字节数（ASCII编码）
-#define PLC_S7_CODE_OFFSET       10             // S7 包中条码字段起始偏移（0-based）
+#define PLC_S7_CODE_MAX_LEN      25             // S7 包中EPC编码字段最大字节数（ASCII编码）
+#define PLC_S7_CODE_OFFSET       10             // S7 包中EPC编码字段起始偏移（0-based）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 配置文件路径
@@ -236,10 +236,10 @@
 // 字段说明：
 //   id         — 自增主键，唯一标识每条记录
 //   order_code — 波次号，关联 WMS 推送的波次
-//   barcode    — 条码/SKU 编码，用于查询追溯
+//   barcode    — EPC编码/SKU 编码，用于查询追溯
 //   grid_num   — 格口号，分拣落格的目标格口
 //   car_num    — 小车号，输送分拣的小车编号
-//   grid_count — 配货件数，该格口该条码的配货数量
+//   grid_count — 配货件数，该格口该EPC的配货数量
 //   volu       — 来源库位，货物在原仓库的存放位置
 //   sort_time  — 分拣完成时间，PLC 反馈落格的时间戳
 //   create_time— 记录创建时间，写入数据库的时间
@@ -257,7 +257,7 @@
     ")"
 
 // ──── 索引：加速常用查询 ────
-// 按条码查询索引 — 加速按条码搜索历史分拣记录
+// 按EPC编码查询索引 — 加速按EPC编码搜索历史分拣记录
 #define SQL_CREATE_INDEX_BARCODE   "CREATE INDEX IF NOT EXISTS idx_barcode    ON sorting_records(barcode)"
 // 按波次号查询索引 — 加速按波次号查询该波次下所有分拣记录
 #define SQL_CREATE_INDEX_ORDER     "CREATE INDEX IF NOT EXISTS idx_order_code ON sorting_records(order_code)"
@@ -276,7 +276,7 @@
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
 
 // ──── 查询：按不同条件检索分拣记录 ────
-// 按条码查询 — 输入条码，返回该条码的所有分拣历史（按时间倒序）→ 状态=已分拣
+// 按EPC编码查询 — 输入EPC编码，返回该EPC编码的所有分拣历史（按时间倒序）→ 状态=已分拣
 #define SQL_QUERY_BY_BARCODE       SQL_SELECT_FIELDS "FROM sorting_records WHERE barcode = ? ORDER BY id DESC LIMIT ?"
 // 按时间范围查询 — 输入起始和结束时间，返回该时间段内的分拣记录（按时间倒序）→ 状态=已分拣
 #define SQL_QUERY_BY_TIME          SQL_SELECT_FIELDS "FROM sorting_records WHERE sort_time >= ? AND sort_time <= ? ORDER BY id DESC LIMIT ?"
@@ -288,7 +288,7 @@
 // ──── UI 查询：待分拣明细（计划表 − 已落格，互斥去重）────
 // 判定规则：
 //   - sorting_records 有记录 → 已落格 → 「已分拣」
-//   - return_wave_item 有计划且同波次同条码不在 sorting_records → 「待分拣」
+//   - return_wave_item 有计划且同波次同EPC编码不在 sorting_records → 「待分拣」
 // 用 NOT EXISTS 保证同一 order_code+inco 不会同时出现两种状态
 #define SQL_QUERY_PENDING_BY_BARCODE \
     "SELECT i.order_code, i.inco, i.grid_num, i.plan_qty, i.volu " \
@@ -300,7 +300,7 @@
     ") " \
     "ORDER BY i.id DESC LIMIT ?"
 
-// 按波次创建时间范围补充「待分拣」（UI 无条码、按日期查询时）
+// 按波次创建时间范围补充「待分拣」（UI 无EPC编码、按日期查询时）
 #define SQL_QUERY_PENDING_BY_WAVE_TIME \
     "SELECT i.order_code, i.inco, i.grid_num, i.plan_qty, i.volu " \
     "FROM return_wave_item i " \
@@ -312,9 +312,9 @@
     ") " \
     "ORDER BY i.id DESC LIMIT ?"
 
-// 按条码查询待分拣明细（计划表 − 已落格，互斥去重）— 同上，用于 queryAllWithPending
-// ──── 查询全部待分拣明细（无条码过滤，用于留空查全部）────
-// 判定规则同 SQL_QUERY_PENDING_BY_BARCODE，但不按条码过滤
+// 按EPC编码查询待分拣明细（计划表 − 已落格，互斥去重）— 同上，用于 queryAllWithPending
+// ──── 查询全部待分拣明细（无EPC编码过滤，用于留空查全部）────
+// 判定规则同 SQL_QUERY_PENDING_BY_BARCODE，但不按EPC编码过滤
 #define SQL_QUERY_ALL_PENDING \
     "SELECT i.order_code, i.inco, i.grid_num, i.plan_qty, i.volu " \
     "FROM return_wave_item i " \
@@ -484,7 +484,7 @@
 // ──── 索引：新表的常用查询索引 ────
 // 按波次号查询明细 — 加速按波次查询所有分配明细
 #define SQL_CREATE_INDEX_WAVE_ITEM_ORDER  "CREATE INDEX IF NOT EXISTS idx_wave_item_order  ON return_wave_item(order_code)"
-// 按识别码/条码查待分拣 — 加速 UI 条码查询
+// 按EPC编码查待分拣 — 加速 UI EPC编码查询
 #define SQL_CREATE_INDEX_WAVE_ITEM_INCO   "CREATE INDEX IF NOT EXISTS idx_wave_item_inco   ON return_wave_item(inco)"
 // 按波次号查询流水 — 加速按波次查询分拣流水
 #define SQL_CREATE_INDEX_SORT_TXN_ORDER   "CREATE INDEX IF NOT EXISTS idx_sort_txn_order   ON sort_txn(order_code)"
@@ -615,7 +615,7 @@
 //   WCS_LOG_INFO/WARN/ERROR(fmt, ...)   → WCS模块（波次管理、分拣状态） → ./log/WCS/WCS.log
 //   PLC_LOG_INFO/WARN/ERROR(fmt, ...)   → PLC模块（连接、收发、心跳）   → ./log/PLC/PLC.log
 //   HTTP_LOG_INFO/WARN/ERROR(fmt, ...)  → HTTP模块（请求分发、WMS回传） → ./log/HTTP/http.log
-//   LIFE_LOG(fmt, ...)                  → LIFECYCLE模块（条码全链路追踪） → ./log/LIFECYCLE/lifecycle.log
+//   LIFE_LOG(fmt, ...)                  → LIFECYCLE模块（EPC编码全链路追踪） → ./log/LIFECYCLE/lifecycle.log
 //
 //   使用示例:
 //     WCS_LOG_INFO("波次创建成功 waveId=%s", ...);

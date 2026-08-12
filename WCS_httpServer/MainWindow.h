@@ -93,10 +93,10 @@ private:
     QLabel*      m_lblS7LockGrids  = nullptr;  // S7锁格数量
 
     // ──── 最近数据 UI ────
-    QLabel*      m_lblLastSendCode = nullptr;  // 最近发送条码
+    QLabel*      m_lblLastSendCode = nullptr;  // 最近发送EPC编码
     QLabel*      m_lblLastSendGrid = nullptr;  // 最近发送格口
     QLabel*      m_lblLastSendTime = nullptr;  // 最近发送时间
-    QLabel*      m_lblLastRecvCode = nullptr;  // 最近接收条码
+    QLabel*      m_lblLastRecvCode = nullptr;  // 最近接收EPC编码
     QLabel*      m_lblLastRecvGrid = nullptr;  // 最近接收格口
     QLabel*      m_lblLastRecvTime = nullptr;  // 最近接收时间
 
@@ -142,7 +142,7 @@ private:
     bool         m_lastS7Connected  = false;   // ★ 缓存S7状态
 
     // ──── 分拣记录查询 UI ────
-    QLineEdit*   m_editQueryBarcode = nullptr;   // 条码查询输入
+    QLineEdit*   m_editQueryBarcode = nullptr;   // EPC编码查询输入
     QDateEdit*   m_editQueryDateFrom = nullptr;   // 查询起始日期
     QDateEdit*   m_editQueryDateTo   = nullptr;   // 查询结束日期
     QPushButton* m_btnQueryRecords   = nullptr;   // 查询按钮

@@ -4,7 +4,7 @@
 // 职责：
 //   ① 通过 S7 协议 (ISO-on-TCP, port 102) 直连 Siemens PLC
 //   ② 读写 PLC Data Block (DBRead/DBWrite)
-//   ③ 写入条码+格口分拣指令到 DB1
+//   ③ 写入EPC编码+格口分拣指令到 DB1
 //
 // 参考: WCSApp\WCSApps\SiemensPLC.h
 // ============================================================================
@@ -38,7 +38,7 @@ public:
     // 写入 DB 块数据
     bool writeData(int dbNum, int startAddr, int size, const byte* data);
 
-    // 写入条码+格口信息到 DB1 (与 WCSApp 完全兼容)
+    // 写入EPC编码+格口信息到 DB1 (与 WCSApp 完全兼容)
     // 数据格式: DB1 Offset 1000, 42 bytes
     bool writeCodeInfo(const QByteArray& sSend, const std::vector<int>& vecGrid);
 

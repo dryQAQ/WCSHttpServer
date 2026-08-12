@@ -94,7 +94,11 @@ void ParseWorker::run()
             recvSet.insert(inco);
 
             // ★ 收集EPC（用于后续RFID查询SKU绑定）
+            //   epcn 与 inco 为同一 EPC 编码值，客户表述不同而已
+            //   优先取 epcn 字段，若不存在则用 inco 作为 EPC 值
             QString epcn = item["epcn"].toString().trimmed();
+            if (epcn.isEmpty())
+                epcn = inco;
             if (!epcn.isEmpty() && !epcList.contains(epcn))
                 epcList.append(epcn);
 
@@ -135,7 +139,7 @@ void ParseWorker::run()
                 entry.gridCount = gridNumber;
                 entry.volu      = volu;                      // ★ 来源库位
                 entry.obxCode   = obxCode;                   // ★ 容器号
-                // 批次信息：每个条码都关联到所属批次
+                // 批次信息：每个EPC编码都关联到所属批次
                 entry.orderCode = orderCode;
                 entry.orderQty  = orderQty;
                 entry.skuCount  = 0;  // 循环结束后统一回填
@@ -143,7 +147,7 @@ void ParseWorker::run()
             }
         }
 
-        // 回填 SKU 种类数到每个条目（去重后的条码种类数）
+        // 回填 SKU 种类数到每个条目（去重后的EPC编码种类数）
         int skuCount = newMap->size();
         for (auto it = newMap->begin(); it != newMap->end(); ++it)
         {

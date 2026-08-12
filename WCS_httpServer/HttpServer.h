@@ -36,7 +36,7 @@ class ParseWorker;
 // ★ 格口分拣记录（锁格时回传 WMS 用）
 struct GridSortRecord
 {
-    QString inco;          // 识别码（条码或EPC，客户尚未确定 2026-08-04）
+    QString inco;          // 识别码（EPC编码，客户已确认 2026-08-10）
     QString car;           // 小车号（TODO: 应由RFID提供，客户尚未提供 2026-08-04）
     int     gridCount = 0; // 配货件数
     QString volu;          // 来源库位
@@ -114,7 +114,7 @@ public:
     void onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap);  // ★ RFID 绑定查询结果回调
     bool trySendToPlcForEpc(const QString& epc);                   // ★ 尝试发送单条 EPC 到 PLC（就绪检查），返回 true=已发送
 
-    // ★ RFID查询：根据EPC获取对应的SKU/条码（T-S4-04 EpcCache TTL缓存）
+    // ★ RFID查询：根据EPC获取对应的SKU/EPC（商品编码）（T-S4-04 EpcCache TTL缓存）
     QString getSkuByEpc(const QString& epc) const {
         if (m_pEpcCache) return m_pEpcCache->get(epc);
         return QString();

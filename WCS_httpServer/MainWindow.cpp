@@ -384,9 +384,9 @@ void MainWindow::setupUI()
 
     // ── 查询条件行 ──
     QHBoxLayout* queryCondRow = new QHBoxLayout();
-    queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "条码:")));
+    queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "EPC编码:")));
     m_editQueryBarcode = new QLineEdit();
-    m_editQueryBarcode->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入条码查询（留空查全部）"));
+    m_editQueryBarcode->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入EPC编码查询（留空查全部）"));
     m_editQueryBarcode->setMinimumWidth(180);
     queryCondRow->addWidget(m_editQueryBarcode);
 
@@ -431,7 +431,7 @@ void MainWindow::setupUI()
     m_tblRecords->setHorizontalHeaderLabels({
         QCoreApplication::translate("MainWindow", "序号"),
         QCoreApplication::translate("MainWindow", "波次号"),
-        QCoreApplication::translate("MainWindow", "条码"),
+        QCoreApplication::translate("MainWindow", "EPC编码"),
         QCoreApplication::translate("MainWindow", "格口号"),
         QCoreApplication::translate("MainWindow", "小车号"),
         QCoreApplication::translate("MainWindow", "件数"),
@@ -1284,7 +1284,7 @@ void MainWindow::onQueryRecords()
 
     if (!barcode.isEmpty())
     {
-        // 按条码查询（已分拣 + 待分拣，用 NOT EXISTS 去重）
+        // 按EPC编码查询（已分拣 + 待分拣，用 NOT EXISTS 去重）
         records = db->queryByBarcode(barcode, SORTING_QUERY_MAX_RESULTS);
     }
     else
@@ -1331,7 +1331,7 @@ void MainWindow::onQueryRecords()
     // 更新统计标签
     if (!barcode.isEmpty())
     {
-        m_lblRecordCount->setText(QString("共 %1 条记录（条码: %2）")
+        m_lblRecordCount->setText(QString("共 %1 条记录（EPC编码: %2）")
             .arg(records.size()).arg(barcode));
     }
     else

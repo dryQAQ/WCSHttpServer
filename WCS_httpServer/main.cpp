@@ -5,7 +5,7 @@
 //   8191: 对外接收WMS推送及提供查询API
 //
 // 有效API接口（仅WMS系统调用）:
-//   POST /api/DispatchSortingCommand/InsertWaveInfo          — WMS推送波次数据（含条码-格口映射）
+//   POST /api/DispatchSortingCommand/InsertWaveInfo          — WMS推送波次数据（含EPC编码-格口映射）
 //   POST /api/DispatchSortingCommand/BindingLatticePort      — WMS绑定容器号到格口
 //   POST /api/DispatchSortingCommand/InsertWaveIn            — WMS退货任务取消
 //
@@ -44,7 +44,7 @@ int main(int argc, char* argv[])
     QDir().mkpath(exeDir + "/log/HTTP");
     QDir().mkpath(exeDir + "/log/Run");
     QDir().mkpath(exeDir + "/log/PLC");         // PLC通信日志
-    QDir().mkpath(exeDir + "/log/LIFECYCLE");   // 条码生命周期日志
+    QDir().mkpath(exeDir + "/log/LIFECYCLE");   // EPC编码生命周期日志
     QDir().mkpath(exeDir + "/log/DataBase");    // 数据库操作日志
     QDir().mkpath(exeDir + "/log/JT");          // 极兔分拣日志
     QDir().mkpath(exeDir + "/log/EPC");         // EpcCache 日志

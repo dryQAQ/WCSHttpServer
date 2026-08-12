@@ -106,7 +106,7 @@ bool CSiemensPLC::writeCodeInfo(const QByteArray& sSend, const std::vector<int>&
     dataSend[5] = 0x01; dataSend[6] = 0x7C; dataSend[7] = 0x02;
     dataSend[8] = 0x7C; dataSend[9] = 0x12;
 
-    // 条码数据（ASCII，最多 PLC_S7_CODE_MAX_LEN 字节，从 PLC_S7_CODE_OFFSET 开始写入）
+    // EPC编码数据（ASCII，最多 PLC_S7_CODE_MAX_LEN 字节，从 PLC_S7_CODE_OFFSET 开始写入）
     for (int i = 0; i < qMin(sSend.length(), PLC_S7_CODE_MAX_LEN); i++)
     {
         dataSend[i + PLC_S7_CODE_OFFSET] = sSend[i];

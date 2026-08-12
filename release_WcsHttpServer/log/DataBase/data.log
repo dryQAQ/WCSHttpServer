@@ -24,3 +24,14 @@
 2026-08-10 16:47:08.499 [0x00009870] WARN  DataBase - <609>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
 2026-08-10 17:29:25.573 [0x00004ac8] WARN  DataBase - <609>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
 2026-08-10 17:29:28.105 [0x00004ac8] WARN  DataBase - <609>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 10:24:52.180 [0x000042d8] WARN  DataBase - <609>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 10:31:05.567 [0x000042d8] WARN  DataBase - <609>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 10:43:55.081 [0x000042d8] WARN  DataBase - <609>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 11:17:58.535 [0x00001f0c] WARN  DataBase - <611>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 11:25:38.160 [0x00004fcc] WARN  DataBase - <611>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 11:32:28.060 [0x00004fcc] WARN  DataBase - <611>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 11:35:49.416 [0x00009d44] WARN  DataBase - <611>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 11:41:34.181 [0x000045e4] WARN  DataBase - <611>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 11:42:04.207 [0x000045e4] WARN  DataBase - <611>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
+2026-08-11 12:00:20.144 [0x0000b2bc] WARN  DataBase - <619>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=table return_wave_item has no column named obx_code Unable to execute statement
+2026-08-11 12:06:33.391 [0x0000c184] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=PB202203200003 count=2

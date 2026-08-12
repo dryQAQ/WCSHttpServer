@@ -337,7 +337,7 @@ IDLE → CREATED → BOUND → SORTING → FULLBOX_SYNC → ENDING → FINISHED
 | `startSorting()` | 开始分拣（BOUND → SORTING） |
 | `markSorted()` | 标记已分拣 |
 | `markException()` | 标记异常 |
-| `isWaveComplete()` | 全部条码分拣完成 |
+| `isWaveComplete()` | 全部EPC（商品编码）分拣完成 |
 | `triggerFullbox()` | 触发满箱 |
 | `completeToEnding()` | 满箱完成 → ENDING |
 | `tryCancelWave()` | 尝试取消（H5 互斥锁） |
@@ -900,7 +900,7 @@ HttpServer 成员变量
 | WCS | `./log/WCS/wcs.log` | `WCS_LOG_*` | 业务逻辑日志 |
 | PLC | `./log/PLC/plc.log` | `PLC_LOG_*` | PLC 通信日志 |
 | HTTP | `./log/HTTP/http.log` | `HTTP_LOG_*` | HTTP 请求/响应日志 |
-| LIFECYCLE | `./log/LIFECYCLE/lifecycle.log` | `LIFE_LOG` | 条码生命周期追踪 |
+| LIFECYCLE | `./log/LIFECYCLE/lifecycle.log` | `LIFE_LOG` | EPC生命周期追踪 |
 | EPC | `./log/EPC/epc.log` | `EPC_INFO/WARN/ERROR` | RFID EPC 缓存日志 |
 | WAVE_ITEM | `./log/WAVE_ITEM/wave_item.log` | `WAVE_ITEM_LOG_INFO` | 波次明细日志 |
 
@@ -914,7 +914,7 @@ HttpServer 成员变量
 
 ### 8.3 生命周期追踪
 
-每个条码从 WMS 推送到分拣完成的全链路追踪：
+每个EPC（商品编码）从 WMS 推送到分拣完成的全链路追踪：
 
 ```
 WMS 推送 → 格口查询 → PLC 发送 → PLC 反馈 → 分拣完成

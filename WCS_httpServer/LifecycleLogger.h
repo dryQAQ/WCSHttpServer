@@ -1,10 +1,10 @@
 #pragma once
 // ============================================================================
-// LifecycleLogger.h — 条码/格口/波次全生命周期追踪日志
+// LifecycleLogger.h — EPC编码/格口/波次全生命周期追踪日志
 //
 // 设计目标：
 //   ① 每次报错携带函数名+行号+模块名，方便运维人员快速定位
-//   ② 追溯每个条码从"WMS推送→格口查询→PLC发送→PLC反馈→分拣完成"的完整链路
+//   ② 追溯每个EPC编码从"WMS推送→格口查询→PLC发送→PLC反馈→分拣完成"的完整链路
 //   ③ 异常件/错分件等错误情况可还原完整生命周期
 //   ④ 零外部依赖，基于 hlog 增强，日志文件可读
 //
@@ -120,13 +120,13 @@ private:
         TraceContext::instance().traceId().toLocal8Bit().data(), \
         __FUNCTION__, __LINE__, ##__VA_ARGS__)
 
-// 生命周期模块（条码全链路追踪）
+// 生命周期模块（EPC编码全链路追踪）
 #define LIFE_LOG(fmt, ...) \
     hlog_format(HLOG_LEVEL_INFO, "LIFECYCLE", "[%s] " fmt, \
         TraceContext::instance().traceId().toLocal8Bit().data(), ##__VA_ARGS__)
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 生命周期跟踪器 — 记录每个条码从"WMS推送→分拣完成"的完整链路
+// 生命周期跟踪器 — 记录每个EPC编码从"WMS推送→分拣完成"的完整链路
 // ═══════════════════════════════════════════════════════════════════════════
 class LifecycleTracker : public QObject
 {
@@ -160,7 +160,7 @@ public:
         return QString("无记录");
     }
 
-    // 清理已完成条码的生命周期记录（波次完结后调用）
+    // 清理已完成EPC编码的生命周期记录（波次完结后调用）
     void clearCode(const QString& code)
     {
         std::unique_lock<std::mutex> lock(m_lock);
@@ -181,7 +181,7 @@ public:
         report += QString("\n╔══════════════════════════════════════════════════════╗\n");
         report += QString("║  异常件生命周期报告                                    ║\n");
         report += QString("╠══════════════════════════════════════════════════════╣\n");
-        report += QString("║  条码: %1").arg(code, -50).left(58) + "║\n";
+        report += QString("║  EPC编码: %1").arg(code, -50).left(58) + "║\n";
         report += QString("║  时间: %1").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz"), -48).left(58) + "║\n";
         report += QString("╠══════════════════════════════════════════════════════╣\n");
         if (m_mapLifecycle.contains(code))

@@ -230,7 +230,7 @@ QVector<SortingRecord> SortingDatabase::queryByBarcode(const QString& barcode, i
     }
 
     // ② 查询波次计划明细（return_wave_item 表，波次下发时写入）
-    //    使用 NOT EXISTS 排除已在 sorting_records 中落格的同波次同条码，
+    //    使用 NOT EXISTS 排除已在 sorting_records 中落格的同波次同EPC编码，
     //    保证同一 (order_code, inco) 不会同时出现「已分拣」和「待分拣」两种状态
     {
         QSqlQuery q2(db);
@@ -355,7 +355,7 @@ QVector<SortingRecord> SortingDatabase::queryAll(int limit)
 // ═════════════════════════════════════════════════════════════════════════════
 // ★ queryAllWithPending — 留空查全部：已分拣 + 待分拣（UI 查询面板）
 // 返回所有已分拣记录（sorting_records）和所有待分拣记录（return_wave_item，
-// 用 NOT EXISTS 排除已落格的条码），合并后按时间倒序（已分拣在前）
+// 用 NOT EXISTS 排除已落格的EPC编码），合并后按时间倒序（已分拣在前）
 // ═════════════════════════════════════════════════════════════════════════════
 QVector<SortingRecord> SortingDatabase::queryAllWithPending(int limit)
 {
@@ -587,20 +587,30 @@ bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<Re
         }
     }
 
-    // 批量插入新明细（使用事务 + 单一 prepare 复用，避免逐条构造 QSqlQuery 开销）
+    // 批量插入新明细（使用事务包裹）
+    // ★ 使用直接SQL构造替代 prepare/bindValue，彻底避开 Qt 绑值累积问题
+    //   转义单引号防止 SQL 注入（数据来自 ParseWorker 解析的 JSON，可信但做防御）
     {
-        QSqlQuery q(db);
-        q.prepare(SQL_INSERT_WAVE_ITEM);
+        auto esc = [](const QString& s) -> QString {
+            QString r = s;
+            return r.replace(QLatin1Char('\''), QLatin1String("''"));
+        };
         for (const auto& item : items)
         {
-            q.addBindValue(item.orderCode);
-            q.addBindValue(item.inco);
-            q.addBindValue(item.gridNum);
-            q.addBindValue(item.gridType.isEmpty() ? "普通格口" : item.gridType);
-            q.addBindValue(item.planQty);
-            q.addBindValue(item.volu.isNull() ? QString("") : item.volu);
-            q.addBindValue(item.obxCode.isNull() ? QString("") : item.obxCode);   // ★ 容器号
-            if (!q.exec())
+            QString sql = QString(
+                "INSERT INTO return_wave_item "
+                "(order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code) "
+                "VALUES ('%1', '%2', '%3', '%4', %5, 0, '%6', '%7')")
+                .arg(esc(item.orderCode),
+                     esc(item.inco),
+                     esc(item.gridNum),
+                     esc(item.gridType.isEmpty() ? QString("普通格口") : item.gridType),
+                     QString::number(item.planQty),
+                     esc(item.volu.isNull() ? QString("") : item.volu),
+                     esc(item.obxCode.isNull() ? QString("") : item.obxCode));
+
+            QSqlQuery q(db);
+            if (!q.exec(sql))
             {
                 Data_WARN("[SortingDB] 插入明细失败 orderCode=%s inco=%s grid=%s err=%s",
                     item.orderCode.toLocal8Bit().data(),

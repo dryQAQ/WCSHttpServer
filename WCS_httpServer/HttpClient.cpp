@@ -269,29 +269,75 @@ void HttpClient::onRfidBindingReplyFinished()
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     reply->deleteLater();
 
+    // ★ 详细日志：原始响应
+    HTTP_INFO("RFID绑定查询响应 status=%d bodySize=%d body(前500)=%s",
+        statusCode, respBody.size(), QString::fromUtf8(respBody.left(500)).toLocal8Bit().data());
+
     QMap<QString, QString> epcBarcodeMap;
-    if (statusCode == 200)
+    if (statusCode != 200)
     {
-        QJsonDocument doc = QJsonDocument::fromJson(respBody);
-        QJsonArray dataArr = doc.object()["data"].toArray();
-        for (const QJsonValue& val : dataArr)
-        {
-            QJsonObject item = val.toObject();
-            QString epc     = item["epc"].toString().trimmed();
-            QString barcode = item["barcode"].toString().trimmed();
-            if (!epc.isEmpty() && !barcode.isEmpty())
-            {
-                epcBarcodeMap[epc] = barcode;
-            }
-        }
-        HTTP_INFO("RFID绑定查询完成 epcCount=%d matched=%d status=%d",
-            pr.sumLocation, epcBarcodeMap.size(), statusCode);
-    }
-    else
-    {
-        HTTP_WARN("RFID绑定查询失败 status=%d body=%s",
+        HTTP_WARN("RFID绑定查询失败 HTTP状态异常 status=%d body=%s",
             statusCode, QString::fromUtf8(respBody).left(200).toLocal8Bit().data());
+        m_pending.erase(it);
+        emit rfidBindingResult(epcBarcodeMap);
+        return;
     }
+
+    // ★ JSON 解析
+    QJsonParseError parseErr;
+    QJsonDocument doc = QJsonDocument::fromJson(respBody, &parseErr);
+    if (doc.isNull() || !doc.isObject())
+    {
+        QByteArray hexPreview = respBody.left(200).toHex(' ');
+        HTTP_WARN("RFID绑定查询 JSON解析失败: %s offset=%d bodySize=%d hex=[%s]",
+            parseErr.errorString().toLocal8Bit().data(), parseErr.offset,
+            respBody.size(), hexPreview.constData());
+        m_pending.erase(it);
+        emit rfidBindingResult(epcBarcodeMap);
+        return;
+    }
+
+    QJsonObject root = doc.object();
+
+    // ★ 外层校验
+    bool success = root["success"].toBool(false);
+    int rstStatus = root["status"].toInt(0);
+    QString msg = root["msg"].toString();
+    HTTP_INFO("RFID绑定查询 外层校验 success=%d status=%d msg=%s",
+        success, rstStatus, msg.toLocal8Bit().data());
+
+    // RFID 响应格式: {"data":{"data":[{...}]},"status":200,"success":true}
+    QJsonObject dataObj = root["data"].toObject();
+    QJsonArray dataArr = dataObj["data"].toArray();
+    HTTP_INFO("RFID绑定查询 内层data数组 size=%d", dataArr.size());
+
+    int skipEmpty = 0;
+    for (int i = 0; i < dataArr.size(); ++i)
+    {
+        QJsonObject item = dataArr[i].toObject();
+        QString epc     = item["epc"].toString().trimmed();
+        QString barcode = item["barcode"].toString().trimmed();
+        QString tid     = item["tid"].toString().trimmed();
+        QString uniqueCode = item["uniqueCode"].toString().trimmed();
+        bool hasMetal    = item["productContainsMetal"].toBool(false);
+
+        if (epc.isEmpty() || barcode.isEmpty())
+        {
+            skipEmpty++;
+            HTTP_WARN("RFID绑定查询 跳过空字段[%d] epc=%s barcode=%s tid=%s uniqueCode=%s",
+                i, epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
+                tid.toLocal8Bit().data(), uniqueCode.toLocal8Bit().data());
+            continue;
+        }
+
+        epcBarcodeMap[epc] = barcode;
+        HTTP_INFO("RFID绑定查询 解析[%d] epc=%s barcode=%s tid=%s uniqueCode=%s metal=%d",
+            i, epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
+            tid.toLocal8Bit().data(), uniqueCode.toLocal8Bit().data(), hasMetal);
+    }
+
+    HTTP_INFO("RFID绑定查询完成 查询数=%d 匹配=%d 跳过空=%d status=%d",
+        pr.sumLocation, epcBarcodeMap.size(), skipEmpty, statusCode);
 
     m_pending.erase(it);
     emit rfidBindingResult(epcBarcodeMap);

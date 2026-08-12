@@ -185,7 +185,7 @@ WaveSnapshot WaveManager::snapshot() const
     snap.waveStatus    = m_waveStatus;
     snap.statusText    = WaveSnapshot::statusToString(m_waveStatus);
 
-    // 优先从 GridEntry 读取批次信息（与条码查询结果一致）
+    // 优先从 GridEntry 读取批次信息（与EPC编码查询结果一致）
     const QMap<QString, GridEntry>* pMap = m_pBuffer->activeMap();
     if (pMap && !pMap->isEmpty())
     {

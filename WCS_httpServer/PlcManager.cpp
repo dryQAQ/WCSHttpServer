@@ -131,7 +131,7 @@ void PlcManager::stop()
 // 发送指令（S7 DBWrite + TCP 文本协议）
 // S7: DB1 Offset 1000, 42 bytes (与 WCSApp 完全兼容)
 // TCP: {识别码|格口|小车号}
-//      TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+//      识别码 = EPC（商品编码），客户已确认EPC（商品编码）即EPC编码（2026-08-10）
 //      TODO: 小车号应由RFID提供，客户尚未提供RFID小车号字段，当前默认=1（2026-08-04）
 // 格口号格式: 3位补零，如格口15 → "015"
 // 小车号格式: 3位补零，如小车1 → CAR_NUM_STR(DEFAULT_CAR_NUM)="001"
@@ -266,14 +266,14 @@ bool PlcManager::sendRawCommand(const QString& command)
 // ============================================================================
 // sendBatchCodes — 主动发送模式：批量发送波次识别码到PLC（与WCSApp一致）
 // 不等待PLC查询报文，遍历波次所有识别码主动发送PLC分拣指令
-// TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+// 识别码 = EPC编码，客户已确认EPC（商品编码）即EPC编码（2026-08-10）
 // codeGridMap: 识别码→格口字符串（如 "15" 或 "1,2,3"）
 // ============================================================================
 bool PlcManager::sendBatchCodes(const QMap<QString, QString>& codeGridMap)
 {
     if (codeGridMap.isEmpty())
     {
-        PLC_LOG_WARN("sendBatchCodes: 条码映射为空，跳过");
+        PLC_LOG_WARN("sendBatchCodes: EPC编码映射为空，跳过");
         return false;
     }
 
@@ -349,7 +349,7 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
 {
     if (codeGridMap.isEmpty())
     {
-        PLC_LOG_WARN("sendBatchCodesWithEpcCache: 条码映射为空，跳过");
+        PLC_LOG_WARN("sendBatchCodesWithEpcCache: EPC编码映射为空，跳过");
         return false;
     }
 

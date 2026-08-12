@@ -60,7 +60,7 @@ HttpServer::HttpServer(QObject* parent)
     }
 
     // ★ 设置格口查询回调：PLC/相机扫到识别码时 → 查 DoubleBuffer → 返回格口号
-    // TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+    // 识别码 = EPC（商品编码），客户已确认EPC（商品编码）即EPC编码（2026-08-10）
     m_pPlcMgr->setLookupCallback([this](const QString& code) -> QString {
         if (!m_pBuffer) return QString();
         GridEntry entry = m_pBuffer->get(code);
@@ -150,10 +150,13 @@ HttpServer::HttpServer(QObject* parent)
                         }
                     }
                 }
-                m_pSortingDb->insertWaveItems(orderCode, items);
-
-                HTTP_INFO("波次数据已落库 orderCode=%s items=%d skuCount=%d orderQty=%d",
-                    orderCode.toLocal8Bit().data(), items.size(), skuCount, orderQty);
+                bool bOk = m_pSortingDb->insertWaveItems(orderCode, items);
+                if (bOk)
+                    HTTP_INFO("波次数据已落库 orderCode=%s items=%d skuCount=%d orderQty=%d",
+                        orderCode.toLocal8Bit().data(), items.size(), skuCount, orderQty);
+                else
+                    HTTP_ERROR("波次数据落库失败 orderCode=%s items=%d",
+                        orderCode.toLocal8Bit().data(), items.size());
             }
             // ★ 新波次到来，重置 PLC 发送失败警告集合
             {
@@ -272,7 +275,7 @@ HttpServer::HttpServer(QObject* parent)
 
                         // ──── T-S4-08: 异常处理 ────
                         // 查 DoubleBuffer 确认识别码在当前波次中
-                        // TODO: 识别码可能为条码或EPC，客户尚未确定（2026-08-04）
+                        // 识别码 = EPC（商品编码），客户已确认EPC（商品编码）即EPC编码（2026-08-10）
                         GridEntry entry = m_pBuffer->get(e.code);
                         if (entry.gridNum.isEmpty())
                         {
@@ -842,7 +845,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     // 路由1: WMS波次数据推送（P0核心接口）
     // 调用方: WMS系统
     // 报文: POST /api/DispatchSortingCommand/InsertWaveInfo
-    // 功能: 推送波次数据，包含条码-格口映射，WCS解析后存储
+    // 功能: 推送波次数据，包含EPC编码-格口映射，WCS解析后存储
     // 需求: §5 波次下发（H4 InsertWaveInfo，T-S1-01~T-S1-06）
     // ═══════════════════════════════════════════════════════════════════════
     if (st.path == m_apiInsertWaveInfo && st.method == "POST")
@@ -1062,7 +1065,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     // 路由4: RFID 小车号推送（RFID 主动推送 → WCS 被动接收）
     // 调用方: RFID 读卡服务
     // 报文: POST /api/rfid/carNumReport
-    // 功能: RFID 扫描到条码后推送 EPC→barcode+carNum 映射，WCS 存入 EpcCache
+    // 功能: RFID 扫描到EPC编码后推送 EPC→barcode+carNum 映射，WCS 存入 EpcCache
     // 需求: §7 RFID小车号（T-S4-02 由RFID主动推送，不在波次下发时主动查询）
     // ═══════════════════════════════════════════════════════════════════════
     if (st.path == m_apiRfidCarNumReport && st.method == "POST")
@@ -2453,26 +2456,62 @@ void HttpServer::onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap
         return;
     }
 
-    HTTP_LOG_INFO("EPC绑定查询结果 匹配数=%d", epcBarcodeMap.size());
-    emit logMessage(QString("[EPC] SKU-EPC 绑定查询完成 匹配%1条").arg(epcBarcodeMap.size()));
+    int cacheSizeBefore = m_pEpcCache ? m_pEpcCache->size() : 0;
+    HTTP_LOG_INFO("EPC绑定查询结果接收 匹配数=%d 缓存当前大小=%d", epcBarcodeMap.size(), cacheSizeBefore);
+    emit logMessage(QString("[EPC] SKU-EPC 绑定查询完成 匹配%1条 缓存已有%2条")
+        .arg(epcBarcodeMap.size()).arg(cacheSizeBefore));
 
     // 逐条存入 EpcCache（skuBound=true），并检查是否就绪
     int readyCount = 0;
+    int notReadyCount = 0;
     for (auto it = epcBarcodeMap.constBegin(); it != epcBarcodeMap.constEnd(); ++it)
     {
+        QString epc     = it.key();
+        QString barcode = it.value();
+
+        // ★ 写入前检查：该 EPC 在 GridBuffer 中是否存在
+        bool inGrid = m_pBuffer && !m_pBuffer->get(epc).gridNum.isEmpty();
+        HTTP_LOG_INFO("EPC绑定 逐条处理 epc=%s barcode=%s 在GridBuffer=%d",
+            epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(), inGrid);
+
         if (m_pEpcCache)
         {
-            m_pEpcCache->setSkuBinding(it.key(), it.value());
+            m_pEpcCache->setSkuBinding(epc, barcode);
+            HTTP_LOG_INFO("EPC绑定 已存入EpcCache epc=%s barcode=%s skuBound=true",
+                epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
         }
 
         // 检查是否已就绪（carNum 也已获取）
-        if (trySendToPlcForEpc(it.key()))
-            readyCount++;
+        bool isReady = m_pEpcCache && m_pEpcCache->isReadyForPlc(epc);
+        HTTP_LOG_INFO("EPC绑定 就绪检查 epc=%s isReady=%d", epc.toLocal8Bit().data(), isReady);
+
+        if (isReady)
+        {
+            if (trySendToPlcForEpc(epc))
+            {
+                readyCount++;
+                HTTP_LOG_INFO("EPC绑定 已发送PLC epc=%s", epc.toLocal8Bit().data());
+            }
+            else
+            {
+                HTTP_LOG_WARN("EPC绑定 发送PLC失败 epc=%s (就绪但发送失败)",
+                    epc.toLocal8Bit().data());
+            }
+        }
+        else
+        {
+            notReadyCount++;
+            HTTP_LOG_INFO("EPC绑定 未就绪 epc=%s (等待RFID推送carNum)",
+                epc.toLocal8Bit().data());
+        }
     }
 
-    HTTP_LOG_INFO("EPC绑定完成 匹配=%d 就绪=%d", epcBarcodeMap.size(), readyCount);
-    emit logMessage(QString("[EPC] SKU-EPC 绑定完成 匹配%1条 已就绪发送PLC%2条")
-        .arg(epcBarcodeMap.size()).arg(readyCount));
+    int cacheSizeAfter = m_pEpcCache ? m_pEpcCache->size() : 0;
+    HTTP_LOG_INFO("EPC绑定完成 匹配=%d 就绪=%d 未就绪=%d 缓存大小=%d→%d",
+        epcBarcodeMap.size(), readyCount, notReadyCount, cacheSizeBefore, cacheSizeAfter);
+    emit logMessage(QString("[EPC] SKU-EPC 绑定完成 匹配%1条 就绪%2条 未就绪%3条 (缓存%4→%5)")
+        .arg(epcBarcodeMap.size()).arg(readyCount).arg(notReadyCount)
+        .arg(cacheSizeBefore).arg(cacheSizeAfter));
 }
 
 // ============================================================================
@@ -2490,15 +2529,16 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
     if (!m_pEpcCache->isReadyForPlc(epc))
         return false;
 
-    // 获取 barcode 和 carNum
+    // 获取 carNum（barcode 来自 RFID 是真实条码，仅用于记录，不用于 GridBuffer 查找）
     QPair<QString, QString> plcData = m_pEpcCache->getPlcData(epc);
-    QString barcode = plcData.first;
+    QString barcode = plcData.first;  // RFID 返回的真实条码（如 BBBBBB001）
     QString carNum  = plcData.second;
     if (barcode.isEmpty())
         return false;
 
-    // 从 GridBuffer 获取格口号
-    GridEntry entry = m_pBuffer->get(barcode);
+    // ★ GridBuffer 的 key 是 inco（EPC值），不是真实条码
+    //   用 epc 参数（即 inco）查找格口，而非 barcode
+    GridEntry entry = m_pBuffer->get(epc);
     if (entry.gridNum.isEmpty())
     {
         HTTP_LOG_WARN("trySendToPlcForEpc 格口未找到 epc=%s barcode=%s",
@@ -2514,16 +2554,16 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
         return false;
     }
 
-    // 发送单条 PLC 指令
+    // ★ 发送 PLC 指令：key 用 epc（inco），与 PLC 反馈匹配一致
     QMap<QString, QString> codeGridMap;
-    codeGridMap[barcode] = entry.gridNum;
+    codeGridMap[epc] = entry.gridNum;
     m_pPlcMgr->sendBatchCodesWithEpcCache(codeGridMap);
 
     HTTP_LOG_INFO("PLC发送就绪 epc=%s barcode=%s grid=%s carNum=%s",
         epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
         entry.gridNum.toLocal8Bit().data(), carNum.toLocal8Bit().data());
     emit logMessage(QString("[PLC] 发送 %1 → 格口%2 小车%3 (epc=%4)")
-        .arg(barcode).arg(entry.gridNum).arg(carNum).arg(epc));
+        .arg(epc).arg(entry.gridNum).arg(carNum).arg(epc));
 
     return true;
 }
