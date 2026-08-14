@@ -1,8 +1,7 @@
 #include "HttpServer.h"
 #include "ParseWorker.h"
 #include "HttpClient.h"
-#include "log_center.h"
-#include "hlog1.h"
+#include "LogService.h"
 #include "ConfigManager.h"
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -15,13 +14,6 @@
 #include <windows.h>
 #include <tchar.h>
 #include "define.h"
-
-// ──── HTTP 服务专用日志宏（写入 ./log/HTTP/http.log）────
-#ifndef HTTP_INFO
-#define HTTP_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "HTTP", "\t" fmt, ##__VA_ARGS__)
-#define HTTP_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "HTTP", "\t" fmt, ##__VA_ARGS__)
-#define HTTP_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "HTTP", "\t" fmt, ##__VA_ARGS__)
-#endif
 
 // ============================================================================
 // HP-Socket CHttpServerListener 模式
@@ -98,26 +90,15 @@ HttpServer::HttpServer(QObject* parent)
             m_pWaveMgr->setWaveData(orderCode, orderQty, skuCount);
             m_pWaveMgr->setRecvSet(recvSet);
 
-            // ★ 波次下发后自动检查绑定状态：如果全部绑定已完成，自动推进到 SORTING 状态
-            //   解决预绑定场景（先绑定容器再下发波次）下波次停留在 CREATED 无法自动开工的问题
-            //   ★ 修复：CREATED→BOUND→SORTING 全链路同步推进，消除"首件落格才开工"的竞态窗口
-            //     多批次并发落格时，若批次 N 读到 BOUND 但批次 1 已置 isSortingStarted=true，
-            //     批次 N 的落格会被拒绝（"PLC反馈被拒绝 非SORTING状态"），导致分拣记录丢失
+            // ★ 波次下发后自动检查绑定状态：如果全部绑定已完成，自动推进到 BOUND 状态
+            //   不再自动推进到 SORTING，改为等待用户点击"开始分拣"按钮手动触发
+            //   点击前允许取消波次，点击后分拣开始，取消被拒绝
             if (m_pWaveMgr->status() == WAVE_CREATED && areAllBindingsComplete())
             {
                 m_pWaveMgr->setState(WAVE_BOUND);
-                if (m_pWaveMgr->startSorting())
-                {
-                    HTTP_LOG_INFO("预绑定场景 波次自动推进 CREATED→BOUND→SORTING orderCode=%s bound=%d/%d",
-                        orderCode.toLocal8Bit().data(), boundCount(), m_expectedBindCount);
-                    emit logMessage(QString("[波次] 自动推进: 已下发→已绑定→分拣中 (预绑定) orderCode=%1").arg(orderCode));
-                }
-                else
-                {
-                    HTTP_LOG_WARN("预绑定场景 波次自动开工失败 orderCode=%s bound=%d/%d",
-                        orderCode.toLocal8Bit().data(), boundCount(), m_expectedBindCount);
-                    emit logMessage(QString("[波次] 自动推进: 已下发→已绑定 (开工失败) orderCode=%1").arg(orderCode));
-                }
+                HTTP_LOG_INFO("波次自动推进 CREATED→BOUND orderCode=%s bound=%d/%d (等待手动开始分拣)",
+                    orderCode.toLocal8Bit().data(), boundCount(), m_expectedBindCount);
+                emit logMessage(QString("[波次] 自动推进: 已下发→已绑定 orderCode=%1 (等待手动开始分拣)").arg(orderCode));
             }
 
             // ★ S1 新增：波次数据落库（T-S1-01/03）
@@ -142,7 +123,7 @@ HttpServer::HttpServer(QObject* parent)
                         for (const QString& g : grids)
                         {
                             rec.gridNum   = g.trimmed();
-                            rec.gridType  = it.value().gridType.isEmpty() ? "普通格口" : it.value().gridType;
+                            rec.gridType  = it.value().gridType.isEmpty() ? "0" : it.value().gridType;  // 0=分类, 1=异常, 2=发货
                             rec.planQty   = it.value().gridCount;
                             rec.volu      = it.value().volu;
                             rec.obxCode   = it.value().obxCode;     // ★ 容器号
@@ -184,6 +165,27 @@ HttpServer::HttpServer(QObject* parent)
                 emit logMessage(QString("[EPC] 提交 SKU-EPC 绑定查询 %1 条 orderCode=%2")
                     .arg(epcList.size()).arg(orderCode));
                 submitEpcBindingQueries(epcList);
+            }
+        }, Qt::QueuedConnection);
+
+    // ★ 格口号越界异常记录（ParseWorker 解析时检测到越界格口号，写入异常表）
+    connect(m_pWorker, &ParseWorker::parseException, this,
+        [this](const QString& orderCode, const QString& epc,
+               const QString& gridNum, const QString& reason) {
+            if (m_pSortingDb && m_pSortingDb->isOpen())
+            {
+                ExceptionRecord ex;
+                ex.type      = QString::fromUtf8("格口号越界");
+                ex.orderCode = orderCode;
+                ex.epc       = epc;
+                ex.reason    = reason;
+                ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz");
+                m_pSortingDb->insertException(ex);
+                HTTP_WARN("格口号越界异常已记录 orderCode=%s epc=%s gridNum=%s",
+                    orderCode.toLocal8Bit().data(), epc.toLocal8Bit().data(),
+                    gridNum.toLocal8Bit().data());
+                emit logMessage(QString("[异常] 格口号越界 EPC=%1 gridNum=%2 → 已写入异常表")
+                    .arg(epc).arg(gridNum), true);
             }
         }, Qt::QueuedConnection);
 
@@ -243,34 +245,13 @@ HttpServer::HttpServer(QObject* parent)
                     for (const PlcFeedbackEntry& e : entries)
                     {
                         // ──── T-S4-09: 仅 SORTING 接受投线 ────
-                        // 非 SORTING 状态拒绝处理（FINISHED/IDLE/CANCELLED 等）
+                        // 非 SORTING 状态拒绝处理（BOUND 等待手动开始分拣，落格反馈暂不处理）
                         if (waveStatus != WAVE_SORTING)
                         {
-                            // 特例：BOUND 状态首件落格 → 自动开工（T-S4-05 自动模式）
-                            if (waveStatus == WAVE_BOUND && !m_pWaveMgr->isSortingStarted())
-                            {
-                                if (m_pWaveMgr->startSorting())
-                                {
-                                    waveStatus = WAVE_SORTING;
-                                    HTTP_LOG_INFO("首件落格自动开工 orderCode=%s code=%s",
-                                        m_pWaveMgr->orderCode().toLocal8Bit().data(),
-                                        e.code.toLocal8Bit().data());
-                                    emit logMessage(QString("[分拣] 首件落格自动开工 code=%1").arg(e.code));
-                                }
-                                else
-                                {
-                                    HTTP_LOG_WARN("开工失败（首件落格）orderCode=%s code=%s",
-                                        m_pWaveMgr->orderCode().toLocal8Bit().data(),
-                                        e.code.toLocal8Bit().data());
-                                    continue; // 开工失败，跳过本条
-                                }
-                            }
-                            else
-                            {
-                                HTTP_LOG_WARN("PLC反馈被拒绝 非SORTING状态 code=%s status=%d",
-                                    e.code.toLocal8Bit().data(), waveStatus);
-                                continue; // 非分拣状态，跳过
-                            }
+                            HTTP_LOG_WARN("PLC反馈被拒绝 非SORTING状态 orderCode=%s code=%s status=%d",
+                                m_pWaveMgr->orderCode().toLocal8Bit().data(),
+                                e.code.toLocal8Bit().data(), waveStatus);
+                            continue; // 跳过本条
                         }
 
                         // ──── T-S4-08: 异常处理 ────
@@ -594,6 +575,9 @@ bool HttpServer::start(int port)
 {
     m_pWorker->start();
 
+    // ★ 启动时从数据库恢复未完成波次（软件重启后继续处理同一批次数据）
+    restoreWaveFromDB();
+
     // ──── HP-Socket 性能调优（参考WCSApp线程池架构）────
     {
         // 设置I/O工作线程数（默认2×CPU核心=32，减到8减少上下文切换）
@@ -637,6 +621,28 @@ bool HttpServer::start(int port)
 
     emit serverStarted(port);
     return true;
+}
+
+// ★ 启动时检查数据库中的未完成波次（仅日志提示，不恢复到当前任务流）
+//   上一波次未完成不会影响本次任务，用户可重新下发新波次
+void HttpServer::restoreWaveFromDB()
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen()) return;
+
+    ReturnWaveRecord wave = m_pSortingDb->getLatestUnfinishedWave();
+    if (wave.orderCode.isEmpty()) return;
+
+    // 加载波次明细
+    QVector<ReturnWaveItemRecord> items = m_pSortingDb->getWaveItems(wave.orderCode);
+
+    HTTP_LOG_INFO("检测到上一波次未完成 orderCode=%s status=%d items=%d updatedAt=%s（不恢复到当前任务流）",
+        wave.orderCode.toLocal8Bit().data(), wave.status, items.size(),
+        wave.updatedAt.toLocal8Bit().data());
+    emit logMessage(QString::fromUtf8("[提示] 检测到上一波次未完成: orderCode=%1 状态=%2 明细数=%3 更新时间=%4（已跳过，不恢复）")
+        .arg(wave.orderCode)
+        .arg(WaveSnapshot::statusToString(wave.status))
+        .arg(items.size())
+        .arg(wave.updatedAt));
 }
 
 void HttpServer::stop()
@@ -807,6 +813,18 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     QElapsedTimer reqTimer;
     reqTimer.start();
 
+    // ★ 服务未运行时拒绝所有 WMS 请求（防御性检查）
+    if (!isRunning())
+    {
+        QJsonObject err;
+        err["code"] = "500";
+        err["message"] = "服务未启动，请先点击按钮启动服务";
+        err["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+        sendJsonResponse(pSender, dwConnID, err, 500);
+        HTTP_LOG_WARN("服务未运行，拒绝请求 path=%s method=%s", st.path.toLocal8Bit().data(), st.method.toLocal8Bit().data());
+        return;
+    }
+
     int64_t reqNum = m_requestCount.fetch_add(1) + 1;
 
     // ★ 原始报文：重建 WMS 发送的完整 URL 字符串
@@ -818,6 +836,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
         if (st.body.isEmpty())
         {
             HTTP_INFO("[原始报文] %s  req#=%lld", fullUrl.toLocal8Bit().data(), reqNum);
+            LOG_INFO("[原始报文] %s  req#=%lld", fullUrl.toLocal8Bit().data(), reqNum);
         }
         else
         {
@@ -827,11 +846,20 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
                 fullUrl.toLocal8Bit().data(),
                 st.body.constData(),
                 st.body.size(), reqNum);
+            LOG_INFO("[原始报文] %s  body=%s(%d字节)  req#=%lld",
+                fullUrl.toLocal8Bit().data(),
+                st.body.constData(),
+                st.body.size(), reqNum);
 #else
             // Body 截断显示
             QByteArray bodyPreview = st.body.left(RAW_REQ_BODY_LOG_LEN);
             bool truncated = st.body.size() > RAW_REQ_BODY_LOG_LEN;
             HTTP_INFO("[原始报文] %s  body=%s%s(%d字节)  req#=%lld",
+                fullUrl.toLocal8Bit().data(),
+                bodyPreview.constData(),
+                truncated ? "..." : "",
+                st.body.size(), reqNum);
+            LOG_INFO("[原始报文] %s  body=%s%s(%d字节)  req#=%lld",
                 fullUrl.toLocal8Bit().data(),
                 bodyPreview.constData(),
                 truncated ? "..." : "",
@@ -999,7 +1027,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
 
             QJsonObject resp;
             resp["code"]      = "200";
-            resp["message"]   = "";
+            resp["message"]   = "successed.";
             resp["sentTime"]  = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz");
             sendJsonResponse(pSender, dwConnID, resp, 200);
 
@@ -1105,7 +1133,7 @@ QJsonObject HttpServer::okResponse(const QString& msg)
 {
     QJsonObject r;
     r["code"]     = "200";       // 正常响应码（新文档格式）
-    r["message"]  = msg;         // 响应信息（成功时为空）
+    r["message"] = msg + " successed.";         // 响应信息（成功时为空）
     r["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
     return r;
 }
@@ -1136,7 +1164,7 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
             .arg(boxcode).arg(latticehole), true);
         QJsonObject r;
         r["code"] = "500";
-        r["message"] = QString("参数缺失: latticehole和boxcode均为必填");
+        r["message"] = QString("参数缺失: 未识别到latticehole和boxcode，请检查格式.");
         return r;
     }
 
@@ -1185,6 +1213,7 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
 
     // ──── 步骤4: 格口不存在于当前任务（T-S2-03）────
     // 检查该格口是否在当前波次的商品分配中
+    // 使用整数比较避免补零不一致（GridBuffer 存 "1"，H6 归一化后为 "00001"）
     if (!orderCode.isEmpty() && m_pBuffer)
     {
         bool gridExists = false;
@@ -1196,7 +1225,9 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
                 QStringList grids = it.value().gridNum.split(',', Qt::SkipEmptyParts);
                 for (const QString& g : grids)
                 {
-                    if (g.trimmed() == normalizedGrid)
+                    bool ok = false;
+                    int gInt = g.trimmed().toInt(&ok);
+                    if (ok && gInt == gridNum)
                     {
                         gridExists = true;
                         break;
@@ -1255,8 +1286,8 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
     HTTP_LOG_INFO("容器绑定成功 latticehole=%s → boxcode=%s orderCode=%s total=%d/%d",
         normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
         orderCode.toLocal8Bit().data(), boundCount(), BINDING_SLOT_COUNT);
-    emit logMessage(QString("[容器绑定] 格口%1 → 容器%2 orderCode=%3 (共%4/%5)")
-        .arg(normalizedGrid).arg(boxcode).arg(orderCode).arg(boundCount()).arg(BINDING_SLOT_COUNT));
+    emit logMessage(QString("[容器绑定] 格口%1 → 容器%2  (共%3/%4)")
+        .arg(normalizedGrid).arg(boxcode).arg(boundCount()).arg(BINDING_SLOT_COUNT));
     emit bindingUpdated();  // ★ 通知 UI 即时刷新
 
     QJsonObject r;
@@ -1360,7 +1391,7 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
 
     // ──── 步骤5: 取消后清理（T-S3-02）────
     // tryCancelWave() 已原子完成状态迁移，此处执行清理操作
-    // 注意：不使用 clearWave()（会重置为 IDLE），仅清除容器绑定和分拣记录
+    // 清理容器绑定、分拣记录、GridBuffer、WaveManager，使系统可接收新波次
 
     // 清理容器绑定
     {
@@ -1375,6 +1406,20 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
     {
         std::lock_guard<std::mutex> lock(m_gridRecordMutex);
         m_gridSortRecords.clear();
+    }
+
+    // ★ 清理 GridBuffer（双缓冲置空），避免 H6 绑定校验旧波次数据
+    if (m_pBuffer)
+    {
+        m_pBuffer->prepareSwap(nullptr);
+        HTTP_LOG_INFO("CancelWave 已清理GridBuffer orderCode=%s", orderCode.toLocal8Bit().data());
+    }
+
+    // ★ 重置 WaveManager 为 IDLE（含清空 orderCode），使 H4/H6 不再校验旧波次
+    if (m_pWaveMgr)
+    {
+        m_pWaveMgr->clearWave();
+        HTTP_LOG_INFO("CancelWave 已重置WaveManager orderCode=%s", orderCode.toLocal8Bit().data());
     }
 
     // 更新数据库状态为 CANCELLED
@@ -1465,13 +1510,27 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
             err["orderCode"] = orderCode;
             return err;
         }
-        if (gridType.isEmpty())
+        // ★ gridType 已改为非必填，空值时自动兜底为"0"（分类），客户使用 0=分类, 1=异常, 2=发货
+        // if (gridType.isEmpty())
+        // {
+        //     QJsonObject err;
+        //     err["code"] = "500";
+        //     err["message"] = QString("items[%1] 缺少必填字段: gridType").arg(i);
+        //     err["orderCode"] = orderCode;
+        //     return err;
+        // }
+
+        // ★ 格口号越界检测（仅告警，不拒绝波次 — 异常 item 由 ParseWorker 跳过并记录异常表）
         {
-            QJsonObject err;
-            err["code"] = "500";
-            err["message"] = QString("items[%1] 缺少必填字段: gridType").arg(i);
-            err["orderCode"] = orderCode;
-            return err;
+            bool ok = false;
+            int gNum = gridNum.toInt(&ok);
+            if (ok && (gNum < 1 || gNum > BINDING_SLOT_COUNT))
+            {
+                HTTP_WARN("InsertWaveInfo 格口号越界 orderCode=%s items[%d] gridNum=%s range=1..%d",
+                    orderCode.toLocal8Bit().data(), i, gridNum.toLocal8Bit().data(), BINDING_SLOT_COUNT);
+                emit logMessage(QString("[WMS] 格口号越界 items[%1] gridNum=%2 (有效范围: 1~%3)，已记录异常")
+                    .arg(i).arg(gridNum).arg(BINDING_SLOT_COUNT), true);
+            }
         }
 
         // gridNumber > 0
@@ -1707,46 +1766,39 @@ QJsonObject HttpServer::buildReportFromRecords(const QString& orderCode,
 
 // ============================================================================
 // buildFullboxPayload — 构建满箱回传报文（H7 gwisSubProductClassifyOrder，T-S5-02/03）
-// 报文格式详见需求 §10.3–10.4
-// 字段取值：
-//   orderCode      = 波次下发编号（H4）
-//   orderType      = 固定 "02"（WMS_ORDER_TYPE）
-//   warehouseCode  = 配置项（默认 "A"）
-//   goodsOwner     = 配置项（默认 "BXH_ZS"）
-//   fromLocation   = 根据 FULLBOX_FROM_LOCATION_SOURCE 取值（config/volu）
-//   createDate     = 当前时间
-//   detailList     = 容器内已分拣明细
-//     lineNum      = 从 1 递增
-//     num          = boxcode（容器号）
-//     targetLocation = 格口号
-//     sku          = inco / barcode
-//     qty          = 该容器内实分数量
+// 报文格式（仅含 WMS 所需字段，不发送多余字段）：
+//   head:
+//     orderCode      = 波次下发编号（H4）
+//     orderType      = 固定 "02"（WMS_ORDER_TYPE）
+//     warehouseCode  = 配置项（默认 "A"）
+//     goodsOwner     = 配置项（默认 "BXH_ZS"）
+//     fromLocation   = 任务下发时的 volu 字段值
+//     createDate     = 当前时间
+//     createUserCode = 固定 "admin"
+//     createUserName = 固定 "管理员"
+//   detailList:
+//     num            = 格口号
+//     targetLocation = 目标库位编码（格口绑定的容器号）
+//     sku            = SKU 编码（通过 RFID EPC→SKU 映射获取，无映射时回退 EPC）
+//     qty            = 该容器内实分数量
 // ============================================================================
 QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QString& grid,
                                               const QString& boxCode, const QVector<GridSortRecord>& records)
 {
     AppConfig& cfg = ConfigManager::instance()->config();
 
-    // ── fromLocation 取值（T-S5-07）────
+    // ── fromLocation 取值：使用任务下发时的 volu 字段值 ──
     QString fromLocation;
-    if (QString(FULLBOX_FROM_LOCATION_SOURCE) == "config")
+    for (const GridSortRecord& rec : records)
     {
-        fromLocation = FULLBOX_DEFAULT_FROM_LOCATION;
-    }
-    else
-    {
-        // 默认使用 volu：取第一条有 volu 的记录
-        for (const GridSortRecord& rec : records)
+        if (!rec.volu.isEmpty() && rec.volu != "--")
         {
-            if (!rec.volu.isEmpty() && rec.volu != "--")
-            {
-                fromLocation = rec.volu;
-                break;
-            }
+            fromLocation = rec.volu;
+            break;
         }
-        if (fromLocation.isEmpty())
-            fromLocation = FULLBOX_DEFAULT_FROM_LOCATION;
     }
+    if (fromLocation.isEmpty())
+        fromLocation = FULLBOX_DEFAULT_FROM_LOCATION;
 
     QJsonObject head;
     head["orderCode"]      = orderCode;
@@ -1757,20 +1809,22 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
     head["createDate"]     = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
     head["createUserCode"] = WMS_OPERUSER_CODE;
     head["createUserName"] = QString::fromUtf8(WMS_OPERUSER_NAME);
-    head["remark"]         = "";
-    head["gwf1"]           = "";  // 备用字段
+    // head["remark"]         = "";
+    // head["gwf1"]           = "";  // 备用字段
 
     QJsonArray detailList;
-    int lineNum = 1;
     for (const GridSortRecord& rec : records)
     {
         QJsonObject item;
-        item["lineNum"]        = QString::number(lineNum++);
-        item["num"]            = boxCode.isEmpty() ? rec.car : boxCode;  // 框号 = 容器号
-        item["targetLocation"] = grid;
-        item["sku"]            = rec.inco;
+        // item["lineNum"]        = QString::number(lineNum++);
+        item["num"]            = grid;                              // 格口号
+        item["targetLocation"] = boxCode.isEmpty() ? cfg.fullboxDefaultTargetLocation : boxCode;  // 目标库位 = 容器号，无容器号时兜底
+
+        // ★ SKU 取值：通过 RFID EPC→SKU 映射获取，无映射时回退到 EPC 编码
+        QString sku = getSkuByEpc(rec.inco);
+        item["sku"]            = sku.isEmpty() ? QString::fromUtf8("未找到sku") : sku;
         item["qty"]            = QString::number(rec.gridCount);
-        item["batchCode"]      = orderCode;
+        // item["batchCode"]      = orderCode;
         detailList.append(item);
     }
     head["detailList"] = detailList;
@@ -1799,6 +1853,10 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
 // ============================================================================
 void HttpServer::sendFullbox(const QString& grid)
 {
+    QElapsedTimer funcTimer;
+    funcTimer.start();
+    qint64 epochMs = QDateTime::currentMSecsSinceEpoch();
+
     if (!m_pWaveMgr)
     {
         HTTP_LOG_WARN("满箱回传触发失败（H7） WaveManager未初始化");
@@ -1856,8 +1914,11 @@ void HttpServer::sendFullbox(const QString& grid)
         return;
     }
 
+    qint64 t1 = funcTimer.elapsed();  // ★ 耗时：前置校验
+
     // ── 步骤4: 构建满箱回传报文（H7）──
     QJsonObject payload = buildFullboxPayload(orderCode, grid, boxCode, records);
+    qint64 t2 = funcTimer.elapsed();  // ★ 耗时：payload构建
 
     // ── 步骤5-6: 生成 msgId（UUID 幂等键）+ 插入 Outbox ──
     // 幂等键设计（T-S5-06）：orderCode + boxcode + 摘要
@@ -1880,6 +1941,13 @@ void HttpServer::sendFullbox(const QString& grid)
     {
         m_pSortingDb->insertOutboxFullbox(outMsg);
     }
+    qint64 t3 = funcTimer.elapsed();  // ★ 耗时：Outbox写入
+
+    // ★ 耗时统计：记录发送时间戳（用于 onFullboxReplyFinished 计算网络往返耗时）
+    {
+        std::lock_guard<std::mutex> lock(m_msgTimeMutex);
+        m_msgSendTime[msgId] = epochMs;
+    }
 
     HTTP_LOG_INFO("满箱回传消息已入Outbox（H7） msgId=%s order=%s grid=%s box=%s items=%d",
         msgId.toLocal8Bit().data(), orderCode.toLocal8Bit().data(),
@@ -1887,8 +1955,21 @@ void HttpServer::sendFullbox(const QString& grid)
     emit logMessage(QString("[满箱回传] 消息入Outbox msgId=%1 grid=%2 box=%3 items=%4")
         .arg(msgId).arg(grid).arg(boxCode).arg(records.size()));
 
+    // ★ 原始报文：满箱回传（H7）写入 run.log
+    LOG_INFO("[原始报文] [满箱回传] msgId=%s body=%s(%d字节)",
+        msgId.toLocal8Bit().data(),
+        outMsg.payload.constData(), outMsg.payload.size());
+
     // ── 步骤7: 发送到 WMS ──
     sendFullboxToWms(msgId, payload);
+    qint64 t4 = funcTimer.elapsed();  // ★ 耗时：信号发送
+
+    // ★ 耗时汇总日志（不包含网络往返，仅本地处理）
+    LOG_INFO("[耗时] [满箱回传] msgId=%s grid=%s 前置校验=%lldms payload构建=%lldms Outbox写入=%lldms 信号发送=%lldms 本地总计=%lldms",
+        msgId.toLocal8Bit().data(), grid.toLocal8Bit().data(),
+        t1, t2 - t1, t3 - t2, t4 - t3, t4);
+    HTTP_LOG_INFO("满箱回传耗时（H7） msgId=%s 前置校验=%lldms payload构建=%lldms Outbox=%lldms 信号发送=%lldms 总计=%lldms",
+        msgId.toLocal8Bit().data(), t1, t2 - t1, t3 - t2, t4 - t3, t4);
 }
 
 // ============================================================================
@@ -1909,6 +1990,20 @@ void HttpServer::sendFullboxToWms(const QString& msgId, const QJsonObject& paylo
 // ============================================================================
 void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, const QString& body)
 {
+    // ★ 耗时统计：网络往返耗时
+    qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    qint64 sendMs = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_msgTimeMutex);
+        auto it = m_msgSendTime.find(msgId);
+        if (it != m_msgSendTime.end())
+        {
+            sendMs = it.value();
+            m_msgSendTime.erase(it);
+        }
+    }
+    qint64 roundTripMs = (sendMs > 0) ? (nowMs - sendMs) : -1;
+
     if (!m_pSortingDb)
     {
         HTTP_LOG_WARN("满箱回传结果处理（H7） SortingDatabase未初始化 msgId=%s", msgId.toLocal8Bit().data());
@@ -1926,9 +2021,11 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
         QString boxCode = outMsg.boxcode;
         QString orderCode = outMsg.orderCode;
 
-        HTTP_LOG_INFO("满箱回传成功（H7） msgId=%s order=%s box=%s",
+        HTTP_LOG_INFO("满箱回传成功（H7） msgId=%s order=%s box=%s 网络往返=%lldms",
             msgId.toLocal8Bit().data(), orderCode.toLocal8Bit().data(),
-            boxCode.toLocal8Bit().data());
+            boxCode.toLocal8Bit().data(), roundTripMs);
+        LOG_INFO("[耗时] [满箱回传] 网络往返=%lldms msgId=%s order=%s box=%s success=1",
+            roundTripMs, msgId.toLocal8Bit().data(), orderCode.toLocal8Bit().data(), boxCode.toLocal8Bit().data());
         emit logMessage(QString("[满箱回传] 回传成功 msgId=%1 order=%2 box=%3")
             .arg(msgId).arg(orderCode).arg(boxCode));
 
@@ -1961,6 +2058,9 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
     else
     {
         // ── 失败处理（T-S5-04）────
+        LOG_INFO("[耗时] [满箱回传] 网络往返=%lldms msgId=%s success=0",
+            roundTripMs, msgId.toLocal8Bit().data());
+
         // 查询当前重试次数
         OutboxRecord outMsg = m_pSortingDb->getOutboxFullboxByMsgId(msgId);
 
@@ -2050,7 +2150,7 @@ void HttpServer::pollOutboxFullbox()
 // 字段取值：
 //   orderCode      = 波次下发编号（H4）
 //   orderType      = 固定 "02"（WMS_ORDER_TYPE）
-//   sumLocation    = 实际使用过的格口数（去重后）
+//   sumLocation    = 落格分拣总件数（sorted()）
 //   operuserDate   = 当前时间
 //   operuserCode   = 默认 "admin"
 //   operuserName   = 默认 "管理员"
@@ -2088,6 +2188,10 @@ QJsonObject HttpServer::buildEndPayload(const QString& orderCode, int sumLocatio
 // ============================================================================
 void HttpServer::sendEnd()
 {
+    QElapsedTimer funcTimer;
+    funcTimer.start();
+    qint64 epochMs = QDateTime::currentMSecsSinceEpoch();
+
     if (!m_pWaveMgr)
     {
         HTTP_LOG_WARN("完结回传触发失败（H8） WaveManager未初始化");
@@ -2106,10 +2210,11 @@ void HttpServer::sendEnd()
     }
 
     QString orderCode = m_pWaveMgr->orderCode();
-    int sumLocation = m_pWaveMgr->sumLocation();  // T-S6-05: 实际用过格口数
+    int sumLocation = m_pWaveMgr->sorted();  // 落格分拣总件数（告知WMS分拣了多少件）
 
     // ── 步骤3: 构建完结回传报文（H8）──
     QJsonObject payload = buildEndPayload(orderCode, sumLocation);
+    qint64 t1 = funcTimer.elapsed();  // ★ 耗时：payload构建
 
     // ── 步骤4-5: 生成 msgId（UUID 幂等键）+ 插入 Outbox ──
     QString msgId = QString::fromUtf8(QUuid::createUuid().toByteArray().toHex());
@@ -2131,14 +2236,34 @@ void HttpServer::sendEnd()
     {
         m_pSortingDb->insertOutboxEnd(outMsg);
     }
+    qint64 t2 = funcTimer.elapsed();  // ★ 耗时：Outbox写入
+
+    // ★ 耗时统计：记录发送时间戳（用于 onEndReplyFinished 计算网络往返耗时）
+    {
+        std::lock_guard<std::mutex> lock(m_msgTimeMutex);
+        m_msgSendTime[msgId] = epochMs;
+    }
 
     HTTP_LOG_INFO("完结回传消息已入Outbox（H8） msgId=%s order=%s sumLocation=%d",
         msgId.toLocal8Bit().data(), orderCode.toLocal8Bit().data(), sumLocation);
     emit logMessage(QString("[完结回传] 消息入Outbox msgId=%1 order=%2 sumLocation=%3")
         .arg(msgId).arg(orderCode).arg(sumLocation));
 
+    // ★ 原始报文：完结回传（H8）写入 run.log
+    LOG_INFO("[原始报文] [完结回传] msgId=%s body=%s(%d字节)",
+        msgId.toLocal8Bit().data(),
+        outMsg.payload.constData(), outMsg.payload.size());
+
     // ── 步骤6: 发送到 WMS ──
     sendEndToWms(msgId, payload);
+    qint64 t3 = funcTimer.elapsed();  // ★ 耗时：信号发送
+
+    // ★ 耗时汇总日志（不包含网络往返，仅本地处理）
+    LOG_INFO("[耗时] [完结回传] msgId=%s order=%s payload构建=%lldms Outbox写入=%lldms 信号发送=%lldms 本地总计=%lldms",
+        msgId.toLocal8Bit().data(), orderCode.toLocal8Bit().data(),
+        t1, t2 - t1, t3 - t2, t3);
+    HTTP_LOG_INFO("完结回传耗时（H8） msgId=%s payload构建=%lldms Outbox=%lldms 信号发送=%lldms 总计=%lldms",
+        msgId.toLocal8Bit().data(), t1, t2 - t1, t3 - t2, t3);
 }
 
 // ============================================================================
@@ -2157,6 +2282,20 @@ void HttpServer::sendEndToWms(const QString& msgId, const QJsonObject& payload)
 // ============================================================================
 void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QString& body)
 {
+    // ★ 耗时统计：网络往返耗时
+    qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    qint64 sendMs = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_msgTimeMutex);
+        auto it = m_msgSendTime.find(msgId);
+        if (it != m_msgSendTime.end())
+        {
+            sendMs = it.value();
+            m_msgSendTime.erase(it);
+        }
+    }
+    qint64 roundTripMs = (sendMs > 0) ? (nowMs - sendMs) : -1;
+
     if (!m_pSortingDb)
     {
         HTTP_LOG_WARN("完结回传结果处理（H8） SortingDatabase未初始化 msgId=%s", msgId.toLocal8Bit().data());
@@ -2170,8 +2309,10 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
 
         OutboxRecord outMsg = m_pSortingDb->getOutboxEndByMsgId(msgId); // ★ S6 按 msgId 查询
 
-        HTTP_LOG_INFO("完结回传成功（H8） msgId=%s order=%s",
-            msgId.toLocal8Bit().data(), outMsg.orderCode.toLocal8Bit().data());
+        HTTP_LOG_INFO("完结回传成功（H8） msgId=%s order=%s 网络往返=%lldms",
+            msgId.toLocal8Bit().data(), outMsg.orderCode.toLocal8Bit().data(), roundTripMs);
+        LOG_INFO("[耗时] [完结回传] 网络往返=%lldms msgId=%s order=%s success=1",
+            roundTripMs, msgId.toLocal8Bit().data(), outMsg.orderCode.toLocal8Bit().data());
         emit logMessage(QString("[完结回传] 回传成功 msgId=%1 order=%2")
             .arg(msgId).arg(outMsg.orderCode));
 
@@ -2184,6 +2325,9 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
     else
     {
         // ── 失败处理（T-S6-03）────
+        LOG_INFO("[耗时] [完结回传] 网络往返=%lldms msgId=%s success=0",
+            roundTripMs, msgId.toLocal8Bit().data());
+
         OutboxRecord outMsg = m_pSortingDb->getOutboxEndByMsgId(msgId); // ★ S6 按 msgId 查询
         int retryCount = outMsg.retryCount;
         QString orderCode = outMsg.orderCode;

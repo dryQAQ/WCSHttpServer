@@ -17,8 +17,10 @@ struct AppConfig
     int     wmsListenPort    = WMS_LISTEN_PORT;       // HTTP 监听端口（默认 8191）
 
     // ──── 回传配置（WCS → WMS）────
-    QString feedbackUrl      = WMS_FEEDBACK_URL;      // 正式环境回传 URL
-    QString feedbackTestUrl  = WMS_FEEDBACK_URL_TEST; // 测试环境回传 URL
+    QString feedbackUrl      = WMS_FEEDBACK_URL;      // 正式环境满箱回传 URL（H7）
+    QString feedbackTestUrl  = WMS_FEEDBACK_URL_TEST; // 测试环境满箱回传 URL（H7）
+    QString feedbackEndUrl   = WMS_FEEDBACK_END_URL;  // 正式环境完结回传 URL（H8）
+    QString feedbackEndTestUrl = WMS_FEEDBACK_END_URL_TEST; // 测试环境完结回传 URL（H8）
     QString appkey            = WMS_APPKEY;            // 正式环境 AppKey
     QString appkeyTest        = WMS_APPKEY_TEST;       // 测试环境 AppKey
     bool    useTestEnv        = true;                  // true=使用测试环境
@@ -57,6 +59,7 @@ struct AppConfig
     // ──── 满箱回传配置（H7 满箱同步到WMS）────
     QString fullboxFromLocationSource = FULLBOX_FROM_LOCATION_SOURCE;  // fromLocation 取值来源（config/volu）
     QString fullboxDefaultFromLocation = FULLBOX_DEFAULT_FROM_LOCATION; // 来源库位默认值（config模式时使用）
+    QString fullboxDefaultTargetLocation = FULLBOX_DEFAULT_TARGET_LOCATION; // 目标库位默认值（无容器号时兜底）
 
     // ──── S7 分拣增强配置（修改后需重启服务）────
     bool    sortingEpcDedup     = SORTING_EPC_DEDUP;          // EPC 任务内防重（true/false）
@@ -87,6 +90,12 @@ struct AppConfig
     QString activeFeedbackUrl() const
     {
         return useTestEnv ? feedbackTestUrl : feedbackUrl;
+    }
+
+    // 获取当前生效的完结回传 URL（H8，根据 useTestEnv 切换测试/正式环境）
+    QString activeEndFeedbackUrl() const
+    {
+        return useTestEnv ? feedbackEndTestUrl : feedbackEndUrl;
     }
 
     // 获取当前生效的 AppKey（根据 useTestEnv 切换测试/正式环境）

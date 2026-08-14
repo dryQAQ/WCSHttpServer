@@ -18,8 +18,12 @@
 #define WMS_FEEDBACK_HOST_TEST    "http://182.92.166.232"                        // 测试环境 WMS 主机
 #define WMS_FEEDBACK_PATH         "/gids5/service/thirdPartyData/dz_bxh_wcs_zs" // 正式环境回传路径
 #define WMS_FEEDBACK_PATH_TEST    "/gids5/service/thirdPartyData/dz_bxh_wcs_cs" // 测试环境回传路径
-#define WMS_FEEDBACK_URL          "http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs"        // 正式环境完整 URL（宏拼接）
-#define WMS_FEEDBACK_URL_TEST     "http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs"		  // 测试环境完整 URL（宏拼接）
+//#define WMS_FEEDBACK_URL          "http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs"        // 正式环境完整 URL（宏拼接）
+//#define WMS_FEEDBACK_URL_TEST     "http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs"		  // 测试环境完整 URL（宏拼接）
+#define WMS_FEEDBACK_URL          "https://wms.pelliot.com.cn/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder"        // 正式环境满箱回传 URL（H7 满箱同步到WMS）
+#define WMS_FEEDBACK_URL_TEST     "https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder"		  // 测试环境满箱回传 URL（H7 满箱同步到WMS）
+#define WMS_FEEDBACK_END_URL      "https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder"      // 正式环境完结回传 URL（H8 波次完结通知WMS）
+#define WMS_FEEDBACK_END_URL_TEST "https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder"    // 测试环境完结回传 URL（H8 波次完结通知WMS）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 认证 AppKey（放入 HTTP Header: AppKey=xxx）
@@ -80,7 +84,8 @@
 // fromLocation 取值来源：config=使用配置项固定值, volu=使用波次明细中的 volu 字段
 // TODO: RQ-04 待确认 volu 与 fromLocation 的映射关系（2026-08-04）
 #define FULLBOX_FROM_LOCATION_SOURCE   "volu"   // fromLocation 取值来源（config/volu）
-#define FULLBOX_DEFAULT_FROM_LOCATION  "A-01"   // 来源库位默认值（当 FULLBOX_FROM_LOCATION_SOURCE=config 时使用）
+#define FULLBOX_DEFAULT_FROM_LOCATION  "A-999"   // 来源库位默认值（H7 fromLocation 兜底值）
+#define FULLBOX_DEFAULT_TARGET_LOCATION "999"   // 目标库位默认值（H7 targetLocation 无容器号时兜底）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 分拣引擎配置
@@ -365,7 +370,7 @@
 // order_code — 波次号（外键，关联 return_wave）
 // inco       — 商品编码/SKU（与 RFID查询（H3） barcode、满箱回传（H7） sku 对齐）
 // grid_num   — 格口号
-// grid_type  — 格口属性（普通格口/专属发货格口/分类格口/异常口/混分格口）
+// grid_type  — 格口属性（0=分类, 1=异常, 2=发货状态）
 // plan_qty   — 计划件数（WMS 下发的 gridNumber）
 // sorted_qty — 已分拣件数（PLC 落格确认后 +1）
 // volu       — 来源库位/体积
@@ -375,7 +380,7 @@
     "  order_code TEXT    NOT NULL DEFAULT ''," \
     "  inco       TEXT    NOT NULL DEFAULT ''," \
     "  grid_num   TEXT    NOT NULL DEFAULT ''," \
-    "  grid_type  TEXT    NOT NULL DEFAULT '普通格口'," \
+    "  grid_type  TEXT    NOT NULL DEFAULT '0'," \
     "  plan_qty   INTEGER NOT NULL DEFAULT 0," \
     "  sorted_qty INTEGER NOT NULL DEFAULT 0," \
     "  volu       TEXT    NOT NULL DEFAULT ''," \
@@ -507,6 +512,11 @@
 // 更新波次状态
 #define SQL_UPDATE_WAVE_STATUS \
     "UPDATE return_wave SET status = ?, updated_at = ? WHERE order_code = ?"
+// 查询最近一条未完成波次（排除已取消 WAVE_CANCELLED=6 和已完成 WAVE_FINISHED=8）
+// 用于软件重启后恢复未完成波次数据
+#define SQL_SELECT_LATEST_UNFINISHED_WAVE \
+    "SELECT order_code, order_qty, status, created_at, updated_at FROM return_wave " \
+    "WHERE status NOT IN (6, 8) ORDER BY updated_at DESC LIMIT 1"
 
 // ──── 波次明细操作 ────
 // 插入明细行

@@ -133,6 +133,9 @@ public:
     // ──── S8 新增：对账（T-S8-01/02）────
     WaveReconciliation getReconciliation() const;          // ★ 波次对账（T-S8-01/02）
 
+    // ★ 启动时从数据库恢复未完成波次（软件重启后继续处理同一批次数据）
+    void restoreWaveFromDB();
+
 signals:
     void serverStarted(int port);
     void serverStopped();
@@ -234,4 +237,8 @@ private:
     // ──── S7 格口分拣计数（T-S7-06 格口上限检查）────
     QMap<QString, int>      m_gridSortedCount;   // 格口号 → 已分拣件数
     std::mutex              m_gridCountMutex;     // 保护 m_gridSortedCount
+
+    // ──── 回传耗时统计（H7/H8 网络请求慢排查）────
+    QMap<QString, qint64>   m_msgSendTime;        // msgId → 发送时间戳（epoch ms）
+    std::mutex              m_msgTimeMutex;        // 保护 m_msgSendTime
 };

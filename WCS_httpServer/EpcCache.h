@@ -20,16 +20,14 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include "define.h"
-#include "hlog1.h"
+#include "LogService.h"
 
 // 辅助宏：将 carNum 数字转为 3 位补零字符串
 #define CAR_NUM_STR(n) QString("%1").arg(n, 3, 10, QChar('0'))
 #define DEFAULT_CAR_STR CAR_NUM_STR(DEFAULT_CAR_NUM)
 
 // ──── EpcCache 专用日志宏（写入 ./log/EPC/epc.log）────
-#define EPC_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "EPC", "\t" fmt, ##__VA_ARGS__)
-#define EPC_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "EPC", "\t" fmt, ##__VA_ARGS__)
-#define EPC_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "EPC", "\t" fmt, ##__VA_ARGS__)
+// （宏定义已移至 LogService.h 统一管理）
 
 // ★ 缓存条目：barcode + carNum + SKU 绑定状态 + 过期时间
 struct EpcCacheEntry

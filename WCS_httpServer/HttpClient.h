@@ -25,7 +25,8 @@ public:
     ~HttpClient();
 
     // ──── 配置 ────
-    void setUrl(const QString& url)  { m_url = url; }        // WMS回传接口地址
+    void setUrl(const QString& url)  { m_url = url; }        // WMS满箱回传接口地址（H7）
+    void setEndUrl(const QString& url) { m_endUrl = url; }   // WMS完结回传接口地址（H8）
     void setAppkey(const QString& k) { m_appkey = k; }        // WMS认证AppKey（HTTP Header）
     void setTimeout(int ms)          { m_timeoutMs = ms; }    // 回传超时(ms)，默认HTTP_TIMEOUT_MS=3000
     void setRfidQueryUrl(const QString& url) { m_rfidQueryUrl = url; }  // ★ RFID SKU-EPC 绑定查询 URL
@@ -33,11 +34,14 @@ public:
     // ──── 业务 ────
     // 回传波次完结通知到WMS（异步，不阻塞主线程）
     // orderCode: 波次号
-    // sumLocation: 使用的格口总数（去重后）
+    // sumLocation: 落格分拣总件数（告知WMS分拣了多少件）
     void sendWaveComplete(const QString& orderCode, int sumLocation);
 
-    // ★ 锁格回传：发送预构建 JSON 到 WMS（异步）
+    // ★ 锁格回传：发送预构建 JSON 到 WMS（异步，使用 H7 URL）
     void sendGenericFeedback(const QJsonObject& json, const QString& context = QString());
+
+    // ★ 完结回传：发送预构建 JSON 到 WMS（异步，使用 H8 URL）
+    void sendEndFeedback(const QJsonObject& json, const QString& context = QString());
 
     // ★ SKU-EPC 绑定查询：向 RFID 查询 EPC→barcode 映射（异步批量）
     //    epcList: EPC 列表，一次查询多个
@@ -66,7 +70,8 @@ private:
     QNetworkAccessManager* m_pNetworkMgr;
 
     // ──── 配置成员 ────
-    QString m_url;              // WMS回传目标URL
+    QString m_url;              // WMS满箱回传目标URL（H7）
+    QString m_endUrl;           // WMS完结回传目标URL（H8）
     QString m_appkey;           // WMS认证AppKey（放入HTTP Header: AppKey=xxx）
     int     m_timeoutMs = HTTP_TIMEOUT_MS;  // 超时时间(ms)，默认3000
     QString m_rfidQueryUrl;     // ★ RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）

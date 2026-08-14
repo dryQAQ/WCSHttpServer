@@ -1,15 +1,14 @@
 #include "ParseWorker.h"
-#include "hlog1.h"
+#include "LogService.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QElapsedTimer>
-#include "log_center.h"
 #include "define.h"
 
 // ★ 波次明细日志宏（写入 ./log/WAVE_ITEM/wave_item.log）
 //   每个 items[] 子项单独记录，避免原始报文因截断而无法查看完整内容
-#define WAVE_ITEM_INFO(fmt, ...) hlog_format(HLOG_LEVEL_INFO, "WAVE_ITEM", "\t" fmt, ##__VA_ARGS__)
+//   （宏定义已移至 LogService.h 统一管理）
 
 ParseWorker::ParseWorker(TaskQueue* pQueue, GridBuffer* pBuffer, QObject* parent)
     : QThread(parent), m_pQueue(pQueue), m_pBuffer(pBuffer)
@@ -68,6 +67,10 @@ void ParseWorker::run()
         QSet<QString> recvSet;   // 跟踪接收到的inco
         QStringList epcList;      // ★ 收集EPC用于RFID查询
 
+        // ★ 波次明细日志：只记录 WMS 原始报文，一行搞定
+        WAVE_ITEM_INFO("[原始报文] %s body=%s(%d字节)",
+            task.fullUrl.toLocal8Bit().data(), task.rawBody.constData(), task.rawBody.size());
+
         for (const QJsonValue& val : items)
         {
             QJsonObject item = val.toObject();
@@ -83,12 +86,27 @@ void ParseWorker::run()
                 gridNumber = gv.isString() ? gv.toString().toInt() : gv.toInt();
             }
 
-            if (inco.isEmpty() || gridNum.isEmpty())
+            if (inco.isEmpty() || gridNum.isEmpty() || gridNumber <= 0)
             {
                 WCS_WARN("[Parse] 跳过无效条目 inco=%s gridNum=%s orderCode=%s",
                     inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(),
                     orderCode.toLocal8Bit().data());
                 continue;
+            }
+
+            // ★ 格口号越界检测（不阻塞波次，记录异常后跳过，便于核查和重传）
+            {
+                bool ok = false;
+                int gNum = gridNum.toInt(&ok);
+                if (ok && (gNum < 1 || gNum > BINDING_SLOT_COUNT))
+                {
+                    QString reason = QString("格口号越界 gridNum=%1 有效范围1~%2").arg(gNum).arg(BINDING_SLOT_COUNT);
+                    WCS_WARN("[Parse] 格口号越界 跳过 item inco=%s gridNum=%s orderCode=%s",
+                        inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(),
+                        orderCode.toLocal8Bit().data());
+                    emit parseException(orderCode, inco, gridNum, reason);
+                    continue;  // 跳过该 item，不加入 GridBuffer
+                }
             }
 
             recvSet.insert(inco);
@@ -102,27 +120,8 @@ void ParseWorker::run()
             if (!epcn.isEmpty() && !epcList.contains(epcn))
                 epcList.append(epcn);
 
-            // ★ 波次明细日志：每个 items[] 子项单独记录完整报文
-            //   避免原始报文日志因截断导致无法查看完整 item 内容
-            {
-                QJsonObject itemLog;
-                itemLog["orderCode"] = orderCode;
-                itemLog["orderQty"]  = orderQty;
-                QJsonArray itemArr;
-                QJsonObject itemCopy;
-                itemCopy["obxCode"]    = obxCode;
-                itemCopy["inco"]       = inco;
-                if (!epcn.isEmpty()) itemCopy["epcn"] = epcn;
-                itemCopy["gridNum"]    = gridNum;
-                itemCopy["gridNumber"] = gridNumber;
-                itemCopy["gridType"]   = gridType;
-                if (!volu.isEmpty()) itemCopy["volu"] = volu;
-                itemArr.append(itemCopy);
-                itemLog["items"] = itemArr;
-                QByteArray itemJson = QJsonDocument(itemLog).toJson(QJsonDocument::Compact);
-                WAVE_ITEM_INFO("[原始报文] %s body=%s(%d字节)",
-                    task.fullUrl.toLocal8Bit().data(), itemJson.constData(), itemJson.size());
-            }
+            // ★ 波次明细日志：只记录 WMS 发送的原始报文，不额外添加字段
+            //   （epcn 仅为内部 PLC 通信用，不写入日志）
 
             // 同品多格口合并
             if (newMap->contains(inco))
@@ -135,7 +134,7 @@ void ParseWorker::run()
             {
                 GridEntry entry;
                 entry.gridNum   = gridNum;
-                entry.gridType  = gridType.isEmpty() ? "普通格口" : gridType;
+                entry.gridType  = gridType.isEmpty() ? "0" : gridType;  // 0=分类, 1=异常, 2=发货
                 entry.gridCount = gridNumber;
                 entry.volu      = volu;                      // ★ 来源库位
                 entry.obxCode   = obxCode;                   // ★ 容器号

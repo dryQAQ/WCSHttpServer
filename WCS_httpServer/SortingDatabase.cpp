@@ -1,6 +1,5 @@
 #include "SortingDatabase.h"
-#include "define.h"
-#include "LifecycleLogger.h"
+#include "LogService.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QSqlQuery>
@@ -8,13 +7,10 @@
 #include <QSqlRecord>
 #include <QUuid>
 #include <QDebug>
+#include "define.h"
 
 // 数据库操作专用日志宏（写入 ./log/DataBase/DataBase.log）
-#ifndef Data_INFO
-#define Data_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "DataBase", "\t" fmt, ##__VA_ARGS__)
-#define Data_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "DataBase", "\t" fmt, ##__VA_ARGS__)
-#define Data_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "DataBase", "\t" fmt, ##__VA_ARGS__)
-#endif
+// （宏定义已移至 LogService.h 统一管理）
 
 // ============================================================================
 // 构造 / 析构
@@ -563,6 +559,27 @@ int SortingDatabase::getWaveStatus(const QString& orderCode)
     return -1;  // 不存在
 }
 
+// ★ 查询最近一条未完成波次（排除已取消=6和已完成=8），用于软件重启后恢复波次数据
+ReturnWaveRecord SortingDatabase::getLatestUnfinishedWave()
+{
+    QMutexLocker locker(&m_mutex);
+    ReturnWaveRecord rec;
+    if (!m_bOpened) return rec;
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    if (!db.isOpen()) return rec;
+
+    QSqlQuery q(db);
+    q.prepare(SQL_SELECT_LATEST_UNFINISHED_WAVE);
+    if (q.exec() && q.next()) {
+        rec.orderCode = q.value(0).toString();
+        rec.orderQty = q.value(1).toInt();
+        rec.status = q.value(2).toInt();
+        rec.createdAt = q.value(3).toString();
+        rec.updatedAt = q.value(4).toString();
+    }
+    return rec;
+}
+
 bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<ReturnWaveItemRecord>& items)
 {
     QMutexLocker locker(&m_mutex);
@@ -604,7 +621,7 @@ bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<Re
                 .arg(esc(item.orderCode),
                      esc(item.inco),
                      esc(item.gridNum),
-                     esc(item.gridType.isEmpty() ? QString("普通格口") : item.gridType),
+                     esc(item.gridType.isEmpty() ? QString("0") : item.gridType),  // 0=分类, 1=异常, 2=发货
                      QString::number(item.planQty),
                      esc(item.volu.isNull() ? QString("") : item.volu),
                      esc(item.obxCode.isNull() ? QString("") : item.obxCode));

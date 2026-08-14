@@ -15,7 +15,6 @@
 //                   → ./log/Run/run.log        (LOG_INFO/LOG_WARN/LOG_ERROR)
 //                   → ./log/PLC/PLC.log        (PLC_INFO/PLC_WARN/PLC_ERROR)
 //                   → ./log/LIFECYCLE/lifecycle.log (LIFE_LOG)
-//                   → ./log/JT/JT.log          (JT_INFO)
 //                   → ./log/DataBase/DataBase.log (Data_INFO)
 // ============================================================================
 
@@ -23,12 +22,10 @@
 #include <QDir>
 #include "MainWindow.h"
 #include "ConfigManager.h"
-#include "hlog1.h"
+#include "LogService.h"
 
-// ──── HTTP 服务专用日志宏（写入 ./log/HTTP/http.log）────
-#define HTTP_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "HTTP", "\t" fmt, ##__VA_ARGS__)
-#define HTTP_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "HTTP", "\t" fmt, ##__VA_ARGS__)
-#define HTTP_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "HTTP", "\t" fmt, ##__VA_ARGS__)
+// ──── 日志系统说明（宏定义已移至 LogService.h 统一管理）────
+// ============================================================================
 
 int main(int argc, char* argv[])
 {
@@ -46,7 +43,7 @@ int main(int argc, char* argv[])
     QDir().mkpath(exeDir + "/log/PLC");         // PLC通信日志
     QDir().mkpath(exeDir + "/log/LIFECYCLE");   // EPC编码生命周期日志
     QDir().mkpath(exeDir + "/log/DataBase");    // 数据库操作日志
-    QDir().mkpath(exeDir + "/log/JT");          // 极兔分拣日志
+    
     QDir().mkpath(exeDir + "/log/EPC");         // EpcCache 日志
     QDir().mkpath(exeDir + "/data");            // 分拣数据库目录（UI 查询独立于服务，需提前创建）
 

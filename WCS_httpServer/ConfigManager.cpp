@@ -37,6 +37,8 @@ bool AppConfig::loadFromFile(const QString& path)
         if (name == "wmsListenPort")           wmsListenPort = xml.readElementText().toInt();
         else if (name == "feedbackUrl")        feedbackUrl = xml.readElementText();
         else if (name == "feedbackTestUrl")    feedbackTestUrl = xml.readElementText();
+        else if (name == "feedbackEndUrl")     feedbackEndUrl = xml.readElementText();     // ★ H8 完结回传 URL
+        else if (name == "feedbackEndTestUrl") feedbackEndTestUrl = xml.readElementText(); // ★ H8 完结回传测试 URL
         else if (name == "appkey")             appkey = xml.readElementText();
         else if (name == "appkeyTest")         appkeyTest = xml.readElementText();
         else if (name == "useTestEnv")         useTestEnv = xml.readElementText().toInt();
@@ -65,6 +67,7 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "configVersion")     configVersion = xml.readElementText().toInt();
         else if (name == "h7FromLocationSource")    fullboxFromLocationSource = xml.readElementText();
         else if (name == "h7DefaultFromLocation") fullboxDefaultFromLocation = xml.readElementText();
+        else if (name == "h7DefaultTargetLocation") fullboxDefaultTargetLocation = xml.readElementText();
         // ──── S7 分拣增强配置 ────
         // bool 类型：XML 中写 "true"/"false"，读取时转为小写比较
         else if (name == "sortingEpcDedup")         sortingEpcDedup = (xml.readElementText().trimmed().toLower() == "true");
@@ -114,10 +117,14 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("wmsListenPort",    QString::number(wmsListenPort));
 
     // ──── 回传配置（WCS → WMS）────
-    xml.writeComment(" 正式环境回传 URL（WCS 满箱/完结回传 WMS 的地址） ");
+    xml.writeComment(" 正式环境满箱回传 URL（H7 满箱同步到WMS） ");
     xml.writeTextElement("feedbackUrl",      feedbackUrl);
-    xml.writeComment(" 测试环境回传 URL ");
+    xml.writeComment(" 测试环境满箱回传 URL（H7） ");
     xml.writeTextElement("feedbackTestUrl",  feedbackTestUrl);
+    xml.writeComment(" 正式环境完结回传 URL（H8 波次完结通知WMS） ");
+    xml.writeTextElement("feedbackEndUrl",   feedbackEndUrl);
+    xml.writeComment(" 测试环境完结回传 URL（H8） ");
+    xml.writeTextElement("feedbackEndTestUrl", feedbackEndTestUrl);
     xml.writeComment(" 正式环境 AppKey（HTTP Header 鉴权） ");
     xml.writeTextElement("appkey",           appkey);
     xml.writeComment(" 测试环境 AppKey ");
@@ -176,6 +183,8 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("h7FromLocationSource",   fullboxFromLocationSource);
     xml.writeComment(" 来源库位默认值（config 模式时使用） ");
     xml.writeTextElement("h7DefaultFromLocation",  fullboxDefaultFromLocation);
+    xml.writeComment(" 目标库位默认值（无容器号时兜底） ");
+    xml.writeTextElement("h7DefaultTargetLocation", fullboxDefaultTargetLocation);
 
     // ──── S7 分拣增强配置 ────
     xml.writeComment(" EPC 任务内防重（true/false） ");

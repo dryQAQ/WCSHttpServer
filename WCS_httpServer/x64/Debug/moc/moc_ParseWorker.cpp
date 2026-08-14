@@ -23,8 +23,8 @@ QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_ParseWorker_t {
-    QByteArrayData data[12];
-    char stringdata0[112];
+    QByteArrayData data[16];
+    char stringdata0[146];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -44,12 +44,17 @@ QT_MOC_LITERAL(7, 62, 13), // "QSet<QString>"
 QT_MOC_LITERAL(8, 76, 7), // "recvSet"
 QT_MOC_LITERAL(9, 84, 7), // "epcList"
 QT_MOC_LITERAL(10, 92, 10), // "parseError"
-QT_MOC_LITERAL(11, 103, 8) // "errorMsg"
+QT_MOC_LITERAL(11, 103, 8), // "errorMsg"
+QT_MOC_LITERAL(12, 112, 14), // "parseException"
+QT_MOC_LITERAL(13, 127, 3), // "epc"
+QT_MOC_LITERAL(14, 131, 7), // "gridNum"
+QT_MOC_LITERAL(15, 139, 6) // "reason"
 
     },
     "ParseWorker\0waveParsed\0\0orderCode\0"
     "skuCount\0orderQty\0elapsedMs\0QSet<QString>\0"
-    "recvSet\0epcList\0parseError\0errorMsg"
+    "recvSet\0epcList\0parseError\0errorMsg\0"
+    "parseException\0epc\0gridNum\0reason"
 };
 #undef QT_MOC_LITERAL
 
@@ -59,20 +64,22 @@ static const uint qt_meta_data_ParseWorker[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-       2,   14, // methods
+       3,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
        0,       // flags
-       2,       // signalCount
+       3,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    6,   24,    2, 0x06 /* Public */,
-      10,    1,   37,    2, 0x06 /* Public */,
+       1,    6,   29,    2, 0x06 /* Public */,
+      10,    1,   42,    2, 0x06 /* Public */,
+      12,    4,   45,    2, 0x06 /* Public */,
 
  // signals: parameters
     QMetaType::Void, QMetaType::QString, QMetaType::Int, QMetaType::Int, QMetaType::LongLong, 0x80000000 | 7, QMetaType::QStringList,    3,    4,    5,    6,    8,    9,
     QMetaType::Void, QMetaType::QString,   11,
+    QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::QString, QMetaType::QString,    3,   13,   14,   15,
 
        0        // eod
 };
@@ -85,6 +92,7 @@ void ParseWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id,
         switch (_id) {
         case 0: _t->waveParsed((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< int(*)>(_a[2])),(*reinterpret_cast< int(*)>(_a[3])),(*reinterpret_cast< qint64(*)>(_a[4])),(*reinterpret_cast< const QSet<QString>(*)>(_a[5])),(*reinterpret_cast< const QStringList(*)>(_a[6]))); break;
         case 1: _t->parseError((*reinterpret_cast< const QString(*)>(_a[1]))); break;
+        case 2: _t->parseException((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3])),(*reinterpret_cast< const QString(*)>(_a[4]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
@@ -111,6 +119,13 @@ void ParseWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id,
             using _t = void (ParseWorker::*)(const QString & );
             if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&ParseWorker::parseError)) {
                 *result = 1;
+                return;
+            }
+        }
+        {
+            using _t = void (ParseWorker::*)(const QString & , const QString & , const QString & , const QString & );
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&ParseWorker::parseException)) {
+                *result = 2;
                 return;
             }
         }
@@ -146,13 +161,13 @@ int ParseWorker::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 2)
+        if (_id < 3)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 2;
+        _id -= 3;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 2)
+        if (_id < 3)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 2;
+        _id -= 3;
     }
     return _id;
 }
@@ -169,6 +184,13 @@ void ParseWorker::parseError(const QString & _t1)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 1, _a);
+}
+
+// SIGNAL 2
+void ParseWorker::parseException(const QString & _t1, const QString & _t2, const QString & _t3, const QString & _t4)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t4))) };
+    QMetaObject::activate(this, &staticMetaObject, 2, _a);
 }
 QT_WARNING_POP
 QT_END_MOC_NAMESPACE

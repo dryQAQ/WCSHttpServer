@@ -22,8 +22,8 @@ QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_HttpServer_t {
-    QByteArrayData data[21];
-    char stringdata0[249];
+    QByteArrayData data[18];
+    char stringdata0[214];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -49,10 +49,7 @@ QT_MOC_LITERAL(13, 142, 23), // "waveCompleteReportReady"
 QT_MOC_LITERAL(14, 166, 18), // "fullboxReportReady"
 QT_MOC_LITERAL(15, 185, 7), // "payload"
 QT_MOC_LITERAL(16, 193, 5), // "msgId"
-QT_MOC_LITERAL(17, 199, 14), // "endReportReady"
-QT_MOC_LITERAL(18, 214, 18), // "rfidQueryRequested"
-QT_MOC_LITERAL(19, 233, 7), // "epcList"
-QT_MOC_LITERAL(20, 241, 7) // "context"
+QT_MOC_LITERAL(17, 199, 14) // "endReportReady"
 
     },
     "HttpServer\0serverStarted\0\0port\0"
@@ -61,8 +58,7 @@ QT_MOC_LITERAL(20, 241, 7) // "context"
     "bindingUpdated\0gridLockReportReady\0"
     "reportJson\0waveCompleteReportReady\0"
     "fullboxReportReady\0payload\0msgId\0"
-    "endReportReady\0rfidQueryRequested\0"
-    "epcList\0context"
+    "endReportReady"
 };
 #undef QT_MOC_LITERAL
 
@@ -72,25 +68,24 @@ static const uint qt_meta_data_HttpServer[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-      11,   14, // methods
+      10,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
        0,       // flags
-      11,       // signalCount
+      10,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    1,   69,    2, 0x06 /* Public */,
-       4,    0,   72,    2, 0x06 /* Public */,
-       5,    1,   73,    2, 0x06 /* Public */,
-       7,    2,   76,    2, 0x06 /* Public */,
-       7,    1,   81,    2, 0x26 /* Public | MethodCloned */,
-      10,    0,   84,    2, 0x06 /* Public */,
-      11,    1,   85,    2, 0x06 /* Public */,
-      13,    1,   88,    2, 0x06 /* Public */,
-      14,    2,   91,    2, 0x06 /* Public */,
-      17,    2,   96,    2, 0x06 /* Public */,
-      18,    2,  101,    2, 0x06 /* Public */,
+       1,    1,   64,    2, 0x06 /* Public */,
+       4,    0,   67,    2, 0x06 /* Public */,
+       5,    1,   68,    2, 0x06 /* Public */,
+       7,    2,   71,    2, 0x06 /* Public */,
+       7,    1,   76,    2, 0x26 /* Public | MethodCloned */,
+      10,    0,   79,    2, 0x06 /* Public */,
+      11,    1,   80,    2, 0x06 /* Public */,
+      13,    1,   83,    2, 0x06 /* Public */,
+      14,    2,   86,    2, 0x06 /* Public */,
+      17,    2,   91,    2, 0x06 /* Public */,
 
  // signals: parameters
     QMetaType::Void, QMetaType::Int,    3,
@@ -103,7 +98,6 @@ static const uint qt_meta_data_HttpServer[] = {
     QMetaType::Void, QMetaType::QJsonObject,   12,
     QMetaType::Void, QMetaType::QJsonObject, QMetaType::QString,   15,   16,
     QMetaType::Void, QMetaType::QJsonObject, QMetaType::QString,   15,   16,
-    QMetaType::Void, QMetaType::QJsonArray, QMetaType::QString,   19,   20,
 
        0        // eod
 };
@@ -124,7 +118,6 @@ void HttpServer::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         case 7: _t->waveCompleteReportReady((*reinterpret_cast< const QJsonObject(*)>(_a[1]))); break;
         case 8: _t->fullboxReportReady((*reinterpret_cast< const QJsonObject(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2]))); break;
         case 9: _t->endReportReady((*reinterpret_cast< const QJsonObject(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2]))); break;
-        case 10: _t->rfidQueryRequested((*reinterpret_cast< const QJsonArray(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::IndexOfMethod) {
@@ -192,13 +185,6 @@ void HttpServer::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
                 return;
             }
         }
-        {
-            using _t = void (HttpServer::*)(const QJsonArray & , const QString & );
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::rfidQueryRequested)) {
-                *result = 10;
-                return;
-            }
-        }
     }
 }
 
@@ -233,13 +219,13 @@ int HttpServer::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 11)
+        if (_id < 10)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 11;
+        _id -= 10;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 11)
+        if (_id < 10)
             *reinterpret_cast<int*>(_a[0]) = -1;
-        _id -= 11;
+        _id -= 10;
     }
     return _id;
 }
@@ -303,13 +289,6 @@ void HttpServer::endReportReady(const QJsonObject & _t1, const QString & _t2)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))) };
     QMetaObject::activate(this, &staticMetaObject, 9, _a);
-}
-
-// SIGNAL 10
-void HttpServer::rfidQueryRequested(const QJsonArray & _t1, const QString & _t2)
-{
-    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))) };
-    QMetaObject::activate(this, &staticMetaObject, 10, _a);
 }
 QT_WARNING_POP
 QT_END_MOC_NAMESPACE

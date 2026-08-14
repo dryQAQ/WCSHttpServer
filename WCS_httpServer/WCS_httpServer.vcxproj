@@ -125,6 +125,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DoubleBuffer.h" />
+    <ClInclude Include="LogService.h" />
     <QtMoc Include="LifecycleLogger.h" />
     <QtMoc Include="log_center.h" />
     <ClInclude Include="define.h" />

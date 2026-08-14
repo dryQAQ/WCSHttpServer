@@ -387,3 +387,537 @@
 2026-08-11 12:07:07.715 [0x0000c184] INFO  WCS - [TID-1786421179740-f64851ac][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
 2026-08-12 08:24:34.394 [0x000061e8] INFO  WCS - [TID-1786494274212-8310d80c][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
 2026-08-12 11:46:02.168 [0x000061e8] INFO  WCS - [TID-1786494274212-8310d80c][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 13:59:02.653 [0x000017b8] INFO  WCS - [TID-1786514342612-ff84194e][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 14:42:11.168 [0x000017b8] INFO  WCS - [TID-1786514342612-ff84194e][MainWindow::onStartStop:691] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 14:52:49.384 [0x00007ad8] INFO  WCS - [TID-1786517569284-dbd38be8][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 15:35:03.078 [0x00007ad8] INFO  WCS - [TID-1786517569284-dbd38be8][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 15:35:38.299 [0x00002a28] INFO  WCS - [TID-1786520138207-7b06627d][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 15:38:23.916 [0x00002a28] INFO  WCS - [TID-1786520138207-7b06627d][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 15:38:50.204 [0x000073f4] INFO  WCS - [TID-1786520330164-37230ffd][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 15:47:23.261 [0x000073f4] INFO  WCS - [TID-1786520330164-37230ffd][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 15:47:54.853 [0x00008488] INFO  WCS - [TID-1786520874814-35bfc5e2][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 18:11:54.449 [0x00008488] INFO  WCS - [TID-1786520874814-35bfc5e2][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-12 18:12:27.270 [0x00008648] INFO  WCS - [TID-1786529547217-4429c661][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 09:35:47.943 [0x00004408] INFO  WCS - 	[Parse] orderCode=PP202600000007 items=385 SKU=385 qty=1937 elapsed=23ms
+2026-08-13 09:35:47.944 [0x00008648] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PP202600000007 qty=1937 SKU=385
+2026-08-13 09:35:47.944 [0x00008648] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 09:35:47.944 [0x00008648] INFO  WCS - 	[WaveMgr] 接收inco集合 size=385
+2026-08-13 09:35:47.944 [0x00008648] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 09:35:47.944 [0x00008648] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-13 09:35:47.944 [0x00008648] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=PP202600000007
+2026-08-13 09:38:24.308 [0x00008208] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=PP202600000007
+2026-08-13 09:38:24.308 [0x00008208] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=PP202600000007
+2026-08-13 09:38:24.308 [0x00008208] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=1 status=3 sorted=0 exception=0 order=PP202600000007
+2026-08-13 09:38:24.308 [0x00008208] WARN  WCS - <590>	<WaveManager::tryCancelWave>,[WaveMgr] H5取消失败 已分拣 order=PP202600000007 sorted=0 exception=0 status=3
+2026-08-13 09:44:35.058 [0x00008648] INFO  WCS - [TID-1786529547217-4429c661][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 09:53:36.088 [0x00008648] INFO  WCS - [TID-1786529547217-4429c661][MainWindow::onStartStop:689] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 09:55:25.588 [0x000056a8] INFO  WCS - [TID-1786586125518-74aaa108][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 09:55:52.861 [0x000085a4] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=WV34S1CN2001B60L gridNum=555 orderCode=PB202203200003
+2026-08-13 09:55:52.861 [0x000085a4] INFO  WCS - 	[Parse] orderCode=PB202203200003 items=2 SKU=1 qty=2 elapsed=0ms
+2026-08-13 09:55:52.862 [0x000056a8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PB202203200003 qty=2 SKU=1
+2026-08-13 09:55:52.862 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 09:55:52.862 [0x000056a8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=1
+2026-08-13 09:55:52.862 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 09:56:10.174 [0x00004274] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=PB202203200003
+2026-08-13 09:56:10.174 [0x00004274] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=PB202203200003
+2026-08-13 09:56:10.175 [0x00004274] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=0 status=2 sorted=0 exception=0 order=PB202203200003
+2026-08-13 09:56:10.175 [0x00004274] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 6(已取消)
+2026-08-13 09:56:10.175 [0x00004274] INFO  WCS - 	[WaveMgr] H5取消成功 order=PB202203200003 2→CANCELLED
+2026-08-13 09:59:39.983 [0x000056a8] INFO  WCS - [TID-1786586125518-74aaa108][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 09:59:52.624 [0x000056a8] INFO  WCS - [TID-1786586125518-74aaa108][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 10:10:02.734 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1134010560404 gridNum=20010 orderCode=PP202600000008
+2026-08-13 10:10:02.734 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1134010560403 gridNum=20015 orderCode=PP202600000008
+2026-08-13 10:10:02.734 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1134010560402 gridNum=20065 orderCode=PP202600000008
+2026-08-13 10:10:02.734 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=104001955301001 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.734 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=104001955301004 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.734 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=104001955601704 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.734 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=104078014100388 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=105027002103901 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=105027002103904 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=105027002110403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=105101062309806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=105101062309808 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101010520503 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101010520504 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101010520505 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101010520506 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101010530402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101010530403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101010530404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101190141840 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101190141842 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101190160443 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101190160444 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101510160406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101510180602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101510180603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101510180604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.735 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1101510180606 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120360402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120360403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120360405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120360406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120360407 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120380602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120380605 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120541803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102120580604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102121529607 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102121580603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102121580604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102121580606 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102121589206 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102121980606 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102141932205 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1102151160403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103070370306 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150131002 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150131003 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150131004 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150131005 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150131006 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150131007 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150141802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150141803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150141804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150141805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150141806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150141807 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150160402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150160403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150160404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.736 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150160405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150160406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150160407 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150180602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150180603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150180604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150180605 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150180606 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1103150180607 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1109140330396 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1112141160405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1112381171102 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1119010789404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1119140720573 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1119140770369 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1119140772273 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1119140772277 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1121190324441 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1122200141839 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1123060141806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1131510120504 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1132140524702 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1132140524703 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1132140524704 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1132140524705 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1132140570304 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1134010514604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1141190972442 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1142150761805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430100127602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430100127603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430100127604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614134002 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614134003 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614134004 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.737 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614134005 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614134006 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614161802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614161803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614161804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614161805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614161806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614172803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614172804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614172805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11430614172806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11440934161802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11440934161803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=11440934161804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=115119025201543 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=115119035600442 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=115119035600443 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028200902 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028200903 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028200904 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028200905 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028200906 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028203402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028203403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028203404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.739 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028203405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028703002 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028703003 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028703004 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028703005 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=116302028703006 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1172140960105 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1172151770405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1174011520503 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1181370560403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1181370580603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100341804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100341805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100360404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100360405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100360406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100380602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100380603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100380604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183100380605 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1183370971004 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1192141960404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1199060760103 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.740 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1203102641805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1203102680406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1204081080402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1204081830302 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212141260402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212141260403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150242505 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150280605 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150612402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150612403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150612404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150612405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150660402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150660403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150660404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150660405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150660406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150680602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150680603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150680605 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1212150680606 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1213100660404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1213380241806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1221371060403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.741 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1221510860403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1222154260404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1223060280904 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1223061860903 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1224012880302 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1224012880307 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1232122271903 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1232122280604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1232151641802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1234010632206 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1234016452410 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12410104835701 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1242122052202 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1242151015104 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1242200260437 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614416502 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614416503 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614416505 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614416506 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614435802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614435803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614435804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614435805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614435806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.742 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614461802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614461803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614461804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614461805 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12430614461806 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018460402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018460403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018460404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018460405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018460406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018482402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018482403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018482404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018482405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431018482406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12431437461802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12435109261803 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=12435109261804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=125214010601802 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=125381008600436 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060620302 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060620303 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060620304 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060620305 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060620306 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.743 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060640502 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060640503 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060640504 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060640505 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060640506 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060650202 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060650203 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060650204 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060650205 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060650206 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060670202 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060670203 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060670204 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263060670205 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263370210304 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263370260104 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263370270205 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263370270302 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1263370270304 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1264011020102 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1272221440236 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.744 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080860402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080860403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080860404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080860405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080860406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080880402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080880403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080880404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080880405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1274080880406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811102 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811103 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811104 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811105 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811106 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120811406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120842702 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120842703 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120842704 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.745 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120842705 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120842706 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120870302 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120870303 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120870304 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120870305 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120870306 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120880602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120880603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120880604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120880605 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1282120880606 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284020260404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284081660403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284081660405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284081660406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284081680602 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284081680603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284081680604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1284081680606 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190412535 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190412536 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190412537 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190412538 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190412539 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190460435 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190460436 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190460437 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190460438 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190460439 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.746 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190470335 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190470336 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190470338 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1291190470339 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1303101713116 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314013222515 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081711812 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081711813 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081711814 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081711815 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081711816 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081711822 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081722412 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081722414 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081722415 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081722416 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081722422 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081760412 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081760414 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081760416 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1314081760422 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1322153324414 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1322153324415 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1332123546211 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1332123546212 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512711713 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512711714 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512711715 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512711716 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512741813 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512741814 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512741815 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.747 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1394512741816 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1600261043503 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1600360113700 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1600360141600 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1600360150900 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1610250922000 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1610571760400 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1610610960400 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1614320212700 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1620274472300 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1620312023503 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1620330122913 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1620573123900 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1620573125400 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1622310150904 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1622340181200 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1622340300000 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1630260211104 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1632344050103 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1632460614503 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1632560270800 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1634345360400 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=16402600160400 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1640364113900 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=16404441202200 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1640570120500 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1642340851800 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=16433440341800 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=16433440616500 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.749 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=16433440661800 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=16433440684300 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=165041001700800 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1670260941603 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1670260941604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1674350180103 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=1674350180104 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2182120180604 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2192120531804 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2192120541507 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2192122360402 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2192122360403 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2192122360404 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2192122360405 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2192122360406 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2202152411106 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2262120550102 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2264011020102 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=2302124111110 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=252180640202 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=252181250206 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=252181610303 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=252182620103 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=252182820106 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=660250840100 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=660250850300 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=660250860100 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=660250870200 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=99109937721250 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=99109937721260 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=99109967611230 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.750 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=99109967611250 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.751 [0x00001f04] WARN  WCS - <102>	<ParseWorker::run>,[Parse] 格口号越界 跳过 item inco=99309921827230 gridNum=20066 orderCode=PP202600000008
+2026-08-13 10:10:02.751 [0x00001f04] INFO  WCS - 	[Parse] orderCode=PP202600000008 items=385 SKU=0 qty=1937 elapsed=17ms
+2026-08-13 10:10:02.764 [0x000056a8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PP202600000008 qty=1937 SKU=0
+2026-08-13 10:10:02.764 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 10:10:02.764 [0x000056a8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=0
+2026-08-13 10:10:02.764 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 10:11:37.407 [0x00007c60] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=PP202600000008
+2026-08-13 10:11:37.408 [0x00007c60] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=PP202600000008
+2026-08-13 10:11:37.408 [0x00007c60] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=0 status=2 sorted=0 exception=0 order=PP202600000008
+2026-08-13 10:11:37.408 [0x00007c60] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 6(已取消)
+2026-08-13 10:11:37.408 [0x00007c60] INFO  WCS - 	[WaveMgr] H5取消成功 order=PP202600000008 2→CANCELLED
+2026-08-13 10:26:53.978 [0x000056a8] INFO  WCS - [TID-1786586125518-74aaa108][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 10:38:36.835 [0x000060f0] INFO  WCS - 	[Parse] orderCode=PP202600000011 items=385 SKU=385 qty=1937 elapsed=28ms
+2026-08-13 10:38:36.836 [0x000056a8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=PP202600000011 qty=1937 SKU=385
+2026-08-13 10:38:36.836 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 10:38:36.836 [0x000056a8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=385
+2026-08-13 10:38:36.836 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 10:54:19.501 [0x000033cc] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=PP202600000011
+2026-08-13 10:54:19.501 [0x000033cc] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=PP202600000011
+2026-08-13 10:54:19.501 [0x000033cc] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=0 status=2 sorted=0 exception=0 order=PP202600000011
+2026-08-13 10:54:19.501 [0x000033cc] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 6(已取消)
+2026-08-13 10:54:19.501 [0x000033cc] INFO  WCS - 	[WaveMgr] H5取消成功 order=PP202600000011 2→CANCELLED
+2026-08-13 10:55:18.150 [0x000056a8] INFO  WCS - [TID-1786586125518-74aaa108][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 11:13:01.618 [0x00009684] INFO  WCS - 	[Parse] orderCode=TEST20260813001 items=4 SKU=4 qty=100 elapsed=0ms
+2026-08-13 11:13:01.618 [0x000056a8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813001 qty=100 SKU=4
+2026-08-13 11:13:01.618 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 11:13:01.618 [0x000056a8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 11:13:01.618 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 11:13:35.546 [0x000056a8] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-13 11:13:35.546 [0x000056a8] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=TEST20260813001
+2026-08-13 11:41:42.041 [0x000056a8] INFO  WCS - [TID-1786586125518-74aaa108][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:19:32.899 [0x000056a8] INFO  WCS - [TID-1786586125518-74aaa108][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:22:23.448 [0x00001bdc] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813001 qty=100 SKU=4
+2026-08-13 13:22:23.448 [0x00001bdc] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 13:22:23.448 [0x00001bdc] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 13:22:23.448 [0x00001bdc] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 13:22:23.451 [0x00001bdc] INFO  WCS - [TID-1786598543408-e0ebcd79][MainWindow::onStartStop:704] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:22:50.680 [0x00001bdc] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-13 13:22:50.680 [0x00001bdc] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=TEST20260813001
+2026-08-13 13:22:56.571 [0x00001bdc] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813001 qty=100 SKU=4
+2026-08-13 13:22:56.571 [0x00001bdc] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 13:22:56.571 [0x00001bdc] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 13:22:56.571 [0x00001bdc] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 13:22:56.574 [0x00001bdc] INFO  WCS - [TID-1786598543408-e0ebcd79][MainWindow::onStartStop:704] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:26:06.140 [0x00001bdc] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813001 qty=100 SKU=4
+2026-08-13 13:26:06.140 [0x00001bdc] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 13:26:06.140 [0x00001bdc] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 13:26:06.140 [0x00001bdc] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 13:26:06.142 [0x00001bdc] INFO  WCS - [TID-1786598543408-e0ebcd79][MainWindow::onStartStop:704] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:26:54.819 [0x00004980] INFO  WCS - [TID-1786598814779-a8c415e9][MainWindow::onStartStop:704] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:32:33.038 [0x0000a0e4] INFO  WCS - [TID-1786599152999-cf5b8780][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:32:53.180 [0x00007580] INFO  WCS - 	[Parse] orderCode=TEST20260813001 items=4 SKU=4 qty=100 elapsed=0ms
+2026-08-13 13:32:53.180 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813001 qty=100 SKU=4
+2026-08-13 13:32:53.180 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 13:32:53.180 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 13:32:53.180 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 13:32:58.456 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 3(分拣中)
+2026-08-13 13:32:58.456 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 开工成功 BOUND→SORTING orderCode=TEST20260813001
+2026-08-13 13:45:28.302 [0x0000a0e4] INFO  WCS - [TID-1786599152999-cf5b8780][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:45:53.471 [0x00007508] INFO  WCS - 	[Parse] orderCode=TEST20260813001 items=4 SKU=4 qty=100 elapsed=0ms
+2026-08-13 13:45:53.471 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813001 qty=100 SKU=4
+2026-08-13 13:45:53.471 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 13:45:53.471 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 13:45:53.472 [0x0000a0e4] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 13:46:21.804 [0x000097b0] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=TEST20260813001
+2026-08-13 13:46:21.805 [0x000097b0] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=TEST20260813001
+2026-08-13 13:46:21.805 [0x000097b0] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=0 status=2 sorted=0 exception=0 order=TEST20260813001
+2026-08-13 13:46:21.805 [0x000097b0] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 6(已取消)
+2026-08-13 13:46:21.805 [0x000097b0] INFO  WCS - 	[WaveMgr] H5取消成功 order=TEST20260813001 2→CANCELLED
+2026-08-13 13:51:55.227 [0x0000a0e4] INFO  WCS - [TID-1786599152999-cf5b8780][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:52:31.740 [0x00009a40] INFO  WCS - [TID-1786600351699-d51a28bd][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 13:52:52.548 [0x00009f84] INFO  WCS - 	[Parse] orderCode=TEST20260813002 items=4 SKU=4 qty=100 elapsed=0ms
+2026-08-13 13:52:52.548 [0x00009a40] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813002 qty=100 SKU=4
+2026-08-13 13:52:52.548 [0x00009a40] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 13:52:52.548 [0x00009a40] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 13:52:52.548 [0x00009a40] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 13:53:06.582 [0x000086a4] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=TEST20260813002
+2026-08-13 13:53:06.582 [0x000086a4] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=TEST20260813002
+2026-08-13 13:53:06.582 [0x000086a4] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=0 status=2 sorted=0 exception=0 order=TEST20260813002
+2026-08-13 13:53:06.582 [0x000086a4] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 6(已取消)
+2026-08-13 13:53:06.582 [0x000086a4] INFO  WCS - 	[WaveMgr] H5取消成功 order=TEST20260813002 2→CANCELLED
+2026-08-13 13:53:06.582 [0x000086a4] INFO  WCS - 	[WaveMgr] 状态转换 6(已取消) -> 0(空闲)
+2026-08-13 13:53:32.768 [0x00009a40] INFO  WCS - [TID-1786600351699-d51a28bd][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 14:00:57.613 [0x00009a40] INFO  WCS - [TID-1786600351699-d51a28bd][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 14:01:29.397 [0x00000cc8] INFO  WCS - [TID-1786600889359-5ff2a4dc][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 14:01:53.067 [0x00002e9c] INFO  WCS - 	[Parse] orderCode=TEST20260813004 items=4 SKU=4 qty=100 elapsed=0ms
+2026-08-13 14:01:53.067 [0x00000cc8] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813004 qty=100 SKU=4
+2026-08-13 14:01:53.067 [0x00000cc8] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 14:01:53.067 [0x00000cc8] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 14:01:53.067 [0x00000cc8] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 14:02:02.243 [0x000095cc] INFO  WCS - 	[WaveMgr] H5取消 尝试获取互斥锁 order=TEST20260813004
+2026-08-13 14:02:02.243 [0x000095cc] INFO  WCS - 	[WaveMgr] H5取消 已获取互斥锁 order=TEST20260813004
+2026-08-13 14:02:02.243 [0x000095cc] INFO  WCS - 	[WaveMgr] H5取消 分拣判定 started=0 status=2 sorted=0 exception=0 order=TEST20260813004
+2026-08-13 14:02:02.243 [0x000095cc] INFO  WCS - 	[WaveMgr] 状态转换 2(已绑定) -> 6(已取消)
+2026-08-13 14:02:02.243 [0x000095cc] INFO  WCS - 	[WaveMgr] H5取消成功 order=TEST20260813004 2→CANCELLED
+2026-08-13 14:02:02.243 [0x000095cc] INFO  WCS - 	[WaveMgr] 波次已清理
+2026-08-13 14:02:02.243 [0x000095cc] INFO  WCS - 	[WaveMgr] 状态转换 6(已取消) -> 0(空闲)
+2026-08-13 14:03:13.624 [0x00000cc8] INFO  WCS - [TID-1786600889359-5ff2a4dc][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 14:08:38.126 [0x00000cc8] INFO  WCS - [TID-1786600889359-5ff2a4dc][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 14:09:14.500 [0x00000cc8] INFO  WCS - [TID-1786600889359-5ff2a4dc][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 14:09:48.623 [0x000028f4] INFO  WCS - [TID-1786601388574-a5d03e78][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 16:15:48.975 [0x0000866c] INFO  WCS - 	[Parse] orderCode=TEST20260813005 items=4 SKU=4 qty=100 elapsed=1ms
+2026-08-13 16:15:48.976 [0x000028f4] INFO  WCS - 	[WaveMgr] 波次注册 orderCode=TEST20260813005 qty=100 SKU=4
+2026-08-13 16:15:48.976 [0x000028f4] INFO  WCS - 	[WaveMgr] 状态转换 0(空闲) -> 1(已下发)
+2026-08-13 16:15:48.976 [0x000028f4] INFO  WCS - 	[WaveMgr] 接收inco集合 size=4
+2026-08-13 16:15:48.976 [0x000028f4] INFO  WCS - 	[WaveMgr] 状态转换 1(已下发) -> 2(已绑定)
+2026-08-13 16:30:18.340 [0x000028f4] INFO  WCS - [TID-1786601388574-a5d03e78][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 16:31:00.915 [0x000028f4] INFO  WCS - [TID-1786601388574-a5d03e78][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 16:33:09.036 [0x000028f4] INFO  WCS - [TID-1786601388574-a5d03e78][MainWindow::onStartStop:703] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-13 16:34:39.133 [0x00008900] INFO  WCS - [TID-1786610079090-60a1e4d1][MainWindow::onStartStop:706] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-14 10:55:37.411 [0x00008900] INFO  WCS - [TID-1786610079090-60a1e4d1][MainWindow::onStartStop:706] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1
+2026-08-14 10:56:26.706 [0x00007054] INFO  WCS - [TID-1786676186632-ba812da6][MainWindow::onStartStop:706] 配置摘要: 端口=8191/8192 URL=http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs env=test warehouse=A goodsOwner=BXH_ZS waveTimeout=0 bindCount=1

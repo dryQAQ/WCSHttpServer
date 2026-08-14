@@ -35,3 +35,13 @@
 2026-08-11 11:42:04.207 [0x000045e4] WARN  DataBase - <611>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=Parameter count mismatch
 2026-08-11 12:00:20.144 [0x0000b2bc] WARN  DataBase - <619>	<SortingDatabase::insertWaveItems>,[SortingDB] 插入明细失败 orderCode=PB202203200003 inco=WV34S1CN2001B60L grid=1 err=table return_wave_item has no column named obx_code Unable to execute statement
 2026-08-11 12:06:33.391 [0x0000c184] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=PB202203200003 count=2
+2026-08-13 09:35:47.949 [0x00008648] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=PP202600000007 count=385
+2026-08-13 09:55:52.863 [0x000056a8] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=PB202203200003 count=1
+2026-08-13 10:10:02.764 [0x000056a8] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=PP202600000008 count=0
+2026-08-13 10:38:36.844 [0x000056a8] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=PP202600000011 count=385
+2026-08-13 11:13:01.619 [0x000056a8] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=TEST20260813001 count=4
+2026-08-13 13:32:53.184 [0x0000a0e4] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=TEST20260813001 count=4
+2026-08-13 13:45:53.472 [0x0000a0e4] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=TEST20260813001 count=4
+2026-08-13 13:52:52.549 [0x00009a40] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=TEST20260813002 count=4
+2026-08-13 14:01:53.067 [0x00000cc8] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=TEST20260813004 count=4
+2026-08-13 16:15:48.977 [0x000028f4] INFO  DataBase - 	[SortingDB] 波次明细写入成功 orderCode=TEST20260813005 count=4

@@ -1,6 +1,5 @@
 #include "WaveManager.h"
-#include "log_center.h"
-#include "hlog1.h"
+#include "LogService.h"
 
 WaveManager::WaveManager(GridBuffer* pBuffer, QObject* parent)
     : QObject(parent), m_pBuffer(pBuffer)
@@ -196,7 +195,7 @@ WaveSnapshot WaveManager::snapshot() const
         snap.skuCount = m_pBuffer->size();
     }
 
-    snap.sumLocation   = sumLocation();
+    snap.sumLocation   = sorted();
 
     {
         std::unique_lock<std::mutex> lock(m_lock);

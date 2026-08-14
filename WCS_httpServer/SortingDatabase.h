@@ -59,7 +59,7 @@ struct ReturnWaveItemRecord
     QString orderCode;
     QString inco;
     QString gridNum;
-    QString gridType    = "普通格口";
+    QString gridType    = "0";  // 0=分类, 1=异常, 2=发货
     int     planQty     = 0;
     int     sortedQty   = 0;
     QString volu;
@@ -157,6 +157,8 @@ public:
     bool updateWaveStatus(const QString& orderCode, int newStatus);
     // 获取波次状态（快速查询，用于状态机判定）
     int getWaveStatus(const QString& orderCode);
+    // 查询最近一条未完成波次（排除已取消和已完成），用于软件重启后恢复波次数据
+    ReturnWaveRecord getLatestUnfinishedWave();
 
     // 插入波次明细（先清旧再插新，支持覆盖重下）
     bool insertWaveItems(const QString& orderCode, const QVector<ReturnWaveItemRecord>& items);

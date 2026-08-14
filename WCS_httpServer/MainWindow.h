@@ -54,6 +54,7 @@ private slots:
     void onRefreshTimer();    // 每秒定时刷新UI
     void flushLogBuffer();    // 定时批量刷新日志到UI（防高频卡死）
     void onQueryRecords();    // ★ 查询分拣记录
+    void onStartSortingClicked(); // ★ 开始分拣按钮点击
 
 private:
     void setupUI();           // 构建所有UI控件
@@ -109,6 +110,7 @@ private:
     QLabel*      m_lblSumLocation  = nullptr;  // 去重格口总数
     QLabel*      m_lblElapsed      = nullptr;  // 波次耗时
     QLabel*      m_lblLastWave     = nullptr;  // 上一个波次号
+    QPushButton* m_btnStartSorting = nullptr;  // ★ 开始分拣按钮（手动触发分拣中状态）
 
     // ──── 容器绑定面板 UI（92格口 6列×16行）────
     QWidget*     m_bindingWidget   = nullptr;  // 绑定状态容器

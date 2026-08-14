@@ -1,18 +1,10 @@
 #include "HttpClient.h"
-#include "log_center.h"
-#include "hlog1.h"
+#include "LogService.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDateTime>
 #include <QNetworkRequest>
-
-// HTTP 服务专用日志宏
-#ifndef HTTP_INFO
-#define HTTP_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "HTTP", "\t" fmt, ##__VA_ARGS__)
-#define HTTP_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "HTTP", "\t" fmt, ##__VA_ARGS__)
-#define HTTP_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "HTTP", "\t" fmt, ##__VA_ARGS__)
-#endif
 
 HttpClient::HttpClient(QObject* parent)
     : QObject(parent)
@@ -36,14 +28,14 @@ void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
     // ★ 空URL防护：避免QNetworkAccessManager::post崩溃
     if (m_url.isEmpty())
     {
-        HTTP_ERROR("回传URL为空，跳过 orderCode=%s", orderCode.toLocal8Bit().data());
+        HTTP_LOG_ERROR("回传URL为空，跳过 orderCode=%s", orderCode.toLocal8Bit().data());
         LogCenter::Instance()->wcs_run_log_warn(false,
             QString("[Report] 回传URL为空 orderCode=%1").arg(orderCode));
         emit reportResult(orderCode, false, "URL is empty");
         return;
     }
 
-    HTTP_INFO("回传开始 orderCode=%s sumLocation=%d", orderCode.toLocal8Bit().data(), sumLocation);
+    HTTP_LOG_INFO("回传开始 orderCode=%s sumLocation=%d", orderCode.toLocal8Bit().data(), sumLocation);
     LogCenter::Instance()->wcs_run_log_warn(true,
         QString("[Report] 开始回传 orderCode=%1 sumLocation=%2").arg(orderCode).arg(sumLocation));
 
@@ -51,7 +43,7 @@ void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
     QJsonObject head;
     head["orderCode"]     = orderCode;                                    // 波次号
     head["orderType"]     = WMS_ORDER_TYPE;                              // 业务类型（define.h: 02=退货分类）
-    head["sumLocation"]   = QString::number(sumLocation);                // 使用的格口总数
+    head["sumLocation"]   = QString::number(sumLocation);                // 落格分拣总件数（告知WMS分拣了多少件）
     head["operuserDate"]  = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
     head["operuserCode"]  = WMS_OPERUSER_CODE;                           // 操作人编码（define.h）
     head["operuserName"]  = QString::fromUtf8(WMS_OPERUSER_NAME);        // 操作人名称（define.h）
@@ -104,7 +96,7 @@ void HttpClient::onReplyFinished()
     QJsonDocument doc = QJsonDocument::fromJson(respBody);
     bool success = doc.object()["success"].toBool(false);
 
-    HTTP_INFO("回传完成 orderCode=%s status=%d success=%d",
+    HTTP_LOG_INFO("回传完成 orderCode=%s status=%d success=%d",
         pr.orderCode.toLocal8Bit().data(), statusCode, success);
     LogCenter::Instance()->wcs_run_log_warn(success,
         QString("[Report] orderCode=%1 success=%2 status=%3 body=%4")
@@ -126,7 +118,7 @@ void HttpClient::onReplyTimeout()
         if (it->timer == timer)
         {
             PendingRequest& pr = it.value();
-            HTTP_WARN("回传超时 orderCode=%s timeout=%dms",
+            HTTP_LOG_WARN("回传超时 orderCode=%s timeout=%dms",
                 pr.orderCode.toLocal8Bit().data(), m_timeoutMs);
             LogCenter::Instance()->wcs_run_log_warn(false,
                 QString("[Report] 回传超时 orderCode=%1 timeout=%2ms")
@@ -154,7 +146,7 @@ void HttpClient::sendGenericFeedback(const QJsonObject& json, const QString& con
 {
     if (m_url.isEmpty())
     {
-        HTTP_ERROR("回传URL为空，跳过 context=%s", context.toLocal8Bit().data());
+        HTTP_LOG_ERROR("回传URL为空，跳过 context=%s", context.toLocal8Bit().data());
         return;
     }
 
@@ -182,7 +174,58 @@ void HttpClient::sendGenericFeedback(const QJsonObject& json, const QString& con
     connect(timer, &QTimer::timeout, this, &HttpClient::onReplyTimeout);
     timer->start();
 
-    HTTP_INFO("锁格回传发送 context=%s len=%d", context.toLocal8Bit().data(), postData.size());
+    HTTP_LOG_INFO("锁格回传发送 context=%s len=%d", context.toLocal8Bit().data(), postData.size());
+}
+
+// ============================================================================
+// sendEndFeedback — 发送完结回传到WMS（异步，使用 H8 专用 URL）
+// 与 sendGenericFeedback 逻辑相同，仅目标 URL 不同
+// ============================================================================
+void HttpClient::sendEndFeedback(const QJsonObject& json, const QString& context)
+{
+    // ── 步骤1: URL 校验 ──
+    if (m_endUrl.isEmpty())
+    {
+        HTTP_LOG_ERROR("完结回传URL为空，跳过 context=%s", context.toLocal8Bit().data());
+        return;
+    }
+
+    // ── 步骤2: 序列化请求体 ──
+    QByteArray postData = QJsonDocument(json).toJson(QJsonDocument::Compact);
+    QString payloadPreview = QString::fromUtf8(postData).left(RESP_BODY_LOG_TRUNCATE);
+
+    // ── 步骤3: 打印请求参数（URL、AppKey、Payload、超时） ──
+    HTTP_LOG_INFO("完结回传（H8）请求参数: URL=%s AppKey=%s timeout=%dms",
+        m_endUrl.toLocal8Bit().data(), m_appkey.toLocal8Bit().data(), m_timeoutMs);
+    HTTP_LOG_INFO("完结回传（H8）请求体 context=%s len=%d payload=%s",
+        context.toLocal8Bit().data(), postData.size(), payloadPreview.toLocal8Bit().data());
+
+    // ── 步骤4: 构建 HTTP 请求 ──
+    QUrl url(m_endUrl);
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
+    request.setRawHeader("AppKey", m_appkey.toUtf8());
+
+    QNetworkReply* reply = m_pNetworkMgr->post(request, postData);
+
+    // ── 步骤5: 超时保护 ──
+    QTimer* timer = new QTimer(this);
+    timer->setSingleShot(true);
+    timer->setInterval(m_timeoutMs);
+
+    PendingRequest pr;
+    pr.reply       = reply;
+    pr.timer       = timer;
+    pr.orderCode   = context.isEmpty() ? "end" : context;
+    pr.sumLocation = 0;
+    m_pending.insert(reply, pr);
+
+    connect(reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
+    connect(timer, &QTimer::timeout, this, &HttpClient::onReplyTimeout);
+    timer->start();
+
+    HTTP_LOG_INFO("完结回传（H8）请求已发送 context=%s pendingCount=%d",
+        context.toLocal8Bit().data(), m_pending.size());
 }
 
 // ============================================================================
@@ -193,19 +236,19 @@ void HttpClient::queryRfidBinding(const QStringList& epcList)
 {
     if (m_rfidQueryUrl.isEmpty())
     {
-        HTTP_WARN("RFID查询URL为空，跳过 SKU-EPC 绑定 epcCount=%d", epcList.size());
+        HTTP_LOG_WARN("RFID查询URL为空，跳过 SKU-EPC 绑定 epcCount=%d", epcList.size());
         emit rfidBindingResult({});
         return;
     }
 
     if (epcList.isEmpty())
     {
-        HTTP_WARN("RFID查询 epcList为空，跳过");
+        HTTP_LOG_WARN("RFID查询 epcList为空，跳过");
         emit rfidBindingResult({});
         return;
     }
 
-    HTTP_INFO("RFID绑定查询开始 url=%s epcCount=%d", m_rfidQueryUrl.toLocal8Bit().data(), epcList.size());
+    HTTP_LOG_INFO("RFID绑定查询开始 url=%s epcCount=%d", m_rfidQueryUrl.toLocal8Bit().data(), epcList.size());
 
     // 构建请求 JSON: {"epcList":["EPC001","EPC002",...]}
     QJsonArray arr;
@@ -237,7 +280,7 @@ void HttpClient::queryRfidBinding(const QStringList& epcList)
 
     connect(reply, &QNetworkReply::finished, this, &HttpClient::onRfidBindingReplyFinished);
     connect(timer, &QTimer::timeout, this, [this, timer, reply]() {
-        HTTP_WARN("RFID绑定查询超时 url=%s timeout=%dms",
+        HTTP_LOG_WARN("RFID绑定查询超时 url=%s timeout=%dms",
             m_rfidQueryUrl.toLocal8Bit().data(), RFID_QUERY_TIMEOUT_MS);
         // 断开 finished 信号，防止双重触发
         disconnect(reply, &QNetworkReply::finished, this, &HttpClient::onRfidBindingReplyFinished);
@@ -270,13 +313,13 @@ void HttpClient::onRfidBindingReplyFinished()
     reply->deleteLater();
 
     // ★ 详细日志：原始响应
-    HTTP_INFO("RFID绑定查询响应 status=%d bodySize=%d body(前500)=%s",
+    HTTP_LOG_INFO("RFID绑定查询响应 status=%d bodySize=%d body(前500)=%s",
         statusCode, respBody.size(), QString::fromUtf8(respBody.left(500)).toLocal8Bit().data());
 
     QMap<QString, QString> epcBarcodeMap;
     if (statusCode != 200)
     {
-        HTTP_WARN("RFID绑定查询失败 HTTP状态异常 status=%d body=%s",
+        HTTP_LOG_WARN("RFID绑定查询失败 HTTP状态异常 status=%d body=%s",
             statusCode, QString::fromUtf8(respBody).left(200).toLocal8Bit().data());
         m_pending.erase(it);
         emit rfidBindingResult(epcBarcodeMap);
@@ -289,7 +332,7 @@ void HttpClient::onRfidBindingReplyFinished()
     if (doc.isNull() || !doc.isObject())
     {
         QByteArray hexPreview = respBody.left(200).toHex(' ');
-        HTTP_WARN("RFID绑定查询 JSON解析失败: %s offset=%d bodySize=%d hex=[%s]",
+        HTTP_LOG_WARN("RFID绑定查询 JSON解析失败: %s offset=%d bodySize=%d hex=[%s]",
             parseErr.errorString().toLocal8Bit().data(), parseErr.offset,
             respBody.size(), hexPreview.constData());
         m_pending.erase(it);
@@ -303,13 +346,13 @@ void HttpClient::onRfidBindingReplyFinished()
     bool success = root["success"].toBool(false);
     int rstStatus = root["status"].toInt(0);
     QString msg = root["msg"].toString();
-    HTTP_INFO("RFID绑定查询 外层校验 success=%d status=%d msg=%s",
+    HTTP_LOG_INFO("RFID绑定查询 外层校验 success=%d status=%d msg=%s",
         success, rstStatus, msg.toLocal8Bit().data());
 
     // RFID 响应格式: {"data":{"data":[{...}]},"status":200,"success":true}
     QJsonObject dataObj = root["data"].toObject();
     QJsonArray dataArr = dataObj["data"].toArray();
-    HTTP_INFO("RFID绑定查询 内层data数组 size=%d", dataArr.size());
+    HTTP_LOG_INFO("RFID绑定查询 内层data数组 size=%d", dataArr.size());
 
     int skipEmpty = 0;
     for (int i = 0; i < dataArr.size(); ++i)
@@ -324,19 +367,19 @@ void HttpClient::onRfidBindingReplyFinished()
         if (epc.isEmpty() || barcode.isEmpty())
         {
             skipEmpty++;
-            HTTP_WARN("RFID绑定查询 跳过空字段[%d] epc=%s barcode=%s tid=%s uniqueCode=%s",
+            HTTP_LOG_WARN("RFID绑定查询 跳过空字段[%d] epc=%s barcode=%s tid=%s uniqueCode=%s",
                 i, epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
                 tid.toLocal8Bit().data(), uniqueCode.toLocal8Bit().data());
             continue;
         }
 
         epcBarcodeMap[epc] = barcode;
-        HTTP_INFO("RFID绑定查询 解析[%d] epc=%s barcode=%s tid=%s uniqueCode=%s metal=%d",
+        HTTP_LOG_INFO("RFID绑定查询 解析[%d] epc=%s barcode=%s tid=%s uniqueCode=%s metal=%d",
             i, epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
             tid.toLocal8Bit().data(), uniqueCode.toLocal8Bit().data(), hasMetal);
     }
 
-    HTTP_INFO("RFID绑定查询完成 查询数=%d 匹配=%d 跳过空=%d status=%d",
+    HTTP_LOG_INFO("RFID绑定查询完成 查询数=%d 匹配=%d 跳过空=%d status=%d",
         pr.sumLocation, epcBarcodeMap.size(), skipEmpty, statusCode);
 
     m_pending.erase(it);

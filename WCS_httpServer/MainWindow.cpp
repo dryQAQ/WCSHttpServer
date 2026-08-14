@@ -1,10 +1,8 @@
 #include "MainWindow.h"
 #include "ConfigManager.h"
-#include "log_center.h"
-#include "hlog1.h"
+#include "LogService.h"
 #include "SortingDatabase.h"
 #include "define.h"
-#include "LifecycleLogger.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -277,9 +275,19 @@ void MainWindow::setupUI()
     waveLayout->addWidget(makeLabel("SKU数:"),     row, 0); waveLayout->addWidget(m_lblSkuCount,    row++, 1);
     waveLayout->addWidget(makeLabel("已分拣:"),    row, 0); waveLayout->addWidget(m_lblSorted,      row++, 1);
     waveLayout->addWidget(makeLabel("异常:"),      row, 0); waveLayout->addWidget(m_lblException,   row++, 1);
-    waveLayout->addWidget(makeLabel("格口数:"),    row, 0); waveLayout->addWidget(m_lblSumLocation, row++, 1);
+    waveLayout->addWidget(makeLabel("分拣件数:"),    row, 0); waveLayout->addWidget(m_lblSumLocation, row++, 1);
     waveLayout->addWidget(makeLabel("耗时:"),      row, 0); waveLayout->addWidget(m_lblElapsed,     row++, 1);
     waveLayout->addWidget(makeLabel("上波次:"),    row, 0); waveLayout->addWidget(m_lblLastWave,    row++, 1);
+
+    // ★ 开始分拣按钮（始终可见，到达可开始分拣状态时激活，否则灰色禁用）
+    m_btnStartSorting = new QPushButton(QCoreApplication::translate("MainWindow", "开始分拣"));
+    m_btnStartSorting->setStyleSheet(
+        "QPushButton { font-size: 14px; font-weight: bold; padding: 6px 20px; "
+        "background-color: #FF9800; color: white; border: none; border-radius: 4px; } "
+        "QPushButton:hover { background-color: #F57C00; } "
+        "QPushButton:disabled { background-color: #BDBDBD; }");
+    m_btnStartSorting->setEnabled(false);  // 初始灰色禁用，到达 BOUND 状态时激活
+    waveLayout->addWidget(m_btnStartSorting, row++, 0, 1, 2);
 
     // ═══════════════════════════════════════════
     // 容器绑定状态面板（66格口，6列×11行可拓展网格）
@@ -523,6 +531,9 @@ void MainWindow::setupConnections()
     m_timerRefresh = new QTimer(this);
     connect(m_timerRefresh, &QTimer::timeout, this, &MainWindow::onRefreshTimer);
     m_timerRefresh->start(UI_REFRESH_INTERVAL_MS);
+
+    // ★ 开始分拣按钮
+    connect(m_btnStartSorting, &QPushButton::clicked, this, &MainWindow::onStartSortingClicked);
 }
 
 void MainWindow::applyConfig()
@@ -597,6 +608,9 @@ void MainWindow::onStartStop()
         }
         if (m_lblBoundCount)  m_lblBoundCount->setText("已绑定: 0");
         if (m_lblUnboundCount) m_lblUnboundCount->setText("未绑定: 66");
+
+        // ★ 结束任务时重置"开始分拣"按钮为初始灰色禁用状态
+        m_btnStartSorting->setEnabled(false);
         m_bindingDirty = false;
 
         appendLog("服务已手动停止");
@@ -619,6 +633,7 @@ void MainWindow::onStartStop()
         m_pClient = new HttpClient(this);
         m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
         m_pClient->setUrl(cfg.activeFeedbackUrl());
+        m_pClient->setEndUrl(cfg.activeEndFeedbackUrl());  // ★ H8 完结回传专用 URL
         m_pClient->setAppkey(cfg.activeAppkey());
         m_pClient->setTimeout(cfg.httpTimeoutMs);
         m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);  // ★ RFID SKU-EPC 绑定查询 URL
@@ -660,29 +675,29 @@ void MainWindow::onStartStop()
             // ★ 配置摘要日志
             {
                 QString summary;
-                summary += "\n══════════════════ 配置摘要 ══════════════════\n";
-                summary += QString(" 监听端口:        %1 (WMS) / %2 (PLC)\n")
+                summary += "\n\n══════════════════ 配置摘要 ══════════════════\n\n";
+                summary += QString(" 监听端口:        %1 (WMS) / %2 (PLC)\n\n")
                     .arg(port).arg(cfg.plcListenPort);
-                summary += QString(" 回传URL:         %1 (%2)\n")
+                summary += QString(" 回传URL:         %1 (%2)\n\n")
                     .arg(cfg.activeFeedbackUrl())
                     .arg(cfg.useTestEnv ? "测试" : "正式");
-                summary += QString(" AppKey:          %1\n").arg(cfg.activeAppkey());
-                summary += QString(" 仓库:            %1\n").arg(cfg.warehouseCode);
-                summary += QString(" 货主:            %1\n").arg(cfg.goodsOwner);
-                summary += QString(" 波次超时:        %1分钟(%2), 期望绑定: %3\n")
+                summary += QString(" AppKey:          %1\n\n").arg(cfg.activeAppkey());
+                summary += QString(" 仓库:            %1\n\n").arg(cfg.warehouseCode);
+                summary += QString(" 货主:            %1\n\n").arg(cfg.goodsOwner);
+                summary += QString(" 波次超时:        %1分钟(%2), 期望绑定: %3\n\n")
                     .arg(cfg.waveTimeoutMin)
                     .arg(cfg.waveTimeoutMin == 0 ? "不超时" : QString::number(cfg.waveTimeoutMin) + "分钟")
                     .arg(cfg.expectedBindCount);
-                summary += QString(" 重试:            %1次, 间隔: %2秒\n")
+                summary += QString(" 重试:            %1次, 间隔: %2秒\n\n")
                     .arg(OUTBOX_RETRY_MAX_DEFAULT).arg(OUTBOX_RETRY_INTERVAL_SEC);
                 summary += QString(" 日志:            保留%1天\n").arg(cfg.logRetainDays);
-                summary += QString(" 配置文件版本:    %1 (软件版本: %2)\n")
+                summary += QString(" 配置文件版本:    %1 (软件版本: %2)\n\n")
                     .arg(cfg.configVersion).arg(CONFIG_VERSION);
                 if (cfg.configVersion != CONFIG_VERSION)
                 {
-                    summary += QString(" ⚠ 配置文件版本不匹配! 请检查配置\n");
+                    summary += QString(" ⚠ 配置文件版本不匹配! 请检查配置\n\n");
                 }
-                summary += "══════════════════════════════════════════════";
+                summary += "══════════════════════════════════════════════\n\n";
                 appendLog(summary);
                 WCS_LOG_INFO("配置摘要: 端口=%d/%d URL=%s env=%s warehouse=%s goodsOwner=%s waveTimeout=%d bindCount=%d",
                     port, cfg.plcListenPort, cfg.activeFeedbackUrl().toLocal8Bit().data(),
@@ -782,7 +797,7 @@ void MainWindow::onStartStop()
                     if (!m_pClient) return;
                     QString orderCode = payload["head"].toObject()["orderCode"].toString();
                     appendLog(QString("[完结回传] 发送回传 msgId=%1 order=%2").arg(msgId).arg(orderCode));
-                    m_pClient->sendGenericFeedback(payload, "end_" + msgId);
+                    m_pClient->sendEndFeedback(payload, "end_" + msgId);  // ★ H8 使用专用完结回传 URL
                 });
 
             // ★ 连接HttpServer日志信号到UI日志区
@@ -950,6 +965,10 @@ void MainWindow::updateWavePanel()
         m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #4CAF50;");
     else
         m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #2196F3;");
+
+    // ★ 开始分拣按钮：BOUND 或 SORTING 状态时橙色激活，否则灰色禁用
+    bool canSort = (snap.waveStatus == WAVE_BOUND || snap.waveStatus == WAVE_SORTING);
+    m_btnStartSorting->setEnabled(canSort);
 }
 
 void MainWindow::updatePlcPanel()
@@ -1351,5 +1370,29 @@ void MainWindow::onQueryRecords()
         .arg(stats.totalGrids));
 
     appendLog(QString("[查询] 返回 %1 条记录").arg(records.size()));
+}
+
+// ★ 开始分拣按钮点击：手动触发分拣中状态
+void MainWindow::onStartSortingClicked()
+{
+    if (!m_pServer || !m_pServer->waveManager())
+        return;
+
+    WaveManager* wm = m_pServer->waveManager();
+    if (wm->status() != WAVE_BOUND)
+    {
+        appendLog("[分拣] 当前波次非'已绑定'状态，无法开始分拣", true);
+        return;
+    }
+
+    if (wm->startSorting())
+    {
+        appendLog(QString("[分拣] 手动开始分拣 orderCode=%1").arg(wm->orderCode()));
+        // 按钮由定时器自动刷新为灰色禁用状态（状态已变为 SORTING）
+    }
+    else
+    {
+        appendLog("[分拣] 开始分拣失败，请检查波次状态", true);
+    }
 }
 

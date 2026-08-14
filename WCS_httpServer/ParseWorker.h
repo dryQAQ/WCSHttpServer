@@ -33,6 +33,13 @@ signals:
                     const QStringList& epcList);
     // 解析异常信号
     void parseError(const QString& errorMsg);
+    // ★ 格口号越界异常信号（不阻塞波次，仅记录异常便于核查和重传）
+    // orderCode:  波次号
+    // epc:        EPC 编码
+    // gridNum:    越界的格口号
+    // reason:     异常原因
+    void parseException(const QString& orderCode, const QString& epc,
+                        const QString& gridNum, const QString& reason);
 
 protected:
     void run() override;

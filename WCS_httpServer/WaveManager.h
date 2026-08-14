@@ -56,7 +56,7 @@ struct WaveSnapshot
     int     waveStatus  = WAVE_IDLE;  // 当前状态
     QString statusText;        // 状态文本（中文）
     qint64  elapsedSec  = 0;   // 已耗时（秒）
-    int     sumLocation = 0;   // 使用的格口总数（去重后，供WMS回传）
+    int     sumLocation = 0;   // 落格分拣总件数（供WMS回传H8的sumLocation字段）
 
     static QString statusToString(int s)
     {
