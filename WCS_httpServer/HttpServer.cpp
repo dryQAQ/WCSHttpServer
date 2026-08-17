@@ -86,20 +86,21 @@ HttpServer::HttpServer(QObject* parent)
     // 使用 AutoConnection 时因 sender/receiver 的 thread() 都在主线程，
     // 但 emit 发生在工作线程，导致信号跨线程传递异常。
     connect(m_pWorker, &ParseWorker::waveParsed, this,
-        [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet, const QStringList& epcList) {
+        [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet) {
             m_pWaveMgr->setWaveData(orderCode, orderQty, skuCount);
             m_pWaveMgr->setRecvSet(recvSet);
 
-            // ★ 波次下发后自动检查绑定状态：如果全部绑定已完成，自动推进到 BOUND 状态
-            //   不再自动推进到 SORTING，改为等待用户点击"开始分拣"按钮手动触发
+            // ★ 波次下发后，数据库写入完成即默认已绑定，不再检查所有格口是否绑定
+            //   直接推进到 BOUND 状态，等待用户点击"开始分拣"按钮手动触发
             //   点击前允许取消波次，点击后分拣开始，取消被拒绝
-            if (m_pWaveMgr->status() == WAVE_CREATED && areAllBindingsComplete())
-            {
-                m_pWaveMgr->setState(WAVE_BOUND);
-                HTTP_LOG_INFO("波次自动推进 CREATED→BOUND orderCode=%s bound=%d/%d (等待手动开始分拣)",
-                    orderCode.toLocal8Bit().data(), boundCount(), m_expectedBindCount);
-                emit logMessage(QString("[波次] 自动推进: 已下发→已绑定 orderCode=%1 (等待手动开始分拣)").arg(orderCode));
-            }
+            // ★ [已废弃] 旧逻辑：检查所有格口是否绑定完成才推进 BOUND
+            // if (m_pWaveMgr->status() == WAVE_CREATED && areAllBindingsComplete())
+            // {
+            //     m_pWaveMgr->setState(WAVE_BOUND);
+            //     HTTP_LOG_INFO("波次自动推进 CREATED→BOUND orderCode=%s bound=%d/%d (等待手动开始分拣)",
+            //         orderCode.toLocal8Bit().data(), boundCount(), m_expectedBindCount);
+            //     emit logMessage(QString("[波次] 自动推进: 已下发→已绑定 orderCode=%1 (等待手动开始分拣)").arg(orderCode));
+            // }
 
             // ★ S1 新增：波次数据落库（T-S1-01/03）
             //   持久化 ReturnWave 头 + ReturnWaveItem 明细到 SQLite
@@ -108,7 +109,7 @@ HttpServer::HttpServer(QObject* parent)
                 // 波次头（UPSERT，未分拣时允许覆盖，使用实际波次状态）
                 m_pSortingDb->upsertReturnWave(orderCode, orderQty, m_pWaveMgr->status());
 
-                // 波次明细（从 GridBuffer 读取全量 inco→格口映射）
+                // 波次明细（从 GridBuffer 读取全量 SKU→格口映射）
                 QVector<ReturnWaveItemRecord> items;
                 const QMap<QString, GridEntry>* pMap = m_pBuffer->activeMap();
                 if (pMap)
@@ -117,7 +118,7 @@ HttpServer::HttpServer(QObject* parent)
                     {
                         ReturnWaveItemRecord rec;
                         rec.orderCode = orderCode;
-                        rec.inco      = it.key();
+                        rec.inco      = it.key();  // inco=SKU编码
                         // gridNum 可能为 "1,2,3"（一品多格口），拆分为多条
                         QStringList grids = it.value().gridNum.split(',', Qt::SkipEmptyParts);
                         for (const QString& g : grids)
@@ -126,7 +127,7 @@ HttpServer::HttpServer(QObject* parent)
                             rec.gridType  = it.value().gridType.isEmpty() ? "0" : it.value().gridType;  // 0=分类, 1=异常, 2=发货
                             rec.planQty   = it.value().gridCount;
                             rec.volu      = it.value().volu;
-                            rec.obxCode   = it.value().obxCode;     // ★ 容器号
+                            rec.obxCode   = it.value().obxCode;     // 容器号
                             items.append(rec);
                         }
                     }
@@ -138,6 +139,14 @@ HttpServer::HttpServer(QObject* parent)
                 else
                     HTTP_ERROR("波次数据落库失败 orderCode=%s items=%d",
                         orderCode.toLocal8Bit().data(), items.size());
+            }
+            // ★ 数据库写入完成后，默认已绑定，直接推进到 BOUND 状态
+            if (m_pWaveMgr->status() == WAVE_CREATED)
+            {
+                m_pWaveMgr->setState(WAVE_BOUND);
+                HTTP_LOG_INFO("波次自动推进 CREATED→BOUND orderCode=%s (数据库已落库，默认已绑定，等待手动开始分拣)",
+                    orderCode.toLocal8Bit().data());
+                emit logMessage(QString("[波次] 自动推进: 已下发→已绑定 orderCode=%1 (等待手动开始分拣)").arg(orderCode));
             }
             // ★ 新波次到来，重置 PLC 发送失败警告集合
             {
@@ -155,17 +164,15 @@ HttpServer::HttpServer(QObject* parent)
                 m_gridSortedCount.clear();
             }
             // ★ 新波次到来，清空旧波次相关数据（EpcCache 保留，RFID 推送独立于波次生命周期）
-
-            // ★ SKU-EPC 绑定查询：波次解析完成后，收集 EPC 列表提交到 RFID 查询
-            //   查询完成后存入 EpcCache（skuBound=true），等待 RFID 推送 carNum 后才发送 PLC
-            if (!epcList.isEmpty())
-            {
-                HTTP_LOG_INFO("波次解析完成 提交EPC绑定查询 order=%s epcCount=%d",
-                    orderCode.toLocal8Bit().data(), epcList.size());
-                emit logMessage(QString("[EPC] 提交 SKU-EPC 绑定查询 %1 条 orderCode=%2")
-                    .arg(epcList.size()).arg(orderCode));
-                submitEpcBindingQueries(epcList);
-            }
+            // ★ SKU-EPC 绑定不再在 H4 下发时批量预查询，改为 RFID 推送 EPC 时实时查询
+            // ★ 纠正5: 新波次开始时恢复所有禁用格口
+            if (m_pPlcMgr)
+                m_pPlcMgr->enableAllGrids();
+            // ★ 新波次开始时清空 SKU 查询防重标记和重试计数
+            m_pendingSkuQuery.clear();
+            m_skuQueryRetryCount.clear();
+            m_notReadyRetryCount.clear();
+            m_sentEpcs.clear();
         }, Qt::QueuedConnection);
 
     // ★ 格口号越界异常记录（ParseWorker 解析时检测到越界格口号，写入异常表）
@@ -498,6 +505,19 @@ HttpServer::HttpServer(QObject* parent)
             // PLC 锁格 = 满箱信号，触发满箱回传报文组装（H7）+ Outbox 可靠投递
             HTTP_LOG_INFO("[锁格→满箱] 步骤2 满箱回传（H7） grid=%s box=%s", grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data());
             sendFullbox(grid);
+
+            // ★ 步骤3: 满箱回传后禁用格口（纠正5）
+            //   该格口不再被分配、不再接收落格，直到 WMS 重新发送 H6 绑定请求
+            {
+                bool ok = false;
+                int gNum = grid.toInt(&ok);
+                if (ok && m_pPlcMgr)
+                {
+                    m_pPlcMgr->disableGrid(gNum);
+                    HTTP_LOG_INFO("[锁格→满箱] 格口已禁用 grid=%d (等待WMS重新绑定H6)", gNum);
+                    emit logMessage(QString("[格口] 禁用格口%1 (满箱锁格，等待WMS重新绑定)").arg(gNum), true);
+                }
+            }
 
             HTTP_LOG_INFO("[锁格→满箱] 完成 grid=%s order=%s", grid.toLocal8Bit().data(), orderCode.toLocal8Bit().data());
         }, Qt::QueuedConnection);
@@ -925,45 +945,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
             return;
         }
 
-        // 步骤2.5: 容器格口绑定完整性校验（G1 修复）
-        // 期望绑定数量由 expectedBindCount 参数控制（默认66，每批次可配置不同数量）
-        // 防止分拣时无容器接收
-        if (!areAllBindingsComplete())
-        {
-            int boundCount = this->boundCount();
-            int expectedCount = m_expectedBindCount;
-            int missingCount = expectedCount - boundCount;
-
-            // 收集未绑定的格口号列表（全部记录，不设上限，方便运维排查）
-            QStringList missingGrids;
-            {
-                std::lock_guard<std::mutex> lock(m_containerMutex);
-                for (int i = 1; i <= expectedCount; ++i)
-                {
-                    QString gridKey = QString("%1").arg(i, GRID_KEY_PADDING, 10, QChar('0'));
-                    if (!m_containerBindings.contains(gridKey))
-                        missingGrids << QString::number(i);
-                }
-            }
-
-            HTTP_WARN("InsertWaveInfo 绑定不完整 orderCode=%s bound=%d/%d missing=%d grids=[%s]",
-                orderCode.toLocal8Bit().data(), boundCount, expectedCount,
-                missingCount, missingGrids.join(",").toLocal8Bit().data());
-            emit logMessage(QString("[WMS] 格口绑定不完整(%1/%2)，未绑定格口: %3，拒绝波次 orderCode=%4")
-                .arg(boundCount).arg(expectedCount).arg(missingGrids.join(",")).arg(orderCode), true);
-
-            QJsonObject err;
-            err["code"] = "500";
-            err["message"] = QString("格口绑定不完整(%1/%2)，请先完成全部容器绑定后再下发波次")
-                .arg(boundCount).arg(expectedCount);
-            sendJsonResponse(pSender, dwConnID, err, 500);
-            return;
-        }
-
-        // 绑定检查通过
-        HTTP_LOG_INFO("InsertWaveInfo 绑定校验通过 orderCode=%s bound=%d/%d",
-            orderCode.toLocal8Bit().data(), boundCount(), m_expectedBindCount);
-
+        // 步骤2.5: 容器格口绑定不再在开头阻塞，仅保留格口号越界判断
         // 步骤3: 幂等检查（T-S1-04）— 已分拣拒绝覆盖，未分拣允许覆盖
         if (m_pSortingDb && !orderCode.isEmpty())
         {
@@ -988,20 +970,6 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
                     orderCode.toLocal8Bit().data(), existingStatus);
                 emit logMessage(QString("[WMS] 覆盖旧波次 orderCode=%1（未分拣）").arg(orderCode));
             }
-        }
-
-        // 步骤4: 前置校验 — 所有格口必须已绑定容器
-        if (!areAllBindingsComplete())
-        {
-            int bc = boundCount();
-            HTTP_WARN("InsertWaveInfo 容器未全部绑定 bound=%d/%d", bc, BINDING_SLOT_COUNT);
-            emit logMessage(QString("[WMS] 容器未全部绑定 已绑定:%1/%2 拒绝波次").arg(bc).arg(BINDING_SLOT_COUNT), true);
-            QJsonObject err;
-            err["code"] = "500";
-            err["message"] = QString("容器未全部绑定，已绑定: %1/%2，请等待WMS下发全部容器绑定").arg(bc).arg(BINDING_SLOT_COUNT);
-            err["orderCode"] = orderCode;
-            sendJsonResponse(pSender, dwConnID, err, 500);
-            return;
         }
 
         // 步骤5: 检查队列容量
@@ -1266,6 +1234,13 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         }
 
         m_containerBindings[normalizedGrid] = boxcode;
+    }
+
+    // ★ 纠正5: H6 绑定时恢复格口（满箱锁格后WMS重新绑定，格口恢复正常分拣）
+    if (m_pPlcMgr)
+    {
+        m_pPlcMgr->enableGrid(gridNum);
+        HTTP_LOG_INFO("H6绑定 格口恢复 grid=%d box=%s", gridNum, boxcode.toLocal8Bit().data());
     }
 
     // ★ 持久化到数据库（T-S2-04 关联 orderCode）
@@ -2178,6 +2153,7 @@ QJsonObject HttpServer::buildEndPayload(const QString& orderCode, int sumLocatio
 
 // ============================================================================
 // sendEnd — 完结触发入口（T-S6-01/02）
+// ★ 纠正2: 唯一触发时机 — 用户点击"结束任务"按钮
 // 流程：
 //   1. 校验 canComplete()
 //   2. 状态迁移 SORTING→ENDING
@@ -2514,21 +2490,62 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
     // 解析每条 EPC→barcode+carNum 映射，存入 EpcCache（T-S4-04 TTL缓存）
     int newCount = 0;
     int carCount = 0;
+    int skuNeedQueryCount = 0;  // ★ 需要查询 SKU 的 EPC 数量
+    QStringList epcNeedSkuQuery;  // ★ 需要查询 SKU 的 EPC 列表
     QMap<QString, QPair<QString, QString>> batchMap;  // epc → {barcode, carNum}
     for (const QJsonValue& val : dataArr)
     {
         QJsonObject item = val.toObject();
         QString epc     = item["epc"].toString().trimmed();
-        QString barcode = item["barcode"].toString().trimmed();
-        QString carNum  = item["carNum"].toString().trimmed();  // ★ RFID 小车号
+        QString barcode = item["barcode"].toString().trimmed();  // ★ barcode=SKU编码（客户确认 2026-08-14）
+        QString carNum  = item["carNum"].toString().trimmed();   // ★ RFID 小车号
 
         if (epc.isEmpty()) continue;
 
-        if (!barcode.isEmpty())
+        // ★ 纠正: 接受无 barcode 的 EPC+carNum（RFID 只推送 EPC+小车号时 barcode 为空）
+        //   无论 barcode 是否有值，都存入 EpcCache
+        batchMap[epc] = {barcode, carNum};
+        newCount++;
+        if (!carNum.isEmpty() && carNum != CAR_NUM_STR(DEFAULT_CAR_NUM)) carCount++;
+
+        // ★ 检查是否需要触发 SKU 查询（barcode 为空 或 EpcCache 中 skuBound=false）
+        bool needSkuQuery = false;
+        if (barcode.isEmpty())
         {
-            batchMap[epc] = {barcode, carNum};
-            newCount++;
-            if (!carNum.isEmpty() && carNum != CAR_NUM_STR(DEFAULT_CAR_NUM)) carCount++;
+            needSkuQuery = true;
+        }
+        else if (m_pEpcCache)
+        {
+            // barcode 有值但可能 skuBound 还未设置（旧缓存未绑定）
+            needSkuQuery = !m_pEpcCache->isReadyForPlc(epc);
+        }
+
+        if (needSkuQuery)
+        {
+            // ★ 防重查：同一 EPC 不重复提交 SKU 查询
+            if (!m_pendingSkuQuery.contains(epc))
+            {
+                epcNeedSkuQuery.append(epc);
+                m_pendingSkuQuery.insert(epc);
+                skuNeedQueryCount++;
+                HTTP_LOG_INFO("RFID推送 SKU查询入队 epc=%s carNum=%s pendingSize=%d",
+                    epc.toLocal8Bit().data(), carNum.toLocal8Bit().data(),
+                    m_pendingSkuQuery.size());
+            }
+            else
+            {
+                // ★ 日志: 记录被防重拦截的 EPC，方便排查重复推送
+                int retryCount = m_skuQueryRetryCount.value(epc, 0);
+                HTTP_LOG_INFO("RFID推送 SKU查询已提交跳过(防重) epc=%s carNum=%s retryCount=%d pendingSize=%d",
+                    epc.toLocal8Bit().data(), carNum.toLocal8Bit().data(),
+                    retryCount, m_pendingSkuQuery.size());
+            }
+        }
+        else
+        {
+            // ★ 日志: 记录不需要 SKU 查询的 EPC（barcode 已有 or skuBound 已 true）
+            HTTP_LOG_INFO("RFID推送 SKU已就绪无需查询 epc=%s barcode=%s carNum=%s",
+                epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(), carNum.toLocal8Bit().data());
         }
     }
 
@@ -2538,19 +2555,55 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
         m_pEpcCache->setBatchWithCar(batchMap);
     }
 
+    // ★ 立即触发 SKU 查询（使用新线程异步执行，不阻塞 RFID 推送响应）
+    if (!epcNeedSkuQuery.isEmpty())
+    {
+        HTTP_LOG_INFO("RFID推送 触发SKU查询 epcCount=%d epcList=[%s]",
+            epcNeedSkuQuery.size(), epcNeedSkuQuery.join(",").toLocal8Bit().data());
+        emit logMessage(QString("[RFID] 触发 SKU 查询 %1 条").arg(epcNeedSkuQuery.size()));
+        if (m_pHttpClient)
+        {
+            // ★ HttpClient::queryRfidBinding 内部使用 QNetworkAccessManager 异步请求
+            //   完成后通过 rfidBindingResult 信号回调 → onRfidBindingResult → trySendToPlcForEpc
+            m_pHttpClient->queryRfidBinding(epcNeedSkuQuery);
+        }
+    }
+
     // ★ 逐条检查：EPC 是否已就绪（SKU 已绑定 + carNum 已获取）
     //   就绪则立即发送 PLC 指令
     int sentCount = 0;
+    int skuNotFoundCount = 0;
     for (auto it = batchMap.constBegin(); it != batchMap.constEnd(); ++it)
     {
-        if (trySendToPlcForEpc(it.key()))
+        QString epc = it.key();
+        bool isReady = m_pEpcCache && m_pEpcCache->isReadyForPlc(epc);
+        
+        if (!isReady)
+        {
+            skuNotFoundCount++;
+            HTTP_LOG_WARN("RFID推送 EPC已到但SKU未绑定 epc=%s barcode=%s carNum=%s (等待RFID SKU查询结果)", 
+                epc.toLocal8Bit().data(), 
+                it.value().first.toLocal8Bit().data(),
+                it.value().second.toLocal8Bit().data());
+        }
+
+        // ★ 防重复：已发送的 EPC 跳过（避免 scheduleNotReadyRetry 延迟重试时重复发送）
+        if (m_sentEpcs.contains(epc))
+        {
+            HTTP_LOG_INFO("RFID推送 已发送跳过 epc=%s (已在 m_sentEpcs 中)", 
+                epc.toLocal8Bit().data());
+            sentCount++;
+            continue;
+        }
+
+        if (trySendToPlcForEpc(epc))
             sentCount++;
     }
 
-    HTTP_LOG_INFO("RFID推送已存储 total=%d new=%d carNum=%d sent=%d",
-        dataArr.size(), newCount, carCount, sentCount);
-    emit logMessage(QString("[RFID] 小车号推送 接收%1条 有效%2条 小车号%3条 已发送PLC%4条")
-        .arg(dataArr.size()).arg(newCount).arg(carCount).arg(sentCount));
+    HTTP_LOG_INFO("RFID推送已存储 total=%d new=%d carNum=%d sent=%d skuNotFound=%d skuQuery=%d",
+        dataArr.size(), newCount, carCount, sentCount, skuNotFoundCount, skuNeedQueryCount);
+    emit logMessage(QString("[RFID] 小车号推送 接收%1条 有效%2条 小车号%3条 已发送PLC%4条 SKU未绑定%5条 触发SKU查询%6条")
+        .arg(dataArr.size()).arg(newCount).arg(carCount).arg(sentCount).arg(skuNotFoundCount).arg(skuNeedQueryCount));
 
     QJsonObject r;
     r["code"] = "200";
@@ -2587,6 +2640,127 @@ void HttpServer::submitEpcBindingQueries(const QStringList& epcList)
 }
 
 // ============================================================================
+// scheduleSkuQueryRetry — SKU 查询失败后延迟重试
+// 使用 QTimer::singleShot 延迟 SKU_QUERY_RETRY_INTERVAL_MS 毫秒后重新发起查询
+// 重试时重新加入 m_pendingSkuQuery 防重标记
+// ============================================================================
+void HttpServer::scheduleSkuQueryRetry(const QStringList& epcList)
+{
+    if (epcList.isEmpty() || !m_pHttpClient)
+        return;
+
+    HTTP_LOG_INFO("SKU查询延迟重试 epcCount=%d delayMs=%d epcList=[%s]",
+        epcList.size(), SKU_QUERY_RETRY_INTERVAL_MS,
+        epcList.join(",").toLocal8Bit().data());
+    emit logMessage(QString("[EPC] SKU查询延迟重试 %1条 间隔%2ms").arg(epcList.size()).arg(SKU_QUERY_RETRY_INTERVAL_MS));
+
+    // ★ 延迟后重新发起 SKU 查询
+    QTimer::singleShot(SKU_QUERY_RETRY_INTERVAL_MS, this, [this, epcList]() {
+        // 重新加入防重标记
+        for (const QString& epc : epcList)
+        {
+            m_pendingSkuQuery.insert(epc);
+        }
+
+        HTTP_LOG_INFO("SKU查询重试发起 epcCount=%d epcList=[%s]",
+            epcList.size(), epcList.join(",").toLocal8Bit().data());
+        emit logMessage(QString("[EPC] SKU查询重试发起 %1条").arg(epcList.size()));
+
+        if (m_pHttpClient)
+        {
+            m_pHttpClient->queryRfidBinding(epcList);
+        }
+    });
+}
+
+// ============================================================================
+// scheduleNotReadyRetry — 未就绪(carNum未到)时延迟重试
+// 使用 QTimer::singleShot 延迟 NOT_READY_RETRY_INTERVAL_MS 毫秒后重新检查
+// 如果 carNum 已到 → 发送 PLC；如果仍不到 → 递增重试计数
+// 超过 NOT_READY_RETRY_MAX 次 → 写入异常记录表
+// 已发送的 EPC（m_sentEpcs）跳过，防重复发送
+// ============================================================================
+void HttpServer::scheduleNotReadyRetry(const QString& epc)
+{
+    int retryCount = m_notReadyRetryCount.value(epc, 0);
+    if (retryCount > NOT_READY_RETRY_MAX)
+    {
+        // ★ 超过最大重试次数，写入异常记录表
+        HTTP_LOG_ERROR("未就绪重试 最终失败 epc=%s retry=%d/%d 写入异常记录",
+            epc.toLocal8Bit().data(), retryCount, NOT_READY_RETRY_MAX);
+        emit logMessage(QString("[异常] 未就绪最终失败 epc=%1 carNum未到 已重试%2次").arg(epc).arg(retryCount));
+        m_notReadyRetryCount.remove(epc);
+
+        if (m_pSortingDb)
+        {
+            ExceptionRecord ex;
+            ex.type      = QString::fromUtf8("carNum未到");
+            ex.orderCode = m_pWaveMgr->orderCode();
+            ex.epc       = epc;
+            ex.sku       = epc;
+            ex.reason    = QString::fromUtf8("SKU已绑定但carNum推送未到达，已重试%1次后放弃").arg(retryCount);
+            m_pSortingDb->insertException(ex);
+        }
+        return;
+    }
+
+    HTTP_LOG_INFO("未就绪重试 调度 epc=%s retry=%d/%d delayMs=%d",
+        epc.toLocal8Bit().data(), retryCount, NOT_READY_RETRY_MAX,
+        NOT_READY_RETRY_INTERVAL_MS);
+
+    // ★ 延迟后重新检查
+    QTimer::singleShot(NOT_READY_RETRY_INTERVAL_MS, this, [this, epc]() {
+        // ★ 防重复：如果已发送，跳过
+        if (m_sentEpcs.contains(epc))
+        {
+            HTTP_LOG_INFO("未就绪重试 已发送跳过 epc=%s (carNum已到且已发送PLC)",
+                epc.toLocal8Bit().data());
+            m_notReadyRetryCount.remove(epc);
+            return;
+        }
+
+        if (!m_pEpcCache)
+        {
+            m_notReadyRetryCount.remove(epc);
+            return;
+        }
+
+        bool isReady = m_pEpcCache->isReadyForPlc(epc);
+        HTTP_LOG_INFO("未就绪重试 检查 epc=%s isReady=%d retryCount=%d",
+            epc.toLocal8Bit().data(), isReady,
+            m_notReadyRetryCount.value(epc, 0));
+
+        if (isReady)
+        {
+            // ★ carNum 已到，发送 PLC
+            if (trySendToPlcForEpc(epc))
+            {
+                HTTP_LOG_INFO("未就绪重试 发送成功 epc=%s", epc.toLocal8Bit().data());
+                m_notReadyRetryCount.remove(epc);
+            }
+            else
+            {
+                HTTP_LOG_WARN("未就绪重试 发送失败 epc=%s (就绪但发送PLC失败)",
+                    epc.toLocal8Bit().data());
+                // 继续重试
+                int curRetry = m_notReadyRetryCount.value(epc, 0) + 1;
+                m_notReadyRetryCount[epc] = curRetry;
+                scheduleNotReadyRetry(epc);
+            }
+        }
+        else
+        {
+            // ★ 仍未就绪，递增重试计数并继续
+            int curRetry = m_notReadyRetryCount.value(epc, 0) + 1;
+            m_notReadyRetryCount[epc] = curRetry;
+            HTTP_LOG_INFO("未就绪重试 仍未就绪 epc=%s retry=%d/%d",
+                epc.toLocal8Bit().data(), curRetry, NOT_READY_RETRY_MAX);
+            scheduleNotReadyRetry(epc);
+        }
+    });
+}
+
+// ============================================================================
 // onRfidBindingResult — RFID 绑定查询结果回调
 // 将 EPC→barcode 映射存入 EpcCache（skuBound=true），
 // 然后检查每条 EPC 是否已就绪（carNum 也已获取），就绪则发送 PLC
@@ -2595,8 +2769,56 @@ void HttpServer::onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap
 {
     if (epcBarcodeMap.isEmpty())
     {
-        HTTP_LOG_WARN("EPC绑定查询结果为空（RFID无响应或超时）");
-        emit logMessage("[EPC] SKU-EPC 绑定查询结果为空，RFID 可能未响应");
+        // ★ 日志: 记录超时/失败的 EPC 列表，方便排查
+        QStringList pendingEpcs = m_pendingSkuQuery.values();
+        HTTP_LOG_WARN("EPC绑定查询结果为空（RFID超时或失败） pendingEpcs=[%s] count=%d",
+            pendingEpcs.join(",").toLocal8Bit().data(), pendingEpcs.size());
+        emit logMessage(QString("[EPC] SKU-EPC 绑定查询超时/失败 待处理%1条 EPC=%2")
+            .arg(pendingEpcs.size()).arg(pendingEpcs.join(",")));
+
+        // ★ 修复: 清除防重标记，否则 EPC 永远无法重试
+        //   遍历 m_pendingSkuQuery 中所有 EPC，逐个判断是否重试
+        QStringList retryEpcs;  // 需要重试的 EPC
+        for (const QString& epc : pendingEpcs)
+        {
+            int retryCount = m_skuQueryRetryCount.value(epc, 0) + 1;
+            m_skuQueryRetryCount[epc] = retryCount;
+            m_pendingSkuQuery.remove(epc);  // ★ 清除防重标记
+
+            if (retryCount <= SKU_QUERY_MAX_RETRY)
+            {
+                // 未超过最大重试次数，加入重试列表
+                retryEpcs.append(epc);
+                HTTP_LOG_INFO("SKU查询重试 epc=%s retry=%d/%d",
+                    epc.toLocal8Bit().data(), retryCount, SKU_QUERY_MAX_RETRY);
+            }
+            else
+            {
+                // ★ 超过最大重试次数，写入异常记录表
+                HTTP_LOG_ERROR("SKU查询最终失败 epc=%s retry=%d/%d 写入异常记录",
+                    epc.toLocal8Bit().data(), retryCount, SKU_QUERY_MAX_RETRY);
+                emit logMessage(QString("[异常] SKU查询最终失败 epc=%1 已重试%2次").arg(epc).arg(retryCount));
+                m_skuQueryRetryCount.remove(epc);  // 清理重试计数
+
+                // 写入异常记录表
+                if (m_pSortingDb)
+                {
+                    ExceptionRecord ex;
+                    ex.type      = QString::fromUtf8("SKU查询超时");
+                    ex.orderCode = m_pWaveMgr->orderCode();
+                    ex.epc       = epc;
+                    ex.sku       = epc;
+                    ex.reason    = QString::fromUtf8("RFID SKU-EPC绑定查询超时/失败，已重试%1次").arg(retryCount);
+                    m_pSortingDb->insertException(ex);
+                }
+            }
+        }
+
+        // ★ 延迟重试（3 秒后重新发起 SKU 查询）
+        if (!retryEpcs.isEmpty())
+        {
+            scheduleSkuQueryRetry(retryEpcs);
+        }
         return;
     }
 
@@ -2608,22 +2830,33 @@ void HttpServer::onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap
     // 逐条存入 EpcCache（skuBound=true），并检查是否就绪
     int readyCount = 0;
     int notReadyCount = 0;
+    int skuInGridCount = 0;
+    int skuNotInGridCount = 0;
     for (auto it = epcBarcodeMap.constBegin(); it != epcBarcodeMap.constEnd(); ++it)
     {
         QString epc     = it.key();
-        QString barcode = it.value();
+        QString sku     = it.value();  // ★ RFID 返回的 SKU 编码（barcode=SKU）
 
-        // ★ 写入前检查：该 EPC 在 GridBuffer 中是否存在
-        bool inGrid = m_pBuffer && !m_pBuffer->get(epc).gridNum.isEmpty();
-        HTTP_LOG_INFO("EPC绑定 逐条处理 epc=%s barcode=%s 在GridBuffer=%d",
-            epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(), inGrid);
+        // ★ 纠正: 检查 SKU 在 GridBuffer 中是否存在（GridBuffer key 是 SKU）
+        bool skuInGrid = m_pBuffer && !m_pBuffer->get(sku).gridNum.isEmpty();
+        if (skuInGrid)
+            skuInGridCount++;
+        else
+        {
+            skuNotInGridCount++;
+            HTTP_LOG_WARN("EPC绑定 SKU未在GridBuffer中找到 epc=%s sku=%s (H4未下发此SKU)",
+                epc.toLocal8Bit().data(), sku.toLocal8Bit().data());
+        }
 
         if (m_pEpcCache)
         {
-            m_pEpcCache->setSkuBinding(epc, barcode);
-            HTTP_LOG_INFO("EPC绑定 已存入EpcCache epc=%s barcode=%s skuBound=true",
-                epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
+            m_pEpcCache->setSkuBinding(epc, sku);
+            HTTP_LOG_INFO("EPC绑定 已存入EpcCache epc=%s sku=%s skuBound=true skuInGrid=%d",
+                epc.toLocal8Bit().data(), sku.toLocal8Bit().data(), skuInGrid);
         }
+
+        // ★ 清除防重标记（SKU 查询已完成，允许后续重查）
+        m_pendingSkuQuery.remove(epc);
 
         // 检查是否已就绪（carNum 也已获取）
         bool isReady = m_pEpcCache && m_pEpcCache->isReadyForPlc(epc);
@@ -2645,16 +2878,25 @@ void HttpServer::onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap
         else
         {
             notReadyCount++;
-            HTTP_LOG_INFO("EPC绑定 未就绪 epc=%s (等待RFID推送carNum)",
-                epc.toLocal8Bit().data());
+            // ★ SKU 已绑定但 carNum 未到，启动延迟重试机制
+            //   避免 carNum 推送丢失导致 EpcCache TTL 过期后数据静默丢失
+            int retryCount = m_notReadyRetryCount.value(epc, 0) + 1;
+            m_notReadyRetryCount[epc] = retryCount;
+            HTTP_LOG_INFO("EPC绑定 未就绪 epc=%s retry=%d/%d (等待RFID推送carNum)",
+                epc.toLocal8Bit().data(), retryCount, NOT_READY_RETRY_MAX);
+            emit logMessage(QString("[EPC] 未就绪 epc=%1 carNum未到 重试%2/%3")
+                .arg(epc).arg(retryCount).arg(NOT_READY_RETRY_MAX));
+            scheduleNotReadyRetry(epc);
         }
     }
 
     int cacheSizeAfter = m_pEpcCache ? m_pEpcCache->size() : 0;
-    HTTP_LOG_INFO("EPC绑定完成 匹配=%d 就绪=%d 未就绪=%d 缓存大小=%d→%d",
-        epcBarcodeMap.size(), readyCount, notReadyCount, cacheSizeBefore, cacheSizeAfter);
-    emit logMessage(QString("[EPC] SKU-EPC 绑定完成 匹配%1条 就绪%2条 未就绪%3条 (缓存%4→%5)")
+    HTTP_LOG_INFO("EPC绑定完成 匹配=%d 就绪=%d 未就绪=%d SKU在Grid=%d SKU不在Grid=%d 缓存大小=%d→%d",
+        epcBarcodeMap.size(), readyCount, notReadyCount, skuInGridCount, skuNotInGridCount,
+        cacheSizeBefore, cacheSizeAfter);
+    emit logMessage(QString("[EPC] SKU-EPC 绑定完成 匹配%1条 就绪%2条 未就绪%3条 SKU在Grid%4/不在%5 (缓存%6→%7)")
         .arg(epcBarcodeMap.size()).arg(readyCount).arg(notReadyCount)
+        .arg(skuInGridCount).arg(skuNotInGridCount)
         .arg(cacheSizeBefore).arg(cacheSizeAfter));
 }
 
@@ -2667,47 +2909,91 @@ void HttpServer::onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap
 bool HttpServer::trySendToPlcForEpc(const QString& epc)
 {
     if (!m_pEpcCache || !m_pPlcMgr || !m_pBuffer)
+    {
+        HTTP_LOG_WARN("trySendToPlcForEpc 前置条件不满足 epc=%s EpcCache=%d PlcMgr=%d Buffer=%d",
+            epc.toLocal8Bit().data(), m_pEpcCache!=nullptr, m_pPlcMgr!=nullptr, m_pBuffer!=nullptr);
         return false;
+    }
 
     // 检查是否就绪
     if (!m_pEpcCache->isReadyForPlc(epc))
+    {
+        HTTP_LOG_INFO("trySendToPlcForEpc 未就绪 epc=%s (skuBound+carNum未同时满足)",
+            epc.toLocal8Bit().data());
         return false;
+    }
 
-    // 获取 carNum（barcode 来自 RFID 是真实条码，仅用于记录，不用于 GridBuffer 查找）
+    // 获取 SKU + carNum（EpcCache 中 barcode=SKU 来自 RFID 实时查询）
     QPair<QString, QString> plcData = m_pEpcCache->getPlcData(epc);
-    QString barcode = plcData.first;  // RFID 返回的真实条码（如 BBBBBB001）
-    QString carNum  = plcData.second;
-    if (barcode.isEmpty())
+    QString sku    = plcData.first;  // RFID 返回的 SKU 编码（用于 GridBuffer 查找格口）
+    QString carNum = plcData.second;
+    if (sku.isEmpty())
+    {
+        HTTP_LOG_WARN("trySendToPlcForEpc SKU为空 epc=%s (EpcCache中barcode为空)",
+            epc.toLocal8Bit().data());
         return false;
+    }
 
-    // ★ GridBuffer 的 key 是 inco（EPC值），不是真实条码
-    //   用 epc 参数（即 inco）查找格口，而非 barcode
-    GridEntry entry = m_pBuffer->get(epc);
+    // ★ GridBuffer 的 key 是 SKU 编码（H4 下发 inco=SKU）
+    //   用 RFID 返回的 SKU 查找格口映射
+    GridEntry entry = m_pBuffer->get(sku);
     if (entry.gridNum.isEmpty())
     {
-        HTTP_LOG_WARN("trySendToPlcForEpc 格口未找到 epc=%s barcode=%s",
-            epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
+        // ★ 定位失败：输出 GridBuffer 中所有 SKU key，方便对比排查
+        const QMap<QString, GridEntry>* pMap = m_pBuffer->activeMap();
+        if (pMap)
+        {
+            QStringList keys;
+            for (int i = 0; i < qMin(pMap->size(), 20); ++i)
+            {
+                auto it = pMap->constBegin() + i;
+                keys << it.key();
+            }
+            HTTP_LOG_WARN("trySendToPlcForEpc SKU未在GridBuffer中找到 epc=%s sku=%s 容器大小=%d 前20个key=[%s]",
+                epc.toLocal8Bit().data(), sku.toLocal8Bit().data(), 
+                pMap->size(), keys.join(",").toLocal8Bit().data());
+        }
+        else
+        {
+            HTTP_LOG_WARN("trySendToPlcForEpc SKU未在GridBuffer中找到 epc=%s sku=%s (GridBuffer为空)",
+                epc.toLocal8Bit().data(), sku.toLocal8Bit().data());
+        }
+        // ★ 写入异常记录表（SKU 不在 H4 下发的格口映射中）
+        if (m_pSortingDb)
+        {
+            ExceptionRecord ex;
+            ex.type      = QString::fromUtf8("SKU不在GridBuffer");
+            ex.orderCode = m_pWaveMgr->orderCode();
+            ex.epc       = epc;
+            ex.sku       = sku;
+            ex.reason    = QString::fromUtf8("RFID返回SKU=%1，但H4下发未包含此SKU的格口映射").arg(sku);
+            m_pSortingDb->insertException(ex);
+        }
         return false;
     }
 
     // 检查 PLC 连接
     if (!m_pPlcMgr->hasConnectedClients())
     {
-        HTTP_LOG_WARN("trySendToPlcForEpc PLC未连接 epc=%s barcode=%s", 
-            epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
+        HTTP_LOG_WARN("trySendToPlcForEpc PLC未连接 epc=%s sku=%s", 
+            epc.toLocal8Bit().data(), sku.toLocal8Bit().data());
         return false;
     }
 
-    // ★ 发送 PLC 指令：key 用 epc（inco），与 PLC 反馈匹配一致
+    // ★ 发送 PLC 指令：{EPC|格口号|小车号}
+    //   EPC 来自 RFID 推送，格口号来自 SKU 映射查找，小车号来自 RFID 推送
     QMap<QString, QString> codeGridMap;
     codeGridMap[epc] = entry.gridNum;
     m_pPlcMgr->sendBatchCodesWithEpcCache(codeGridMap);
 
-    HTTP_LOG_INFO("PLC发送就绪 epc=%s barcode=%s grid=%s carNum=%s",
-        epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
+    HTTP_LOG_INFO("PLC发送就绪 epc=%s sku=%s grid=%s carNum=%s",
+        epc.toLocal8Bit().data(), sku.toLocal8Bit().data(),
         entry.gridNum.toLocal8Bit().data(), carNum.toLocal8Bit().data());
-    emit logMessage(QString("[PLC] 发送 %1 → 格口%2 小车%3 (epc=%4)")
-        .arg(epc).arg(entry.gridNum).arg(carNum).arg(epc));
+    emit logMessage(QString("[PLC] 发送 %1 → 格口%2 小车%3 (sku=%4)")
+        .arg(epc).arg(entry.gridNum).arg(carNum).arg(sku));
+
+    // ★ 标记已发送，防止 scheduleNotReadyRetry 延迟重试时重复发送
+    m_sentEpcs.insert(epc);
 
     return true;
 }

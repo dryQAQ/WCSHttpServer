@@ -1,4 +1,5 @@
-﻿  Reading Qt configuration (D:/Qt/5.15.2/msvc2019_64/bin/qmake)
+﻿D:\vs2019\Community\MSBuild\Microsoft\VC\v160\Microsoft.CppClean.targets(77,5): warning : 对路径“d:\wcs\wcsapp\wcs_httpserver\release_wcshttpserver\wcs_httpserver.exe”的访问被拒绝。
+  Reading Qt configuration (D:/Qt/5.15.2/msvc2019_64/bin/qmake)
   uic WCS_httpServer.ui
   rcc WCS_httpServer.qrc
   moc WCS_httpServer.h

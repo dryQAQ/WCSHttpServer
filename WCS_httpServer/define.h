@@ -84,8 +84,8 @@
 // fromLocation 取值来源：config=使用配置项固定值, volu=使用波次明细中的 volu 字段
 // TODO: RQ-04 待确认 volu 与 fromLocation 的映射关系（2026-08-04）
 #define FULLBOX_FROM_LOCATION_SOURCE   "volu"   // fromLocation 取值来源（config/volu）
-#define FULLBOX_DEFAULT_FROM_LOCATION  "A-999"   // 来源库位默认值（H7 fromLocation 兜底值）
-#define FULLBOX_DEFAULT_TARGET_LOCATION "999"   // 目标库位默认值（H7 targetLocation 无容器号时兜底）
+#define FULLBOX_DEFAULT_FROM_LOCATION  "A-66"   // 来源库位默认值（H7 fromLocation 兜底值）
+#define FULLBOX_DEFAULT_TARGET_LOCATION "66"   // 目标库位默认值（H7 targetLocation 无容器号时兜底）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 分拣引擎配置
@@ -200,6 +200,10 @@
 #define RFID_CACHE_TTL_SEC         300      // EPC 本地缓存 TTL（秒，默认5分钟）
 #define RFID_QUERY_URL             "http://127.0.0.1:9100/open-api/rfid/query"  // RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
 #define RFID_QUERY_TIMEOUT_MS      5000     // RFID 查询超时(ms)，默认5秒
+#define SKU_QUERY_MAX_RETRY        2        // SKU 查询最大重试次数（超时/失败后最多重试2次）
+#define SKU_QUERY_RETRY_INTERVAL_MS 3000    // SKU 查询重试间隔(ms)，默认3秒
+#define NOT_READY_RETRY_MAX         3        // 未就绪(carNum未到)最大重试次数
+#define NOT_READY_RETRY_INTERVAL_MS 5000     // 未就绪重试间隔(ms)，默认5秒
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 回传响应日志截断（防止超长响应体撑满日志文件）
@@ -294,7 +298,7 @@
 // 判定规则：
 //   - sorting_records 有记录 → 已落格 → 「已分拣」
 //   - return_wave_item 有计划且同波次同EPC编码不在 sorting_records → 「待分拣」
-// 用 NOT EXISTS 保证同一 order_code+inco 不会同时出现两种状态
+// 用 NOT EXISTS 保证同一 order_code+SKU 不会同时出现两种状态
 #define SQL_QUERY_PENDING_BY_BARCODE \
     "SELECT i.order_code, i.inco, i.grid_num, i.plan_qty, i.volu " \
     "FROM return_wave_item i " \
@@ -368,7 +372,7 @@
 // ──── 建表：退货波次明细表 ────
 // 存储波次中每条商品→格口的分配明细
 // order_code — 波次号（外键，关联 return_wave）
-// inco       — 商品编码/SKU（与 RFID查询（H3） barcode、满箱回传（H7） sku 对齐）
+// inco       — SKU编码（客户确认 2026-08-14，H4 下发 inco 字段为 SKU 编码）
 // grid_num   — 格口号
 // grid_type  — 格口属性（0=分类, 1=异常, 2=发货状态）
 // plan_qty   — 计划件数（WMS 下发的 gridNumber）

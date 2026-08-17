@@ -93,6 +93,9 @@ struct PlcFeedbackEntry
     QString code;
     QString grid;
     QString car;
+    QString firstCar;   // ★ 首车（5字段格式专用，3字段格式时 = car）
+    QString lastCar;    // ★ 尾车（5字段格式专用，3字段格式时为空）
+    int     status = 0; // ★ 分拣状态：1=成功 2=无格口 3=信息不全（5字段格式专用）
     qint64  timestampMs = 0;
 };
 Q_DECLARE_METATYPE(PlcFeedbackEntry)
@@ -174,6 +177,12 @@ public:
     bool isGridLocked(int grid) const;  // 查询指定格口是否锁定
     int  lockedGridCount() const;       // 当前锁定格口总数
 
+    // ──── 格口禁用管理（满箱锁格后禁用，WMS重新绑定H6时恢复）────
+    void disableGrid(int grid);         // 满箱锁格后禁用格口（禁止分配和落格）
+    void enableGrid(int grid);          // WMS重新绑定H6时恢复格口
+    bool isGridDisabled(int grid) const; // 查询格口是否被禁用
+    void enableAllGrids();              // 全部启用（新波次开始时）
+
     void registerStatusCallback(PlcStatusCallback cb) { m_statusCb = std::move(cb); }
     void registerFeedbackCallback(PlcFeedbackCallback cb) { m_feedbackCb = std::move(cb); }
     void setLookupCallback(PlcLookupCallback cb) { m_lookupCb = std::move(cb); }
@@ -186,8 +195,8 @@ public:
     bool sendCodeInfo(const QString& code, const std::vector<int>& vecGrid, int car = 1);
     bool sendRawCommand(const QString& command);
     // ★ 主动发送模式：批量发送波次识别码到PLC（不等待PLC查询，与WCSApp一致）
-    // codeGridMap 的 key 为 EPC编码，客户已确认（2026-08-10）
-    // codeGridMap: 识别码→格口字符串（如 "15" 或 "1,2,3"）
+    // codeGridMap 的 key 为 EPC编码（RFID推送），value 为格口号列表
+    // 格式: {EPC|格口|小车号} 发送给 PLC
     bool sendBatchCodes(const QMap<QString, QString>& codeGridMap);
 
     // ★ 从 EpcCache 获取小车号发送（RFID 提供小车号，carNum 默认 "001"）
@@ -259,6 +268,10 @@ signals:
     byte        m_s7PlcLastData[PLC_S7_LOCK_READ_SIZE]{ 0 };  // ★ 上一次S7锁格数据（边沿检测用，与WCSApp一致）
     mutable std::mutex m_lockGridPlc;       // 保护 m_s7Grid_200
 
+    // ──── 格口禁用集合（满箱锁格后禁用，WMS重新绑定H6时恢复）────
+    QSet<int>            m_disabledGrids;          // 已禁用的格口号集合
+    mutable std::mutex   m_lockDisabledGrids;      // 保护 m_disabledGrids
+
     // ──── S7 锁格轮询定时器 ────
     QTimer*     m_s7LockTimer = nullptr;     // ★ S7锁格轮询定时器（1秒间隔，与WCSApp S7边沿检测一致）
     void pollS7LockStatus();                 // ★ S7锁格轮询：读DB77→边沿检测→发射信号
@@ -280,6 +293,9 @@ signals:
     QString m_lastRecvCode;         // 最近一次接收的EPC编码
     QString m_lastRecvGrid;         // 最近一次接收的格口
     QString m_lastRecvCar;          // 最近一次接收的小车
+    QString m_lastRecvFirstCar;     // ★ 最近一次接收的首车（5字段格式）
+    QString m_lastRecvLastCar;      // ★ 最近一次接收的尾车（5字段格式）
+    int     m_lastRecvStatus = 0;   // ★ 最近一次接收的分拣状态（5字段格式）
     qint64  m_lastSendTimeMs = 0;   // 最近发送时间戳
     qint64  m_lastRecvTimeMs = 0;   // 最近接收时间戳
     mutable std::mutex m_lastDataMutex;  // 保护最近数据

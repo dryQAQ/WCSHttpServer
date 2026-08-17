@@ -192,6 +192,9 @@ public:
                 else if (!it.value().first.isEmpty())
                 {
                     entry.barcode = it.value().first;
+                    // ★ 纠正: RFID 推送中的 barcode 就是 SKU 编码（客户确认 2026-08-14）
+                    //   如果推送带了 barcode，直接标记 skuBound=true，无需再单独查询
+                    entry.skuBound = true;
                 }
                 // ★ 更新 carNum（RFID 推送的）
                 entry.carNum = it.value().second.isEmpty() ? DEFAULT_CAR_STR : it.value().second;
@@ -230,7 +233,11 @@ public:
         entry.skuBound = true;
         if (!exists)
         {
+            // ★ 极端情况：旧条目已过期被 erase，新条目丢失了 carNum
+            //   TTL=300s，SKU 查询最长 21s，理论上不会发生，但加日志方便排查
             entry.expireTime = QDateTime::currentDateTime().addSecs(m_ttlSec);
+            EPC_WARN("setSkuBinding 条目已过期重建 epc=%s barcode=%s carNum丢失(旧条目TTL过期)",
+                epc.toLocal8Bit().data(), barcode.toLocal8Bit().data());
         }
         // 如果已有 carNum，标记为就绪
         bool ready = entry.isReadyForPlc();

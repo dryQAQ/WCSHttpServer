@@ -36,7 +36,7 @@ class ParseWorker;
 // ★ 格口分拣记录（锁格时回传 WMS 用）
 struct GridSortRecord
 {
-    QString inco;          // 识别码（EPC编码，客户已确认 2026-08-10）
+    QString inco;          // SKU编码（客户确认 2026-08-14，H4 下发 inco 字段为 SKU 编码）
     QString car;           // 小车号（TODO: 应由RFID提供，客户尚未提供 2026-08-04）
     int     gridCount = 0; // 配货件数
     QString volu;          // 来源库位
@@ -113,6 +113,8 @@ public:
     void submitEpcBindingQueries(const QStringList& epcList);      // ★ 波次下发后提交 EPC 绑定查询
     void onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap);  // ★ RFID 绑定查询结果回调
     bool trySendToPlcForEpc(const QString& epc);                   // ★ 尝试发送单条 EPC 到 PLC（就绪检查），返回 true=已发送
+    void scheduleSkuQueryRetry(const QStringList& epcList);          // ★ SKU 查询失败后延迟重试（最多重试 SKU_QUERY_MAX_RETRY 次）
+    void scheduleNotReadyRetry(const QString& epc);                // ★ 未就绪(carNum未到)时延迟重试（最多重试 NOT_READY_RETRY_MAX 次）
 
     // ★ RFID查询：根据EPC获取对应的SKU/EPC（商品编码）（T-S4-04 EpcCache TTL缓存）
     QString getSkuByEpc(const QString& epc) const {
@@ -194,6 +196,10 @@ private:
     SortingDatabase* m_pSortingDb = nullptr;  // ★ 分拣记录本地数据库
     EpcCache*       m_pEpcCache  = nullptr;  // ★ S4 EPC短缓存（T-S4-04）
     HttpClient*     m_pHttpClient = nullptr;  // ★ HTTP 客户端（用于 RFID SKU-EPC 绑定查询）
+    QSet<QString>  m_pendingSkuQuery;        // ★ 防重：已提交 SKU 查询的 EPC 集合（避免同一 EPC 重复查询）
+    QMap<QString, int> m_skuQueryRetryCount; // ★ 重试计数：每个 EPC 的 SKU 查询重试次数（key=epc, value=已重试次数）
+    QMap<QString, int> m_notReadyRetryCount; // ★ 未就绪重试计数：SKU已绑定但carNum未到时的重试次数
+    QSet<QString>  m_sentEpcs;               // ★ 已发送PLC的EPC集合（防重复发送）
 
     // ──── API 路由（从 XML 配置读取，可动态修改）────
     QString m_apiInsertWaveInfo     = API_INSERT_WAVE_INFO;

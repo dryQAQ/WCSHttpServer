@@ -319,10 +319,18 @@ void HttpClient::onRfidBindingReplyFinished()
     QMap<QString, QString> epcBarcodeMap;
     if (statusCode != 200)
     {
-        HTTP_LOG_WARN("RFID绑定查询失败 HTTP状态异常 status=%d body=%s",
-            statusCode, QString::fromUtf8(respBody).left(200).toLocal8Bit().data());
+        HTTP_LOG_WARN("RFID绑定查询失败 HTTP状态异常 status=%d body=%s epcList大小=%d",
+            statusCode, QString::fromUtf8(respBody).left(200).toLocal8Bit().data(),
+            pr.sumLocation);
+        // ★ 日志: 详细记录失败信息，方便排查是网络问题还是 RFID 服务问题
+        QString rawBody = QString::fromUtf8(respBody);
+        if (rawBody.length() > 200)
+        {
+            HTTP_LOG_WARN("RFID绑定查询失败 完整响应体(前500)=%s", 
+                rawBody.left(500).toLocal8Bit().data());
+        }
         m_pending.erase(it);
-        emit rfidBindingResult(epcBarcodeMap);
+        emit rfidBindingResult(epcBarcodeMap);  // 空 map → 触发 onRfidBindingResult 空结果分支
         return;
     }
 

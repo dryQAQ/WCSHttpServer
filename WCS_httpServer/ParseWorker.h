@@ -4,7 +4,7 @@
 //
 // 职责：
 //   从 TaskQueue 阻塞等待取任务 → 解析 WMS 推送的大 JSON
-//   → 构建 QMap<inco, GridEntry> → 原子交换到 DoubleBuffer
+//   → 构建 QMap<SKU, GridEntry> → 原子交换到 DoubleBuffer
 //
 // 低优先级运行（QThread::LowPriority），绝不抢占 PLC/扫描线程的 CPU 时间
 // ============================================================================
@@ -26,11 +26,9 @@ signals:
     // skuCount:   WMS推送的SKU种类数（去重后）
     // orderQty:   波次总件数
     // elapsedMs:  解析耗时(ms)
-    // recvSet:    波次包含的所有inco集合（用于波次完结判定）
-    // epcList:    波次中包含的所有EPC列表（用于RFID查询SKU绑定）
+    // recvSet:    波次中包含的所有SKU集合（用于波次完结判定）
     void waveParsed(const QString& orderCode, int skuCount, int orderQty,
-                    qint64 elapsedMs, const QSet<QString>& recvSet,
-                    const QStringList& epcList);
+                    qint64 elapsedMs, const QSet<QString>& recvSet);
     // 解析异常信号
     void parseError(const QString& errorMsg);
     // ★ 格口号越界异常信号（不阻塞波次，仅记录异常便于核查和重传）

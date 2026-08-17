@@ -552,6 +552,14 @@ void MainWindow::onStartStop()
 {
     if (m_bRunning)//状态：开启 --> 关闭
     {
+        // ★ 纠正2: 点击"结束任务"按钮时触发完结回传（H8）
+        //   唯一触发时机，移除所有自动触发逻辑
+        if (m_pServer)
+        {
+            m_pServer->sendEnd();
+            appendLog("[完结回传] 已触发完结回传（H8）");
+        }
+
         if (m_pServer) m_pServer->stop();
         m_pServer = nullptr;
         m_pClient = nullptr;

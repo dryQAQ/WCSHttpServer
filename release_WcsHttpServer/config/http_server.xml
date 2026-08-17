@@ -54,6 +54,8 @@
     <h7FromLocationSource>volu</h7FromLocationSource>
     <!-- 来源库位默认值（config 模式时使用） -->
     <h7DefaultFromLocation>A-01</h7DefaultFromLocation>
+    <!-- 目标库位默认值（无容器号时兜底） -->
+    <h7DefaultTargetLocation>999</h7DefaultTargetLocation>
     <!-- EPC 任务内防重（true/false） -->
     <sortingEpcDedup>true</sortingEpcDedup>
     <!-- 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） -->

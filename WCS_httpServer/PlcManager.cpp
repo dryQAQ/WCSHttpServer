@@ -394,6 +394,24 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                 vecGrid = { unlocked[0] };
         }
 
+        // ★ 禁用格口过滤（满箱锁格后禁用，WMS重新绑定H6前跳过）
+        {
+            std::vector<int> enabled;
+            for (int g : vecGrid)
+            {
+                if (!isGridDisabled(g))
+                    enabled.push_back(g);
+            }
+            if (enabled.empty())
+            {
+                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 所有格口已禁用 code=%s grids=%s 跳过",
+                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+                failCount++;
+                continue;
+            }
+            vecGrid = enabled;
+        }
+
         // ★ 从回调获取 RFID 小车号，默认 DEFAULT_CAR_NUM
         int car = DEFAULT_CAR_NUM;
         if (m_carNumCb)
@@ -651,6 +669,24 @@ void PlcManager::pollS7LockStatus()
     // 保存本次数据，供下次边沿检测
     memcpy(m_s7PlcLastData, tempData, PLC_S7_LOCK_READ_SIZE);
 
+    // 全量更新 m_s7Grid_200 状态缓存（与 WCSApp 一致）
+    // WCSApp 在边沿检测后，将 DB77 的 200 位完整快照写入 m_s7Grid_200
+    // 确保 m_s7Grid_200 始终反映当前 PLC 锁格状态，而非仅依赖边沿事件
+    {
+        std::unique_lock<std::mutex> lock(m_lockGridPlc);
+        for (int i = 0; i < PLC_S7_LOCK_READ_SIZE; i++)
+        {
+            for (int a = 0; a < 8; a++)
+            {
+                int grid_status = i * 8 + (a);
+                if (grid_status >= PLC_S7_MAX_GRID_COUNT)
+                    break;
+                bool bCurr = S7_GetBitAt(m_s7PlcLastData, i, a);
+                m_s7Grid_200[grid_status] = bCurr;
+            }
+        }
+    }
+
     if (lockCount > 0 || unlockCount > 0)
     {
         PLC_LOG_INFO("S7锁格轮询完成 lock=%d unlock=%d totalLocked=%d",
@@ -715,6 +751,40 @@ int PlcManager::lockedGridCount() const
         if (m_s7Grid_200[i]) count++;
     }
     return count;
+}
+
+// ============================================================================
+// 格口禁用管理（满箱锁格后禁用，WMS重新绑定H6时恢复）
+// ============================================================================
+
+void PlcManager::disableGrid(int grid)
+{
+    if (grid < 0 || grid >= PLC_S7_MAX_GRID_COUNT)
+        return;
+    std::lock_guard<std::mutex> lock(m_lockDisabledGrids);
+    m_disabledGrids.insert(grid);
+    PLC_LOG_INFO("格口已禁用 grid=%d (满箱锁格后禁止分配/落格)", grid);
+}
+
+void PlcManager::enableGrid(int grid)
+{
+    std::lock_guard<std::mutex> lock(m_lockDisabledGrids);
+    if (m_disabledGrids.remove(grid))
+        PLC_LOG_INFO("格口已恢复 grid=%d (WMS重新绑定H6)", grid);
+}
+
+bool PlcManager::isGridDisabled(int grid) const
+{
+    std::lock_guard<std::mutex> lock(m_lockDisabledGrids);
+    return m_disabledGrids.contains(grid);
+}
+
+void PlcManager::enableAllGrids()
+{
+    std::lock_guard<std::mutex> lock(m_lockDisabledGrids);
+    int count = m_disabledGrids.size();
+    m_disabledGrids.clear();
+    PLC_LOG_INFO("全部格口已恢复 count=%d (新波次开始)", count);
 }
 
 // ============================================================================
@@ -853,83 +923,125 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
         int partCount = parts.size();
 
         // ═══════════════════════════════════════════════════════════════
-        // ★ TCP 锁格/解锁消息: {grid|L} 或 {grid|U}  (2字段, 第二位为L或U)
-        //   PLC主动发送锁格/解锁消息，与WCSApp一致
-        //   {222|L} → 格口222锁定，{222|U} → 格口222解锁
+        // TCP 锁格/解锁消息: {grid|L} 或 {grid|U} — 已移除，与WCSApp保持一致
+        // WCSApp退货窄带场景仅使用 S7 DB77 轮询检测锁格，不处理TCP锁格消息
         // ═══════════════════════════════════════════════════════════════
-        if (partCount == 2)
+        // if (partCount == 2)
+        // {
+        //     QString field0 = parts[0].trimmed();
+        //     QString field1 = parts[1].trimmed().toUpper();
+        //
+        //     if (field1 == "L" || field1 == "U")
+        //     {
+        //         bool isLock = (field1 == "L");
+        //         bool ok = false;
+        //         int gridNum = field0.toInt(&ok);
+        //
+        //         if (ok && gridNum >= 0 && gridNum < PLC_S7_MAX_GRID_COUNT)
+        //         {
+        //             if (isLock)
+        //             {
+        //                 PLC_LOG_WARN("TCP锁格消息: grid=%d lock", gridNum);
+        //                 {
+        //                     std::unique_lock<std::mutex> lock(m_lockGridPlc);
+        //                     m_s7Grid_200[gridNum] = true;
+        //                 }
+        //                 QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
+        //                 LockGridInfo info;
+        //                 info.gridNum = s_grid;
+        //                 info.type = 0;
+        //                 {
+        //                     std::unique_lock<std::mutex> lock(m_lockGrid);
+        //                     m_queueLockInfo.push(info);
+        //                 }
+        //                 emit gridLockedByPlc(s_grid);
+        //                 emit gridLocked(s_grid);
+        //             }
+        //             else
+        //             {
+        //                 PLC_LOG_WARN("TCP解锁消息: grid=%d unlock", gridNum);
+        //                 {
+        //                     std::unique_lock<std::mutex> lock(m_lockGridPlc);
+        //                     m_s7Grid_200[gridNum] = false;
+        //                 }
+        //                 QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
+        //                 LockGridInfo info;
+        //                 info.gridNum = s_grid;
+        //                 info.type = 1;
+        //                 {
+        //                     std::unique_lock<std::mutex> lock(m_lockGrid);
+        //                     m_queueLockInfo.push(info);
+        //                 }
+        //                 emit gridUnlockedByPlc(s_grid);
+        //                 emit gridUnlocked(s_grid);
+        //             }
+        //             continue;
+        //         }
+        //         else
+        //         {
+        //             PLC_LOG_WARN("TCP锁格消息格式异常: grid=%s type=%s", field0.toLocal8Bit().data(), field1.toLocal8Bit().data());
+        //             continue;
+        //         }
+        //     }
+        // }
+
+        // ═══════════════════════════════════════════════════════════════
+        // 反馈报文解析（精确匹配字段数，避免格式覆盖）
+        //   5字段: {epc|grid|firstCar|lastCar|status}  — 含首车/尾车/分拣状态
+        //   3字段: {barcode|grid|car}                  — PLC反馈落格确认
+        // ═══════════════════════════════════════════════════════════
+        if (parts.size() == 5)
         {
-            QString field0 = parts[0].trimmed();
-            QString field1 = parts[1].trimmed().toUpper();
+            // ★ 5字段格式: {epc|grid|firstCar|lastCar|status}
+            QString code     = parts[0].trimmed();
+            QString grid     = parts[1].trimmed();
+            QString firstCar = parts[2].trimmed();
+            QString lastCar  = parts[3].trimmed();
+            QString car      = firstCar;  // car 取首车，兼容旧代码
+            int     status   = parts[4].trimmed().toInt();
 
-            if (field1 == "L" || field1 == "U")
+            // 更新最近接收数据
             {
-                bool isLock = (field1 == "L");
-                bool ok = false;
-                int gridNum = field0.toInt(&ok);
+                std::lock_guard<std::mutex> lock(m_lastDataMutex);
+                m_lastRecvCode     = code;
+                m_lastRecvGrid     = grid;
+                m_lastRecvCar      = car;
+                m_lastRecvFirstCar = firstCar;
+                m_lastRecvLastCar  = lastCar;
+                m_lastRecvStatus   = status;
+            }
 
-                if (ok && gridNum >= 0 && gridNum < PLC_S7_MAX_GRID_COUNT)
+            PLC_LOG_INFO("PLC反馈(5字段) code=%s grid=%s firstCar=%s lastCar=%s status=%d",
+                code.toLocal8Bit().data(), grid.toLocal8Bit().data(),
+                firstCar.toLocal8Bit().data(), lastCar.toLocal8Bit().data(), status);
+
+            // 记录生命周期
+            LIFE_STAGE_PLC_FEEDBACK(code, grid);
+
+            // ★ 回调（保持兼容）
+            if (m_feedbackCb)
+                m_feedbackCb(code, grid, car);
+
+            // ★ 添加到批量缓冲区（100ms 定时刷新）
+            {
+                std::lock_guard<std::mutex> lock(m_feedbackBatchMutex);
+                if (m_feedbackBatchBuffer.size() < PLC_FEEDBACK_BATCH_MAX_SIZE)
                 {
-                    if (isLock)
-                    {
-                        PLC_LOG_WARN("TCP锁格消息: grid=%d lock", gridNum);
-
-                        // 更新锁格状态缓存
-                        {
-                            std::unique_lock<std::mutex> lock(m_lockGridPlc);
-                            m_s7Grid_200[gridNum] = true;
-                        }
-
-                        QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
-                        LockGridInfo info;
-                        info.gridNum = s_grid;
-                        info.type = 0;  // 锁格
-                        {
-                            std::unique_lock<std::mutex> lock(m_lockGrid);
-                            m_queueLockInfo.push(info);
-                        }
-
-                        emit gridLockedByPlc(s_grid);
-                        emit gridLocked(s_grid);  // 兼容旧信号
-                    }
-                    else
-                    {
-                        PLC_LOG_WARN("TCP解锁消息: grid=%d unlock", gridNum);
-
-                        // 更新锁格状态缓存
-                        {
-                            std::unique_lock<std::mutex> lock(m_lockGridPlc);
-                            m_s7Grid_200[gridNum] = false;
-                        }
-
-                        QString s_grid = QString("%1").arg(gridNum, 3, 10, QChar('0'));
-                        LockGridInfo info;
-                        info.gridNum = s_grid;
-                        info.type = 1;  // 解锁
-                        {
-                            std::unique_lock<std::mutex> lock(m_lockGrid);
-                            m_queueLockInfo.push(info);
-                        }
-
-                        emit gridUnlockedByPlc(s_grid);
-                        emit gridUnlocked(s_grid);  // 兼容旧信号
-                    }
-                    continue;
-                }
-                else
-                {
-                    PLC_LOG_WARN("TCP锁格消息格式异常: grid=%s type=%s", field0.toLocal8Bit().data(), field1.toLocal8Bit().data());
-                    continue;
+                    PlcFeedbackEntry entry;
+                    entry.code        = code;
+                    entry.grid        = grid;
+                    entry.car         = car;
+                    entry.firstCar    = firstCar;
+                    entry.lastCar     = lastCar;
+                    entry.status      = status;
+                    entry.timestampMs = QDateTime::currentMSecsSinceEpoch();
+                    m_feedbackBatchBuffer.append(entry);
                 }
             }
         }
-
-        // ═══════════════════════════════════════════════════════════════
-        // 反馈报文: {barcode|grid|car} (3字段)  — PLC反馈落格确认
-        // 与WCSApp一致：WCS主动发送PLC指令，不等待PLC查询，2字段消息仅处理锁格/解锁
-        // ═══════════════════════════════════════════════════════════════
-        if (parts.size() >= 3)
+        else if (parts.size() == 3)
         {
+            // ★ 3字段格式: {barcode|grid|car}（现有逻辑不变）
             QString code = parts[0].trimmed();
             QString grid = parts[1].trimmed();
             QString car  = parts[2].trimmed();
@@ -937,9 +1049,12 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
             // 更新最近接收数据
             {
                 std::lock_guard<std::mutex> lock(m_lastDataMutex);
-                m_lastRecvCode = code;
-                m_lastRecvGrid = grid;
-                m_lastRecvCar  = car;
+                m_lastRecvCode     = code;
+                m_lastRecvGrid     = grid;
+                m_lastRecvCar      = car;
+                m_lastRecvFirstCar = car;   // 3字段时首车=car
+                m_lastRecvLastCar  = "";    // 3字段时无尾车
+                m_lastRecvStatus   = 0;     // 3字段时无状态
             }
 
             // 记录生命周期
@@ -955,9 +1070,12 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
                 if (m_feedbackBatchBuffer.size() < PLC_FEEDBACK_BATCH_MAX_SIZE)
                 {
                     PlcFeedbackEntry entry;
-                    entry.code       = code;
-                    entry.grid       = grid;
-                    entry.car        = car;
+                    entry.code        = code;
+                    entry.grid        = grid;
+                    entry.car         = car;
+                    entry.firstCar    = car;   // 3字段时首车=car
+                    entry.lastCar     = "";    // 3字段时无尾车
+                    entry.status      = 0;     // 3字段时无状态
                     entry.timestampMs = QDateTime::currentMSecsSinceEpoch();
                     m_feedbackBatchBuffer.append(entry);
                 }
@@ -965,7 +1083,8 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
         }
         else
         {
-            PLC_LOG_WARN("PLC反馈格式异常: {%s}", content.toLocal8Bit().data());
+            PLC_LOG_WARN("PLC反馈格式异常: {%s} fieldCount=%d rawData=%s",
+                content.toLocal8Bit().data(), partCount, qdata.toLocal8Bit().data());
         }
     }
 }
