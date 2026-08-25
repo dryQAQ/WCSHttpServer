@@ -8,7 +8,9 @@ WaveManager::WaveManager(GridBuffer* pBuffer, QObject* parent)
 
 void WaveManager::setWaveData(const QString& orderCode, int orderQty, int skuCount)
 {
-    if (m_waveStatus != WAVE_IDLE && m_waveStatus != WAVE_FINISHED && m_waveStatus != WAVE_CANCELLED)
+    // ★ 已完成（FINISHED）和空闲（IDLE）都允许新波次下发
+    //   FINISHED 需先清理旧数据→IDLE，再→CREATED
+    if (m_waveStatus != WAVE_IDLE && m_waveStatus != WAVE_CANCELLED)
     {
         WCS_INFO("[WaveMgr] 覆盖旧波次 old=%s status=%d",
             m_orderCode.toLocal8Bit().data(), m_waveStatus.load());
@@ -56,13 +58,16 @@ void WaveManager::markSorted(const QString& code)
         m_setCodeProcessing.remove(code);
         m_mapCodeRetry.remove(code);
 
-        if (!m_bSortingStarted && !m_orderCode.isEmpty())
-        {
-            m_bSortingStarted = true;
-            WCS_INFO("[WaveMgr] 波次分拣开始 orderCode=%s", m_orderCode.toLocal8Bit().data());
-            emit waveSortingStarted(m_orderCode);
-            setState(WAVE_SORTING);
-        }
+        // ★ 已移除自动开工逻辑（原首件落格自动 BOUND→SORTING）
+        //   状态转换仅通过 MainWindow 手动点击「开始分拣」按钮触发 startSorting()
+        //   避免未点击按钮时状态自动推进到 SORTING 导致后续步骤被意外触发
+        // if (!m_bSortingStarted && !m_orderCode.isEmpty())
+        // {
+        //     m_bSortingStarted = true;
+        //     WCS_INFO("[WaveMgr] 波次分拣开始 orderCode=%s", m_orderCode.toLocal8Bit().data());
+        //     emit waveSortingStarted(m_orderCode);
+        //     setState(WAVE_SORTING);
+        // }
 
         complete = checkWaveCompleteLocked();
         if (complete)
@@ -79,8 +84,9 @@ void WaveManager::markSorted(const QString& code)
         WCS_INFO("[WaveMgr] 波次完成 orderCode=%s sorted=%d exception=%d total=%d",
             m_orderCode.toLocal8Bit().data(),
             m_setCodeSorted.size(), m_setCodeException.size(), m_setCodeRecv.size());
+        // ★ 锁格回传（H7）：仅发送状态报告，不改变波次状态
+        //   状态迁移（→ENDING）仅由用户点击"结束任务"触发 completeToEnding()
         emit waveReadyToReport(m_orderCode);
-        setState(WAVE_ENDING);
     }
 }
 
@@ -124,8 +130,8 @@ void WaveManager::markException(const QString& code)
         WCS_INFO("[WaveMgr] 波次完成(异常) orderCode=%s sorted=%d exception=%d total=%d",
             m_orderCode.toLocal8Bit().data(),
             m_setCodeSorted.size(), m_setCodeException.size(), m_setCodeRecv.size());
+        // ★ 锁格回传（H7）：仅发送状态报告，不改变波次状态
         emit waveReadyToReport(m_orderCode);
-        setState(WAVE_ENDING);
     }
 }
 
@@ -161,7 +167,9 @@ bool WaveManager::isWaveComplete() const
 
 bool WaveManager::checkWaveCompleteLocked() const
 {
-    int total = m_setCodeRecv.size();
+    // ★ 使用 m_orderQty（总件数）而非 m_setCodeRecv.size()（去重后的SKU数）
+    //    因为同一个SKU下可能存在多个EPC（如一箱5件同款），SKU数量 ≠ 实际分拣件数
+    int total = m_orderQty;
     int done  = m_setCodeSorted.size() + m_setCodeException.size();
     if (total > 0 && done >= total)
         return true;
@@ -201,7 +209,7 @@ WaveSnapshot WaveManager::snapshot() const
         std::unique_lock<std::mutex> lock(m_lock);
         snap.sortedCount    = m_setCodeSorted.size();
         snap.exceptionCount = m_setCodeException.size();
-        snap.totalRecv      = m_setCodeRecv.size();
+        snap.totalRecv      = m_orderQty;  // ★ 总件数，非去重SKU数
     }
 
     snap.elapsedSec = m_waveStartTime.secsTo(QDateTime::currentDateTime());
@@ -220,20 +228,20 @@ bool WaveManager::setState(int newStatus)
         allowed = (newStatus == WAVE_CREATED);
         break;
     case WAVE_CREATED:
-        // 已下发 → 已绑定（容器绑定成功）| 已取消（波次取消成功）| 异常挂起
-        allowed = (newStatus == WAVE_BOUND || newStatus == WAVE_CANCELLED || newStatus == WAVE_HELD);
+        // 已下发 → 已绑定（容器绑定成功）| 完结中（手动结束任务）| 已取消（波次取消成功）| 异常挂起
+        allowed = (newStatus == WAVE_BOUND || newStatus == WAVE_ENDING || newStatus == WAVE_CANCELLED || newStatus == WAVE_HELD);
         break;
     case WAVE_BOUND:
-        // 已绑定 → 分拣中（开工）| 已取消（波次取消且未分拣）| 异常挂起
-        allowed = (newStatus == WAVE_SORTING || newStatus == WAVE_CANCELLED || newStatus == WAVE_HELD);
+        // 已绑定 → 分拣中（开工）| 完结中（手动结束任务）| 已取消（波次取消且未分拣）| 异常挂起
+        allowed = (newStatus == WAVE_SORTING || newStatus == WAVE_ENDING || newStatus == WAVE_CANCELLED || newStatus == WAVE_HELD);
         break;
     case WAVE_SORTING:
         // 分拣中 → 满箱同步中（满箱触发）| 完结中（满足完结条件）| 异常挂起
         allowed = (newStatus == WAVE_FULLBOX_SYNC || newStatus == WAVE_ENDING || newStatus == WAVE_HELD);
         break;
     case WAVE_FULLBOX_SYNC:
-        // 满箱同步中 → 分拣中（满箱回传成功 + 新容器绑定）| 异常挂起（满箱回传失败耗尽）
-        allowed = (newStatus == WAVE_SORTING || newStatus == WAVE_HELD);
+        // 满箱同步中 → 分拣中（满箱回传成功 + 新容器绑定）| 完结中（手动结束任务）| 异常挂起（满箱回传失败耗尽）
+        allowed = (newStatus == WAVE_SORTING || newStatus == WAVE_ENDING || newStatus == WAVE_HELD);
         break;
     case WAVE_CANCEL_PENDING:
         // 取消处理中 → 已取消（判定成功）| 保持原状态（判定失败，拒绝取消）
@@ -244,7 +252,7 @@ bool WaveManager::setState(int newStatus)
         allowed = (newStatus == WAVE_IDLE);
         break;
     case WAVE_ENDING:
-        // 完结中 → 已完成（完结回传成功）| 异常挂起（完结回传失败耗尽）
+        // 完结中 → 已完成（回传成功）| 异常挂起（完结回传失败耗尽）
         allowed = (newStatus == WAVE_FINISHED || newStatus == WAVE_HELD);
         break;
     case WAVE_FINISHED:
@@ -309,7 +317,7 @@ bool WaveManager::startSorting()
 int WaveManager::totalRecv() const
 {
     std::unique_lock<std::mutex> lock(m_lock);
-    return m_setCodeRecv.size();
+    return m_orderQty;  // ★ 总件数，非去重SKU数（同一SKU可能有多个EPC）
 }
 
 int WaveManager::sorted() const
@@ -327,6 +335,15 @@ int WaveManager::exception() const
 int WaveManager::sumLocation() const
 {
     return m_pBuffer->uniqueValueCount();
+}
+
+QSet<QString> WaveManager::getUnsortedCodes() const
+{
+    std::unique_lock<std::mutex> lock(m_lock);
+    QSet<QString> unsorted = m_setCodeRecv;
+    unsorted.subtract(m_setCodeSorted);
+    unsorted.subtract(m_setCodeException);
+    return unsorted;
 }
 
 void WaveManager::clearWave()
@@ -446,49 +463,31 @@ bool WaveManager::holdAfterFullboxFail()
 
 // ============================================================================
 // canComplete — 可完结条件检查（T-S6-01）
-// 需求 §11.5：须同时满足所有条件方可完结
-//   1. 任务处于 SORTING
-//   2. 计划完成：Σ sortedQty 达到计划（或剩余件全部进入已结案异常）
-//   3. 所有已产生满箱的满箱回传（H7）全部成功（当前无 FULLBOX_SYNC 状态）
-//   4. 无进行中的波次取消（H5）（当前无 CANCEL_PENDING 状态）
-//   5. 无 FULLBOX_SYNC/未完成出站
+// ★ 纠正：不受状态影响，只要不是异常（CANCELLED）或挂起（HELD），点击「结束任务」即可触发完结
+//   不再要求状态=SORTING，也不再要求计划完成（sorted+exception >= total）
+//   完成后状态重新变为空闲（IDLE），可接收新波次
 // ============================================================================
 bool WaveManager::canComplete() const
 {
-    // 条件1：任务处于 SORTING
     int status = m_waveStatus.load();
-    if (status != WAVE_SORTING)
+
+    // 仅拦截异常状态：已取消（CANCELLED）或异常挂起（HELD）
+    if (status == WAVE_CANCELLED || status == WAVE_HELD)
     {
-        WCS_WARN("[WaveMgr] 完结条件不满足 当前状态非SORTING status=%d(%s)",
+        WCS_WARN("[WaveMgr] 完结条件不满足 波次状态异常 status=%d(%s)",
             status, WaveSnapshot::statusToString(status).toLocal8Bit().data());
         return false;
     }
 
-    // 条件2：计划完成（sorted + exception >= total）
-    std::unique_lock<std::mutex> lock(m_lock);
-    int total = m_setCodeRecv.size();
-    int done  = m_setCodeSorted.size() + m_setCodeException.size();
-    lock.unlock();
-
-    if (total == 0 || done < total)
-    {
-        WCS_WARN("[WaveMgr] 完结条件不满足 计划未完成 total=%d done=%d(sorted=%d exc=%d)",
-            total, done, sorted(), exception());
-        return false;
-    }
-
-    // 条件3/4/5：状态检查已覆盖（仅 SORTING 允许，FULLBOX_SYNC/CANCEL_PENDING 已在条件1排除）
-    // 条件3：无进行中的满箱同步（FULLBOX_SYNC 状态下条件1已拒绝）
-    // 条件4：无进行中的取消（CANCEL_PENDING 状态下条件1已拒绝）
-
-    WCS_INFO("[WaveMgr] 完结条件满足 orderCode=%s total=%d done=%d",
-        m_orderCode.toLocal8Bit().data(), total, done);
+    WCS_INFO("[WaveMgr] 完结条件满足 orderCode=%s status=%d(%s) 手动触发完结",
+        m_orderCode.toLocal8Bit().data(), status, WaveSnapshot::statusToString(status).toLocal8Bit().data());
     return true;
 }
 
 // ============================================================================
-// completeToEnding — 手动触发完结（T-S6-01/04）
-// 校验 canComplete() 后，原子迁移 SORTING→ENDING
+// completeToEnding — 手动触发完结
+// 校验 canComplete()（仅拦截 CANCELLED/HELD）后，迁移当前状态→ENDING
+// ★ 不受状态影响，完成后 WMS 回传成功 → IDLE（空闲）
 // ============================================================================
 bool WaveManager::completeToEnding()
 {
@@ -497,18 +496,31 @@ bool WaveManager::completeToEnding()
         return false;
     }
 
+    // 如果状态已经是 ENDING（如 markSorted 自动触发），幂等返回
+    if (m_waveStatus.load() == WAVE_ENDING)
+    {
+        WCS_INFO("[WaveMgr] 手动触发完结 状态已是ENDING（幂等） orderCode=%s",
+            m_orderCode.toLocal8Bit().data());
+        return true;
+    }
+
+    int oldStatus = m_waveStatus.load();
     if (!setState(WAVE_ENDING))
     {
+        WCS_WARN("[WaveMgr] 手动触发完结 状态迁移失败 current=%d(%s) orderCode=%s",
+            oldStatus, WaveSnapshot::statusToString(oldStatus).toLocal8Bit().data(),
+            m_orderCode.toLocal8Bit().data());
         return false;
     }
 
-    WCS_INFO("[WaveMgr] 手动触发完结 SORTING→ENDING orderCode=%s",
+    WCS_INFO("[WaveMgr] 手动触发完结 %s→ENDING orderCode=%s",
+        WaveSnapshot::statusToString(oldStatus).toLocal8Bit().data(),
         m_orderCode.toLocal8Bit().data());
     return true;
 }
 
 // ============================================================================
-// reconcile — 波次对账（T-S8-01/02，需求 §14.2）
+// reconcile — 波次对账
 // 核对：计划数/实分数/异常数/满箱回传累计/完结回传状态
 // 返回 WaveReconciliation 结构，调用方根据 hasDiff() 判断是否需告警
 // ============================================================================
@@ -528,7 +540,7 @@ WaveReconciliation WaveManager::reconcile() const
         std::unique_lock<std::mutex> lock(m_lock);
         r.sortedQty    = m_setCodeSorted.size();
         r.exceptionQty = m_setCodeException.size();
-        r.totalRecv    = m_setCodeRecv.size();
+        r.totalRecv    = m_orderQty;  // ★ 总件数，非去重SKU数
 
         WCS_INFO("[WaveMgr] 对账 内存计数 sorted=%d exception=%d totalRecv=%d",
             r.sortedQty, r.exceptionQty, r.totalRecv);

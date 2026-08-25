@@ -40,7 +40,8 @@ public:
 
     // 写入EPC编码+格口信息到 DB1 (与 WCSApp 完全兼容)
     // 数据格式: DB1 Offset 1000, 42 bytes
-    bool writeCodeInfo(const QByteArray& sSend, const std::vector<int>& vecGrid);
+    // ★ 已注释：与PLC交互仅保留 TCP消息发送+接收反馈 和 锁格检测(S7 DB77读取)
+    // bool writeCodeInfo(const QByteArray& sSend, const std::vector<int>& vecGrid);
 
     // 获取最后一次错误信息
     int lastError() const;

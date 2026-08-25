@@ -187,6 +187,7 @@ public:
     int     exception() const;
     int     sumLocation() const;                // 去重格口总数（供WMS回传的sumLocation字段）
     int     orderQty() const { return m_orderQty; }  // ★ S8 波次总件数（对账用，T-S8-01）
+    QSet<QString> getUnsortedCodes() const;          // 获取未分拣的EPC列表（received - sorted - exception）
 
     // ──── S8 新增：对账 + H5互斥（T-S8-01/02/06）────
     WaveReconciliation reconcile() const;            // 波次对账：计划/实分/异常/完结状态

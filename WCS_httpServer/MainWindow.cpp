@@ -26,13 +26,11 @@ MainWindow::MainWindow(QWidget* parent)
     resize(960, 1100);
     setMinimumSize(860, 950);
 
-    // ★ UI 查询数据库独立打开，不受服务启停影响
+    // ★ UI 查询数据库（单例，与服务共享同一实例）
     {
+        m_pQueryDb = &SortingDatabase::instance();
         QString dbPath = QCoreApplication::applicationDirPath() + "/" + SORTING_DB_FILE;
-        if (m_queryDb.open(dbPath))
-        {
-            // 静默成功，不刷日志
-        }
+        m_pQueryDb->open(dbPath);  // 若已打开则跳过
     }
 
     setupUI();
@@ -392,11 +390,27 @@ void MainWindow::setupUI()
 
     // ── 查询条件行 ──
     QHBoxLayout* queryCondRow = new QHBoxLayout();
-    queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "EPC编码:")));
+
+    // ★ 查询模式下拉框
+    queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "查询模式:")));
+    m_cmbQueryMode = new QComboBox();
+    m_cmbQueryMode->addItem(QCoreApplication::translate("MainWindow", "按EPC查询"));
+    m_cmbQueryMode->addItem(QCoreApplication::translate("MainWindow", "按SKU查询格口"));
+    m_cmbQueryMode->setMinimumWidth(140);
+    queryCondRow->addWidget(m_cmbQueryMode);
+
+    // ★ EPC编码输入（默认显示）
     m_editQueryBarcode = new QLineEdit();
     m_editQueryBarcode->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入EPC编码查询（留空查全部）"));
     m_editQueryBarcode->setMinimumWidth(180);
     queryCondRow->addWidget(m_editQueryBarcode);
+
+    // ★ SKU编码输入（默认隐藏，按SKU查询时显示）
+    m_editQuerySku = new QLineEdit();
+    m_editQuerySku->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入SKU编码查询格口分配"));
+    m_editQuerySku->setMinimumWidth(180);
+    m_editQuerySku->setVisible(false);
+    queryCondRow->addWidget(m_editQuerySku);
 
     queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "日期:")));
     m_editQueryDateFrom = new QDateEdit(QDate::currentDate().addDays(-7));
@@ -435,13 +449,14 @@ void MainWindow::setupUI()
 
     // ── 结果表格 ──
     m_tblRecords = new QTableWidget();
-    m_tblRecords->setColumnCount(9);
+    m_tblRecords->setColumnCount(10);
     m_tblRecords->setHorizontalHeaderLabels({
         QCoreApplication::translate("MainWindow", "序号"),
         QCoreApplication::translate("MainWindow", "波次号"),
         QCoreApplication::translate("MainWindow", "EPC编码"),
+        QCoreApplication::translate("MainWindow", "SKU编码"),
         QCoreApplication::translate("MainWindow", "格口号"),
-        QCoreApplication::translate("MainWindow", "小车号"),
+        QCoreApplication::translate("MainWindow", "小车号(首车/尾车)"),
         QCoreApplication::translate("MainWindow", "件数"),
         QCoreApplication::translate("MainWindow", "库位"),
         QCoreApplication::translate("MainWindow", "分拣时间"),
@@ -473,6 +488,14 @@ void MainWindow::setupUI()
     });
     // 回车触发查询
     connect(m_editQueryBarcode, &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
+    connect(m_editQuerySku,     &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
+
+    // ★ 查询模式切换：显示/隐藏对应输入框
+    connect(m_cmbQueryMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        bool isSkuMode = (index == 1);
+        m_editQueryBarcode->setVisible(!isSkuMode);
+        m_editQuerySku->setVisible(isSkuMode);
+    });
 
     // ═══════════════════════════════════════════
     // 日志区
@@ -556,23 +579,31 @@ void MainWindow::onStartStop()
         //   唯一触发时机，移除所有自动触发逻辑
         if (m_pServer)
         {
-            m_pServer->sendEnd();
             appendLog("[完结回传] 已触发完结回传（H8）");
+            m_pServer->sendEnd();
         }
 
-        if (m_pServer) m_pServer->stop();
-        m_pServer = nullptr;
-        m_pClient = nullptr;
-        m_pPlcMgr = nullptr;
-        m_bRunning = false; //状态切换
-
-        m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始启动"));
+        // ★ 不立即停止服务，等待 H8 完结回传结果返回
+        //   实际停止由 endReportFinished 信号触发 doActualStop()
+        m_bRunning = false;
+        m_btnStartStop->setEnabled(false);  // 禁用按钮防止重复点击
+        m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "停止中..."));
         m_btnStartStop->setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
-            "border-radius: 4px; padding: 6px 16px; }"
-            "QPushButton:hover { background-color: #45a049; }");
-        m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 已停止"));
-        m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
+            "QPushButton { background-color: #FF9800; color: white; font-size: 14px; font-weight: bold; "
+            "border-radius: 4px; padding: 6px 16px; }");
+        m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 停止中"));
+        m_lblServerStatus->setStyleSheet("font-size: 14px; color: #FF9800;");
+
+        // ★ 安全网：30秒超时后强制停止，防止按钮永久卡死
+        if (!m_stopTimeoutTimer) {
+            m_stopTimeoutTimer = new QTimer(this);
+            m_stopTimeoutTimer->setSingleShot(true);
+            connect(m_stopTimeoutTimer, &QTimer::timeout, this, [this]() {
+                appendLog("[完结回传] 超时未完成，强制停止服务", true);
+                doActualStop();
+            });
+        }
+        m_stopTimeoutTimer->start(30000);  // 30秒超时
         // 重置TCP状态
         m_lblTcpStatus->setText(QCoreApplication::translate("MainWindow", "TCP: 未连接"));
         m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
@@ -621,7 +652,7 @@ void MainWindow::onStartStop()
         m_btnStartSorting->setEnabled(false);
         m_bindingDirty = false;
 
-        appendLog("服务已手动停止");
+        appendLog("服务正在停止，等待完结回传结果...");
     }
     else    //状态：关闭 --> 开启
     {
@@ -742,7 +773,7 @@ void MainWindow::onStartStop()
                         return;
                     }
 
-                    // ★ S5: 锁格回传（context 以 "lockGrid_" 开头）
+                    // ★锁格回传（context 以 "lockGrid_" 开头）
                     if (orderCode.startsWith("lockGrid_"))
                     {
                         appendLog(QString("[锁格] 回传结果 grid=%1 success=%2")
@@ -750,7 +781,7 @@ void MainWindow::onStartStop()
                         return;
                     }
 
-                    // ★ S6: 完结回传 Outbox（H8，context 以 "end_" 开头）
+                    // ★完结回传 Outbox（H8，context 以 "end_" 开头）
                     if (orderCode.startsWith("end_"))
                     {
                         QString msgId = orderCode.mid(4); // 去掉 "end_" 前缀
@@ -758,23 +789,24 @@ void MainWindow::onStartStop()
                         {
                             m_pServer->onEndReplyFinished(msgId, success, body);
                         }
-                        appendLog(QString("[完结回传] 回传结果 msgId=%1 success=%2")
-                            .arg(msgId).arg(success));
+                        appendLog(QString("[完结回传] 回传结果 success=%1")
+                            .arg(success));
                         return;
                     }
 
-                    // ★ 完结回传（H8 波次完结通知WMS，原有逻辑）
+                    // ★ 波次完成回传（H7 锁格回传，原有逻辑）— 仅记录结果，不改变波次状态
+                    //   状态迁移仅由完结回传（H8，以 "end_" 为前缀）处理
                     WaveManager* wm = m_pServer ? m_pServer->waveManager() : nullptr;
                     if (!wm) return;
                     if (success)
                     {
-                        appendLog(QString("回传成功 orderCode=%1").arg(orderCode));
-                        wm->setState(WAVE_CLEANED);
+                        appendLog(QString("波次完成回传成功 orderCode=%1").arg(orderCode));
+                        // ★ 锁格回传（H7）成功不改变波次状态，状态由完结回传（H8）管理
                     }
                     else
                     {
-                        appendLog(QString("回传失败 orderCode=%1（仍可手动重试）").arg(orderCode), true);
-                        wm->setState(WAVE_ERROR);
+                        appendLog(QString("波次完成回传失败 orderCode=%1（仍可手动重试）").arg(orderCode), true);
+                        // ★ 锁格回传（H7）失败不改变波次状态，状态由完结回传（H8）管理
                     }
                 });
 
@@ -794,7 +826,7 @@ void MainWindow::onStartStop()
                 [this](const QJsonObject& payload, const QString& msgId) {
                     if (!m_pClient) return;
                     QString orderCode = payload["head"].toObject()["orderCode"].toString();
-                    appendLog(QString("[满箱回传] 发送回传 msgId=%1 order=%2").arg(msgId).arg(orderCode));
+                    appendLog(QString("[满箱回传] 发送回传 order=%1").arg(orderCode));
                     m_pClient->sendGenericFeedback(payload, "fullbox_" + msgId);
                 });
 
@@ -804,9 +836,15 @@ void MainWindow::onStartStop()
                 [this](const QJsonObject& payload, const QString& msgId) {
                     if (!m_pClient) return;
                     QString orderCode = payload["head"].toObject()["orderCode"].toString();
-                    appendLog(QString("[完结回传] 发送回传 msgId=%1 order=%2").arg(msgId).arg(orderCode));
+                    appendLog(QString("[完结回传] 发送回传 order=%1").arg(orderCode));
                     m_pClient->sendEndFeedback(payload, "end_" + msgId);  // ★ H8 使用专用完结回传 URL
                 });
+
+            // ★ H8完结回传处理完毕 → 执行实际的服务停止
+            connect(m_pServer, &HttpServer::endReportFinished, this, [this]() {
+                appendLog("[完结回传] 回传流程结束，正在停止服务...");
+                doActualStop();
+            });
 
             // ★ 连接HttpServer日志信号到UI日志区
             connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
@@ -1064,13 +1102,13 @@ void MainWindow::updatePlcPanel()
         }
     }
 
-    // S7 收发统计
-    m_lblS7Send->setText(QString("S7发送: %1").arg(s.s7SendCount));
-    m_lblS7SendErr->setText(QString("S7失败: %1").arg(s.s7SendErrCount));
-    if (s.s7SendErrCount > 0)
-        m_lblS7SendErr->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
-    else
-        m_lblS7SendErr->setStyleSheet("font-size: 13px; color: #888;");
+    // ★ 已注释：S7 DB1写入已移除，不再显示S7发送统计
+    // m_lblS7Send->setText(QString("S7发送: %1").arg(s.s7SendCount));
+    // m_lblS7SendErr->setText(QString("S7失败: %1").arg(s.s7SendErrCount));
+    // if (s.s7SendErrCount > 0)
+    //     m_lblS7SendErr->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
+    // else
+    //     m_lblS7SendErr->setStyleSheet("font-size: 13px; color: #888;");
 
     // 锁格状态
     if (s.lockedGridCount > 0)
@@ -1132,6 +1170,28 @@ void MainWindow::updatePlcPanel()
     }
 }
 
+// ★ 实际执行服务停止（由 H8 完结回传完成后调用）
+void MainWindow::doActualStop()
+{
+    // ★ 停止超时安全网（正常流程已完成）
+    if (m_stopTimeoutTimer) m_stopTimeoutTimer->stop();
+
+    if (m_pServer) m_pServer->stop();
+    m_pServer = nullptr;
+    m_pClient = nullptr;
+    m_pPlcMgr = nullptr;
+
+    m_btnStartStop->setEnabled(true);
+    m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始启动"));
+    m_btnStartStop->setStyleSheet(
+        "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #45a049; }");
+    m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 已停止"));
+    m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
+
+    appendLog("服务已停止");
+}
 
 
 // ============================================================================
@@ -1286,12 +1346,12 @@ void MainWindow::flushLogBuffer()
 }
 
 // ============================================================================
-// ★ onQueryRecords — 分拣记录查询
+// ★ onQueryRecords — 分拣记录查询（按EPC / 按SKU查格口）
 // ============================================================================
 
 void MainWindow::onQueryRecords()
 {
-    SortingDatabase* db = &m_queryDb;
+    SortingDatabase* db = m_pQueryDb;
     if (!db->isOpen())
     {
         // ★ 重试打开（构造函数执行时 data 目录可能尚未创建，首次查询时补开）
@@ -1302,6 +1362,114 @@ void MainWindow::onQueryRecords()
             return;
         }
     }
+
+    int queryMode = m_cmbQueryMode->currentIndex();  // 0=按EPC查询, 1=按SKU查询格口
+
+    if (queryMode == 1)
+    {
+        // ★ 按 SKU 查询格口分配
+        QString sku = m_editQuerySku->text().trimmed();
+        if (sku.isEmpty())
+        {
+            appendLog("[查询] 请输入 SKU 编码", true);
+            return;
+        }
+
+        QVector<ReturnWaveItemRecord> items = db->querySkuGridMapping(sku);
+
+        // ★ 切换表格列头为 SKU 格口分配模式
+        m_tblRecords->setColumnCount(9);
+        m_tblRecords->setHorizontalHeaderLabels({
+            QString::fromUtf8("序号"),
+            QString::fromUtf8("波次号"),
+            QString::fromUtf8("SKU编码"),
+            QString::fromUtf8("格口号"),
+            QString::fromUtf8("格口类型"),
+            QString::fromUtf8("计划数量"),
+            QString::fromUtf8("已分拣数量"),
+            QString::fromUtf8("库位"),
+            QString::fromUtf8("容器号")
+        });
+
+        m_tblRecords->setRowCount(0);
+        m_tblRecords->setRowCount(items.size());
+
+        for (int i = 0; i < items.size(); ++i)
+        {
+            const ReturnWaveItemRecord& item = items[i];
+
+            auto* item0 = new QTableWidgetItem(QString::number(i + 1));
+            item0->setTextAlignment(Qt::AlignCenter);
+            m_tblRecords->setItem(i, 0, item0);
+
+            m_tblRecords->setItem(i, 1, new QTableWidgetItem(item.orderCode));
+            m_tblRecords->setItem(i, 2, new QTableWidgetItem(item.inco));
+            m_tblRecords->setItem(i, 3, new QTableWidgetItem(item.gridNum));
+
+            // 格口类型：分类/异常/发货
+            QString gridTypeText;
+            if (item.gridType == "0")      gridTypeText = QString::fromUtf8("分类");
+            else if (item.gridType == "1") gridTypeText = QString::fromUtf8("异常");
+            else if (item.gridType == "2") gridTypeText = QString::fromUtf8("发货");
+            else                           gridTypeText = item.gridType;
+            m_tblRecords->setItem(i, 4, new QTableWidgetItem(gridTypeText));
+
+            auto* item5 = new QTableWidgetItem(QString::number(item.planQty));
+            item5->setTextAlignment(Qt::AlignCenter);
+            m_tblRecords->setItem(i, 5, item5);
+
+            auto* item6 = new QTableWidgetItem(QString::number(item.sortedQty));
+            item6->setTextAlignment(Qt::AlignCenter);
+            m_tblRecords->setItem(i, 6, item6);
+
+            m_tblRecords->setItem(i, 7, new QTableWidgetItem(item.volu));
+            m_tblRecords->setItem(i, 8, new QTableWidgetItem(item.obxCode));
+        }
+
+        // 更新统计标签
+        if (items.size() > 1)
+        {
+            // 同品多格口：高亮显示
+            m_lblRecordCount->setText(QString::fromUtf8("SKU编码 [%1] 分配到 %2 个格口（同品多格口）")
+                .arg(sku).arg(items.size()));
+            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #FF8C00; font-weight: bold;");
+        }
+        else
+        {
+            m_lblRecordCount->setText(QString::fromUtf8("SKU编码 [%1] 分配到 %2 个格口")
+                .arg(sku).arg(items.size()));
+            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
+        }
+
+        // 更新数据库统计
+        SortingStatistics stats = db->statistics();
+        m_lblDbStats->setText(QString::fromUtf8("数据库: 总计 %1 条 | 今日 %2 条 | %3 波次 | %4 格口")
+            .arg(stats.totalRecords)
+            .arg(stats.todayRecords)
+            .arg(stats.totalWaves)
+            .arg(stats.totalGrids));
+
+        appendLog(QString::fromUtf8("[查询] SKU编码 [%1] 查询到 %2 个格口分配").arg(sku).arg(items.size()));
+        return;
+    }
+
+    // ★ 按 EPC 查询（原有逻辑）
+    {
+        // ★ 切换回 EPC 查询模式的列头
+        m_tblRecords->setColumnCount(10);
+        m_tblRecords->setHorizontalHeaderLabels({
+            QString::fromUtf8("序号"),
+            QString::fromUtf8("波次号"),
+            QString::fromUtf8("EPC编码"),
+            QString::fromUtf8("SKU编码"),
+            QString::fromUtf8("格口号"),
+            QString::fromUtf8("小车号(首车/尾车)"),
+            QString::fromUtf8("件数"),
+            QString::fromUtf8("库位"),
+            QString::fromUtf8("分拣时间"),
+            QString::fromUtf8("状态")
+        });
+        m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
 
     QString barcode = m_editQueryBarcode->text().trimmed();
     QDateTime from(m_editQueryDateFrom->date(), QTime(0, 0, 0));
@@ -1334,15 +1502,29 @@ void MainWindow::onQueryRecords()
 
         m_tblRecords->setItem(i, 1, new QTableWidgetItem(rec.orderCode));
         m_tblRecords->setItem(i, 2, new QTableWidgetItem(rec.barcode));
-        m_tblRecords->setItem(i, 3, new QTableWidgetItem(rec.gridNum));
-        m_tblRecords->setItem(i, 4, new QTableWidgetItem(rec.carNum));
+        m_tblRecords->setItem(i, 3, new QTableWidgetItem(rec.sku));           // ★ SKU编码
+        m_tblRecords->setItem(i, 4, new QTableWidgetItem(rec.gridNum));
+
+        // ★ 小车号显示：参考 WCSApp 格式，5字段时显示"首车:xxx ; 尾车: xxx"
+        QString carDisplay;
+        if (!rec.firstCar.isEmpty() || !rec.lastCar.isEmpty())
+        {
+            carDisplay = QString::fromUtf8("首车:%1 ; 尾车: %2")
+                .arg(rec.firstCar.isEmpty() ? rec.carNum : rec.firstCar)
+                .arg(rec.lastCar.isEmpty() ? "--" : rec.lastCar);
+        }
+        else
+        {
+            carDisplay = rec.carNum;
+        }
+        m_tblRecords->setItem(i, 5, new QTableWidgetItem(carDisplay));
 
         auto* item5 = new QTableWidgetItem(QString::number(rec.gridCount));
         item5->setTextAlignment(Qt::AlignCenter);
-        m_tblRecords->setItem(i, 5, item5);
+        m_tblRecords->setItem(i, 6, item5);
 
-        m_tblRecords->setItem(i, 6, new QTableWidgetItem(rec.volu));
-        m_tblRecords->setItem(i, 7, new QTableWidgetItem(rec.sortTime));
+        m_tblRecords->setItem(i, 7, new QTableWidgetItem(rec.volu));
+        m_tblRecords->setItem(i, 8, new QTableWidgetItem(rec.sortTime));
 
         // 状态列：已分拣=绿色，待分拣=橙色
         auto* statusItem = new QTableWidgetItem(rec.status);
@@ -1352,7 +1534,7 @@ void MainWindow::onQueryRecords()
         } else if (rec.status == QString::fromUtf8("待分拣")) {
             statusItem->setForeground(QColor("#FF8C00"));  // 暗橙色
         }
-        m_tblRecords->setItem(i, 8, statusItem);
+        m_tblRecords->setItem(i, 9, statusItem);
     }
 
     // 更新统计标签
@@ -1378,6 +1560,7 @@ void MainWindow::onQueryRecords()
         .arg(stats.totalGrids));
 
     appendLog(QString("[查询] 返回 %1 条记录").arg(records.size()));
+    }
 }
 
 // ★ 开始分拣按钮点击：手动触发分拣中状态
@@ -1387,7 +1570,13 @@ void MainWindow::onStartSortingClicked()
         return;
 
     WaveManager* wm = m_pServer->waveManager();
-    if (wm->status() != WAVE_BOUND)
+    if (wm->status() == WAVE_SORTING)
+    {
+        appendLog("[分拣] 当前波次为'分拣中'状态，正在分拣", true);
+        //m_btnStartSorting->setEnabled(false);
+        return;
+    }
+    else if (wm->status() != WAVE_BOUND)
     {
         appendLog("[分拣] 当前波次非'已绑定'状态，无法开始分拣", true);
         return;

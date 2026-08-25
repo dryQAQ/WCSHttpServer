@@ -90,7 +90,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // 分拣引擎配置
 // ═══════════════════════════════════════════════════════════════════════════
-#define SORTING_REQUIRE_BIND       true     // 开工闸门：未绑定禁止开工（true=强制, false=宽松）
+#define SORTING_REQUIRE_BIND       false     // 开工闸门：未绑定禁止开工（true=强制, false=宽松）
 #define SORTING_CONFLICT_POLICY    "STRICT_EXCEPTION"  // 冲突策略：STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配
 #define SORTING_ALLOW_OVERRECV     false    // 是否允许超收（true=允许, false=拒收）
 #define SORTING_STARTED_MODE       "first_piece"  // 已开始分拣判定口径：first_piece=首件落格, manual=人工开工, both=两者
@@ -204,6 +204,7 @@
 #define SKU_QUERY_RETRY_INTERVAL_MS 3000    // SKU 查询重试间隔(ms)，默认3秒
 #define NOT_READY_RETRY_MAX         3        // 未就绪(carNum未到)最大重试次数
 #define NOT_READY_RETRY_INTERVAL_MS 5000     // 未就绪重试间隔(ms)，默认5秒
+#define PLC_SEND_TIMEOUT_MS         1000     // RFID推送→PLC发送超时阈值(ms)，超过则入异常格口（现场实时性要求≤1s）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 回传响应日志截断（防止超长响应体撑满日志文件）
@@ -223,6 +224,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 #define SORTING_DB_DIR            "data"                    // 数据库文件目录（exe 同目录下）
 #define SORTING_DB_FILE           "data/sorting_records.db" // 数据库文件路径（相对于 exe 目录）
+#define SORTING_HISTORY_DB_FILE   "data/wave_history.db"    // 历史波次数据库（完结波次快照存档）
 #define SORTING_DB_RETAIN_DAYS    90                        // 分拣记录保留天数
 #define SORTING_QUERY_MAX_RESULTS 1000                      // 单次查询最大返回记录数
 #define SORTING_QUERY_PAGE_SIZE   100                       // 表格每页显示记录数
@@ -245,9 +247,11 @@
 // 字段说明：
 //   id         — 自增主键，唯一标识每条记录
 //   order_code — 波次号，关联 WMS 推送的波次
-//   barcode    — EPC编码/SKU 编码，用于查询追溯
+//   barcode    — EPC编码，用于查询追溯
 //   grid_num   — 格口号，分拣落格的目标格口
-//   car_num    — 小车号，输送分拣的小车编号
+//   car_num    — 小车号（3字段格式时使用，5字段格式时=首车）
+//   first_car  — 首车号（5字段 PLC 反馈格式专用）
+//   last_car   — 尾车号（5字段 PLC 反馈格式专用）
 //   grid_count — 配货件数，该格口该EPC的配货数量
 //   volu       — 来源库位，货物在原仓库的存放位置
 //   sort_time  — 分拣完成时间，PLC 反馈落格的时间戳
@@ -257,8 +261,11 @@
     "  id          INTEGER PRIMARY KEY AUTOINCREMENT," \
     "  order_code  TEXT    NOT NULL DEFAULT ''," \
     "  barcode     TEXT    NOT NULL DEFAULT ''," \
+    "  sku         TEXT    NOT NULL DEFAULT ''," \
     "  grid_num    TEXT    NOT NULL DEFAULT ''," \
     "  car_num     TEXT    NOT NULL DEFAULT '1'," \
+    "  first_car   TEXT    NOT NULL DEFAULT ''," \
+    "  last_car    TEXT    NOT NULL DEFAULT ''," \
     "  grid_count  INTEGER NOT NULL DEFAULT 0," \
     "  volu        TEXT    NOT NULL DEFAULT ''," \
     "  sort_time   TEXT    NOT NULL DEFAULT ''," \
@@ -275,14 +282,14 @@
 
 // ──── 公共查询字段列表（SELECT 子句复用）────
 // 查询所有字段，用于各种 SELECT 语句拼接，避免重复书写字段列表
-#define SQL_SELECT_FIELDS  "SELECT id, order_code, barcode, grid_num, car_num, grid_count, volu, sort_time, create_time "
+#define SQL_SELECT_FIELDS  "SELECT id, order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time "
 
 // ──── 插入记录：PLC 落格反馈时写入一条分拣记录 ────
 // 使用参数化查询（?占位符），防止 SQL 注入，字段顺序与建表语句一致
 #define SQL_INSERT_RECORD \
     "INSERT INTO sorting_records " \
-    "(order_code, barcode, grid_num, car_num, grid_count, volu, sort_time, create_time) " \
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "(order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time) " \
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 // ──── 查询：按不同条件检索分拣记录 ────
 // 按EPC编码查询 — 输入EPC编码，返回该EPC编码的所有分拣历史（按时间倒序）→ 状态=已分拣
@@ -348,6 +355,37 @@
 // ──── 清理：删除过期记录 ────
 // 按分拣时间删除 N 天前的旧记录，防止数据库文件无限增长
 #define SQL_DELETE_OLD             "DELETE FROM sorting_records WHERE sort_time < ?"
+
+// ──── 迁移：为旧版 sorting_records 表添加 first_car/last_car 列（V1→V2 兼容）────
+// SQLite 不支持 ALTER TABLE ADD COLUMN IF NOT EXISTS，通过 try-exec 忽略重复列错误
+#define SQL_ALTER_ADD_FIRST_CAR    "ALTER TABLE sorting_records ADD COLUMN first_car TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_LAST_CAR     "ALTER TABLE sorting_records ADD COLUMN last_car  TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_SKU          "ALTER TABLE sorting_records ADD COLUMN sku      TEXT NOT NULL DEFAULT ''"
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 波次历史存档表（轻量证据，仅记录关键摘要，不复制全部数据）
+// ═══════════════════════════════════════════════════════════════════════════
+// 用途：主数据库查不到时作为追溯证据，一表一记录，不冗余
+#define SQL_CREATE_TABLE_WAVE_HISTORY \
+    "CREATE TABLE IF NOT EXISTS wave_history (" \
+    "  order_code      TEXT    PRIMARY KEY," \
+    "  order_qty       INTEGER NOT NULL DEFAULT 0," \
+    "  status          INTEGER NOT NULL DEFAULT 0," \
+    "  status_text     TEXT    NOT NULL DEFAULT ''," \
+    "  start_time      TEXT    NOT NULL DEFAULT ''," \
+    "  end_time        TEXT    NOT NULL DEFAULT ''," \
+    "  total_items     INTEGER NOT NULL DEFAULT 0," \
+    "  sorted_count    INTEGER NOT NULL DEFAULT 0," \
+    "  exception_count INTEGER NOT NULL DEFAULT 0," \
+    "  fullbox_count   INTEGER NOT NULL DEFAULT 0," \
+    "  end_result      TEXT    NOT NULL DEFAULT ''," \
+    "  created_at      TEXT    NOT NULL DEFAULT ''" \
+    ")"
+#define SQL_INSERT_WAVE_HISTORY \
+    "INSERT OR REPLACE INTO wave_history " \
+    "(order_code, order_qty, status, status_text, start_time, end_time, " \
+    " total_items, sorted_count, exception_count, fullbox_count, end_result, created_at) " \
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 退货任务核心数据表（S0 阶段落地，需求 §12 数据模型）
@@ -587,7 +625,7 @@
     "SELECT msg_id, order_code, boxcode, payload, retry_count FROM outbox_fullbox WHERE msg_id = ?"
 // 按 msgId 查询单条 完结回传（H8 完结出站消息（S6 人工重发用））
 #define SQL_SELECT_OUTBOX_END_BY_MSGID \
-    "SELECT msg_id, order_code, boxcode, payload, retry_count FROM outbox_end WHERE msg_id = ?"
+    "SELECT msg_id, order_code, payload, retry_count FROM outbox_end WHERE msg_id = ?"
 
 // ──── 异常记录操作 ────
 // 插入异常记录
@@ -599,7 +637,8 @@
 
 // ──── Outbox 配置 ────
 // 出站重试次数上限（默认 10 次）
-#define OUTBOX_RETRY_MAX_DEFAULT   10
+#define OUTBOX_RETRY_MAX_DEFAULT   3       // 完结回传（H8）最大重试次数（每波次仅1次，失败记录异常，不阻塞新波次）
+#define OUTBOX_RETRY_MAX_H7        2       // 满箱回传（H7）最大重试次数（每波次可能多次触发，降低重试避免堆积）
 // 出站重试间隔（秒，默认 30 秒）
 #define OUTBOX_RETRY_INTERVAL_SEC  30
 

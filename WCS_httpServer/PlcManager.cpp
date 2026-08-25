@@ -49,9 +49,8 @@ PlcManager::~PlcManager()
         m_pSendPool = nullptr;
     }
 
-    PLC_LOG_INFO("PLC管理器已销毁 tcpSend=%lld tcpErr=%lld s7Send=%lld s7Err=%lld recv=%lld",
+    PLC_LOG_INFO("PLC管理器已销毁 tcpSend=%lld tcpErr=%lld recv=%lld",
         m_tcpSendCount.load(), m_tcpSendErrCount.load(),
-        m_s7SendCount.load(), m_s7SendErrCount.load(),
         m_recvCount.load());
 }
 
@@ -158,24 +157,26 @@ bool PlcManager::sendCodeInfo(const QString& code, const std::vector<int>& vecGr
         return false;
     }
 
-    // ── 1. S7 DBWrite 发送（与 WCSApp 完全一致）──
-    bool s7Success = false;
-    if (m_S7Plc && m_S7Plc->isConnected())
-    {
-        QByteArray sSend = code.toLatin1();
-        s7Success = m_S7Plc->writeCodeInfo(sSend, vecGrid);
-        if (s7Success)
-            m_s7SendCount.fetch_add(1);
-        else
-            m_s7SendErrCount.fetch_add(1);
-    }
-    else
-    {
-        // S7 未连接时仅记录，不阻断（后续可配置为强制要求）
-        PLC_LOG_WARN("S7未连接，跳过S7发送 code=%s", code.toLocal8Bit().data());
-    }
+    // ── 1. S7 DBWrite 发送 ──
+    // ★ 已注释：与PLC交互仅保留 TCP消息发送+接收反馈 和 锁格检测(S7 DB77读取)
+    //           S7 DB1分拣指令写入不再需要，PLC通过TCP文本协议接收分拣指令
+    // bool s7Success = false;
+    // if (m_S7Plc && m_S7Plc->isConnected())
+    // {
+    //     QByteArray sSend = code.toLatin1();
+    //     s7Success = m_S7Plc->writeCodeInfo(sSend, vecGrid);
+    //     if (s7Success)
+    //         m_s7SendCount.fetch_add(1);
+    //     else
+    //         m_s7SendErrCount.fetch_add(1);
+    // }
+    // else
+    // {
+    //     // S7 未连接时仅记录，不阻断（后续可配置为强制要求）
+    //     PLC_LOG_WARN("S7未连接，跳过S7发送 code=%s", code.toLocal8Bit().data());
+    // }
 
-    // ── 2. TCP 文本发送（与 WCSApp 一致）──
+    // ── 2. TCP 文本发送 ──
     bool tcpSuccess = false;
 
     std::unique_lock<std::mutex> clientLock(m_clientMutex);
@@ -189,6 +190,11 @@ bool PlcManager::sendCodeInfo(const QString& code, const std::vector<int>& vecGr
 
         QByteArray data = command.toLatin1();
         bool allSuccess = true;
+        int clientCount = (int)m_mapClient.size();
+        int sentCount = 0;
+        int errCount = 0;
+
+        qint64 t1 = QDateTime::currentMSecsSinceEpoch();
 
         for (auto& pair : m_mapClient)
         {
@@ -197,17 +203,42 @@ bool PlcManager::sendCodeInfo(const QString& code, const std::vector<int>& vecGr
             {
                 m_tcpSendErrCount.fetch_add(1);
                 allSuccess = false;
-                PLC_LOG_ERROR("TCP发送失败 conn=%llu cmd=%s err=%d",
-                    (unsigned long long)clientId, command.toLocal8Bit().data(),
-                    (int)::GetLastError());
+                errCount++;
+                int winErr = (int)::GetLastError();
+                PLC_LOG_ERROR("TCP发送失败 conn=%llu code=%s grid=%s car=%s err=%d",
+                    (unsigned long long)clientId, code.toLocal8Bit().data(),
+                    b.toLocal8Bit().data(), carStr.toLocal8Bit().data(), winErr);
+            }
+            else
+            {
+                sentCount++;
             }
         }
+
+        qint64 elapsed = QDateTime::currentMSecsSinceEpoch() - t1;
 
         if (allSuccess)
         {
             m_tcpSendCount.fetch_add(1);
             tcpSuccess = true;
+            PLC_LOG_INFO("TCP发送成功 code=%s grid=%s car=%s cmd=%s clients=%d/%d elapsed=%lldms",
+                code.toLocal8Bit().data(), b.toLocal8Bit().data(),
+                carStr.toLocal8Bit().data(), command.toLocal8Bit().data(),
+                sentCount, clientCount, elapsed);
         }
+        else
+        {
+            PLC_LOG_WARN("TCP发送部分失败 code=%s grid=%s car=%s sent=%d/%d err=%d elapsed=%lldms",
+                code.toLocal8Bit().data(), b.toLocal8Bit().data(),
+                carStr.toLocal8Bit().data(), sentCount, clientCount, errCount, elapsed);
+        }
+    }
+    else
+    {
+        PLC_LOG_WARN("TCP发送失败: 无PLC客户端连接 code=%s grid=%s car=%d",
+            code.toLocal8Bit().data(),
+            vecGrid.empty() ? "0" : QString("%1").arg(vecGrid[0], 3, 10, QChar('0')).toLocal8Bit().data(),
+            car);
     }
     clientLock.unlock();
 
@@ -220,20 +251,20 @@ bool PlcManager::sendCodeInfo(const QString& code, const std::vector<int>& vecGr
         m_lastSendTimeMs = QDateTime::currentMSecsSinceEpoch();
     }
 
-    // ── 4. 综合判断：S7 或 TCP 任一成功即视为成功 ──
-    bool overallSuccess = s7Success || tcpSuccess;
+    // ── 4. 判断（仅 TCP 通道）──
+    bool overallSuccess = tcpSuccess;
 
     emit plcSendInfo(code, m_lastGrid + "|" + m_lastCar, overallSuccess);
 
     if (overallSuccess)
     {
-        PLC_LOG_INFO("发送PLC指令成功 code=%s s7=%d tcp=%d",
-            code.toLocal8Bit().data(), s7Success, tcpSuccess);
+        PLC_LOG_INFO("发送PLC指令成功 code=%s tcp=%d",
+            code.toLocal8Bit().data(), tcpSuccess);
     }
     else
     {
-        PLC_LOG_ERROR("发送PLC指令失败 code=%s s7=%d tcp=%d",
-            code.toLocal8Bit().data(), s7Success, tcpSuccess);
+        PLC_LOG_ERROR("发送PLC指令失败 code=%s tcp=%d",
+            code.toLocal8Bit().data(), tcpSuccess);
     }
 
     return overallSuccess;
@@ -441,6 +472,9 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
         }
 
         successCount++;
+        PLC_LOG_INFO("TCP批量发送 EPC[%d/%d] code=%s grid=%s car=%d",
+            successCount, codeGridMap.size(), code.toLocal8Bit().data(),
+            gridStr.toLocal8Bit().data(), car);
     }
 
     PLC_LOG_INFO("sendBatchCodesWithEpcCache: 发送完成 success=%d fail=%d total=%d rfidCar=%d",
@@ -844,6 +878,8 @@ EnHandleResult PlcManager::OnReceive(ITcpServer* pSender, CONNID dwConnID,
     // ★ 仅拷贝数据到缓冲区，解析和信号发射交给 parsePlcFeedback
     //    避免在 HP-Socket 工作线程中做耗时操作
     QByteArray rawData((const char*)pData, iLength);
+    PLC_LOG_INFO("TCP接收 rawData=%s len=%d conn=%llu",
+        rawData.toHex(' ').constData(), iLength, (unsigned long long)dwConnID);
     parsePlcFeedback(rawData);
 
     return HR_OK;
@@ -1045,6 +1081,9 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
             QString code = parts[0].trimmed();
             QString grid = parts[1].trimmed();
             QString car  = parts[2].trimmed();
+
+            PLC_LOG_INFO("PLC反馈(3字段) code=%s grid=%s car=%s",
+                code.toLocal8Bit().data(), grid.toLocal8Bit().data(), car.toLocal8Bit().data());
 
             // 更新最近接收数据
             {

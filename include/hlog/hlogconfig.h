@@ -6,7 +6,7 @@
 #define NULL 0
 #endif // NULL
 
-#if defined(_MSC_VER) // Ê±¼äÀàÐÍ
+#if defined(_MSC_VER) // Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     typedef signed __int64	EVENT_TIME;
 #elif defined(__GNUC__) || defined(__SYMBIAN32__)
 #   if defined(__LP64__)
@@ -33,7 +33,7 @@
 #endif
 
 /** @enum HLOG_LEVEL
- *  @brief ÈÕÖ¾¼¶±ð
+ *  @brief ï¿½ï¿½Ö¾ï¿½ï¿½ï¿½ï¿½
  */
 typedef enum {
     HLOG_LEVEL_OFF    = 7,
@@ -46,30 +46,30 @@ typedef enum {
     HLOG_LEVEL_ALL    = 0
 } HLOG_LEVEL;
 
-// ´íÎóÂë¶¨Òå¡£
-#define HLOG_OK                             0 ///< ²Ù×÷³É¹¦¡£
-#define HLOG_ERR                            -1 ///< ²Ù×÷Ê§°Ü¡£
-#define HLOG_BASE                           ((int)0x00000000)   ///< ´íÎóÂë»ùÊý
-#define HLOG_E_InvalidParam                 (HLOG_BASE + 1) ///< ²ÎÊý²»ºÏ·¨
-#define HLOG_E_OutOfMemory                  (HLOG_BASE + 2) ///< ÉêÇëÄÚ´æÊ§°Ü
-#define HLOG_E_TaskQueueFail                (HLOG_BASE + 3) ///< Ïò¶ÓÁÐÖÐÌí¼ÓÈÎÎñÊ§°Ü
-#define HLOG_E_NULLPointer                  (HLOG_BASE + 4) ///< ¿ÕÖ¸Õë
-#define HLOG_E_LevelNotEnable               (HLOG_BASE + 5) ///< ÈÕÖ¾¼¶±ðÃ»ÓÐ´ïµ½Êä³öµÄ¼¶±ð
-#define HLOG_E_CheckConfigTimer             (HLOG_BASE + 6) ///< Æô¶¯¼ì²éÅäÖÃÎÄ¼þÏß³ÌÊ§°Ü
-#define HLOG_E_OpenLoggerModuleFail         (HLOG_BASE + 9) ///< ´ò¿ªÈÕÖ¾¾ä±úÊ§°Ü
-#define HLOG_E_CreateThreadFail             (HLOG_BASE + 11) ///< ´´½¨Ïß³ÌÊ§°Ü
-#define HLOG_E_ConfigFileNotExist           (HLOG_BASE + 13) ///< ÅäÖÃÎÄ¼þ²»´æÔÚ
-#define HLOG_E_BufferTooSmall               (HLOG_BASE + 16) ///< »º³åÇø¹ýÐ¡
-#define HLOG_E_UnKnown                      (HLOG_BASE + 17) ///< Î´Öª´íÎó
+// ï¿½ï¿½ï¿½ï¿½ï¿½ë¶¨ï¿½å¡£
+#define HLOG_OK                             0 ///< ï¿½ï¿½ï¿½ï¿½ï¿½É¹ï¿½ï¿½ï¿½
+#define HLOG_ERR                            -1 ///< ï¿½ï¿½ï¿½ï¿½Ê§ï¿½Ü¡ï¿½
+#define HLOG_BASE                           ((int)0x00000000)   ///< ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+#define HLOG_E_InvalidParam                 (HLOG_BASE + 1) ///< ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï·ï¿½
+#define HLOG_E_OutOfMemory                  (HLOG_BASE + 2) ///< ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½Ê§ï¿½ï¿½
+#define HLOG_E_TaskQueueFail                (HLOG_BASE + 3) ///< ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½
+#define HLOG_E_NULLPointer                  (HLOG_BASE + 4) ///< ï¿½ï¿½Ö¸ï¿½ï¿½
+#define HLOG_E_LevelNotEnable               (HLOG_BASE + 5) ///< ï¿½ï¿½Ö¾ï¿½ï¿½ï¿½ï¿½Ã»ï¿½Ð´ïµ½ï¿½ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½
+#define HLOG_E_CheckConfigTimer             (HLOG_BASE + 6) ///< ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ß³ï¿½Ê§ï¿½ï¿½
+#define HLOG_E_OpenLoggerModuleFail         (HLOG_BASE + 9) ///< ï¿½ï¿½ï¿½ï¿½Ö¾ï¿½ï¿½ï¿½Ê§ï¿½ï¿½
+#define HLOG_E_CreateThreadFail             (HLOG_BASE + 11) ///< ï¿½ï¿½ï¿½ï¿½ï¿½ß³ï¿½Ê§ï¿½ï¿½
+#define HLOG_E_ConfigFileNotExist           (HLOG_BASE + 13) ///< ï¿½ï¿½ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+#define HLOG_E_BufferTooSmall               (HLOG_BASE + 16) ///< ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¡
+#define HLOG_E_UnKnown                      (HLOG_BASE + 17) ///< Î´Öªï¿½ï¿½ï¿½ï¿½
 
 // event error code
-#define HLOG_E_DBOperateFail                (HLOG_BASE + 21) ///< db²Ù×÷Ê§°Ü
-#define HLOG_E_RecordEventFail              (HLOG_BASE + 22) ///< ¼ÇÂ¼ÊÂ¼þÊ§°Ü
+#define HLOG_E_DBOperateFail                (HLOG_BASE + 21) ///< dbï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½
+#define HLOG_E_RecordEventFail              (HLOG_BASE + 22) ///< ï¿½ï¿½Â¼ï¿½Â¼ï¿½Ê§ï¿½ï¿½
 
 #define HLOG_IGNORE ""
 #define HLOG_HANDLE void*
 
-// ÈÕÖ¾ºê¶¨Òå¡£
+// ï¿½ï¿½Ö¾ï¿½ê¶¨ï¿½å¡£
 #if defined(_MSC_VER)
 #  define __HLOG_FILE__ __FILE__
 #  define __HLOG_FUNC__ __FUNCSIG__

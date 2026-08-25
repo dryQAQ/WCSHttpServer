@@ -15,7 +15,7 @@
 // ============================================================================
 
 #include <QString>
-#include <QMap>
+#include <QHash>
 #include <QDateTime>
 #include <QMutex>
 #include <QMutexLocker>
@@ -29,16 +29,19 @@
 // ──── EpcCache 专用日志宏（写入 ./log/EPC/epc.log）────
 // （宏定义已移至 LogService.h 统一管理）
 
-// ★ 缓存条目：barcode + carNum + SKU 绑定状态 + 过期时间
+// ★ 缓存条目：barcode + carNum + SKU 绑定状态 + 过期时间 + 推送到达时间
 struct EpcCacheEntry
 {
-    QString barcode;
-    QString carNum;      // ★ 来自 RFID 的小车号，默认 DEFAULT_CAR_STR("001")
-    bool    skuBound = false;  // ★ SKU-EPC 绑定是否完成（通过 RFID 查询获取）
-    QDateTime expireTime;
+    QString   barcode;
+    QString   carNum;       // ★ 来自 RFID 的小车号，默认 DEFAULT_CAR_STR("001")
+    bool      skuBound = false;  // ★ SKU-EPC 绑定是否完成（通过 RFID 查询获取）
+    QDateTime expireTime;         // TTL 过期时间
+    QDateTime receivedAt;         // ★ RFID 推送首次到达时间（用于 1s 超时判断，PLC_SEND_TIMEOUT_MS）
 
-    bool isExpired() const { return expireTime <= QDateTime::currentDateTime(); }
-    bool isReadyForPlc() const { return skuBound && !carNum.isEmpty(); }  // ★ 两个条件都满足才能发 PLC
+    bool isExpired()      const { return expireTime <= QDateTime::currentDateTime(); }
+    bool isReadyForPlc()  const { return skuBound && !carNum.isEmpty(); }
+    // ★ 从 RFID 推送到达起算，超过 PLC_SEND_TIMEOUT_MS 则视为超时（应入异常格口）
+    bool isSendTimeout()  const { return receivedAt.msecsTo(QDateTime::currentDateTime()) > PLC_SEND_TIMEOUT_MS; }
 };
 
 class EpcCache
@@ -199,6 +202,9 @@ public:
                 // ★ 更新 carNum（RFID 推送的）
                 entry.carNum = it.value().second.isEmpty() ? DEFAULT_CAR_STR : it.value().second;
                 entry.expireTime = expire;
+                // ★ 记录 RFID 推送到达时间（用于 1s 超时判断）
+                //   每次 RFID 推送都刷新 receivedAt，因为现场每次推送都是新的读取事件
+                entry.receivedAt = QDateTime::currentDateTime();
                 m_cache[it.key()] = entry;
                 writeCount++;
                 if (!it.value().second.isEmpty() && it.value().second != DEFAULT_CAR_STR)
@@ -256,6 +262,26 @@ public:
         return it->isReadyForPlc();
     }
 
+    // ★ 判断 EPC 从 RFID 推送到现在是否已超过 PLC_SEND_TIMEOUT_MS（1s 超时）
+    //   超时则不应再发送 PLC，应入异常格口
+    bool isSendTimeout(const QString& epc) const
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return true;  // 不存在视为超时
+        if (it->isExpired()) return true;       // 已过期视为超时
+        return it->isSendTimeout();
+    }
+
+    // ★ 获取 EPC 的 RFID 推送到达时间（用于超时日志）
+    qint64 getElapsedMs(const QString& epc) const
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return -1;
+        return it->receivedAt.msecsTo(QDateTime::currentDateTime());
+    }
+
     // ★ 获取 EPC 对应的 barcode 和 carNum（用于就绪后发送 PLC）
     //    返回 {barcode, carNum}，未就绪返回空
     QPair<QString, QString> getPlcData(const QString& epc) const
@@ -309,7 +335,8 @@ public:
 
 private:
     // key = epc, value = EpcCacheEntry
-    mutable QMap<QString, EpcCacheEntry> m_cache;
+    // ★ QHash: O(1) 查找，比 QMap O(log n) 更快，适合高频 RFID 推送场景
+    mutable QHash<QString, EpcCacheEntry> m_cache;
     mutable QMutex m_mutex;
     int m_ttlSec = RFID_CACHE_TTL_SEC;
 };

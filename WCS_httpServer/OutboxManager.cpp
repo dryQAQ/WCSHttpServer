@@ -1,4 +1,4 @@
-﻿﻿﻿﻿#include "OutboxManager.h"
+﻿#include "OutboxManager.h"
 #include "SortingDatabase.h"
 #include "define.h"
 #include <QJsonDocument>

@@ -14,17 +14,22 @@
 #include <QDateTime>
 #include <QVector>
 #include <QSqlDatabase>
-#include <QMutex>
-#include <QMutexLocker>
+#include <QThread>
+#include <QAtomicInt>
+#include <type_traits>
+#include "LogService.h"
 
 // ──── 分拣记录结构（原有，保留兼容）────
 struct SortingRecord
 {
     int     id          = 0;
     QString orderCode;
-    QString barcode;
+    QString barcode;       // ★ EPC编码
+    QString sku;           // ★ SKU编码（RFID绑定获取）
     QString gridNum;
-    QString carNum;
+    QString carNum;        // 小车号（3字段格式时=小车，5字段格式时=首车）
+    QString firstCar;      // ★ 首车号（5字段 PLC 反馈格式专用）
+    QString lastCar;       // ★ 尾车号（5字段 PLC 反馈格式专用）
     int     gridCount   = 0;
     QString volu;
     QString sortTime;
@@ -42,7 +47,7 @@ struct SortingStatistics
     QString lastSortTime;
 };
 
-// ──── S0 新增：退货波次头 ────
+// ──── 新增：退货波次头 ────
 struct ReturnWaveRecord
 {
     QString orderCode;
@@ -52,7 +57,7 @@ struct ReturnWaveRecord
     QString updatedAt;
 };
 
-// ──── S0 新增：波次明细 ────
+// ──── 新增：波次明细 ────
 struct ReturnWaveItemRecord
 {
     int     id          = 0;
@@ -66,7 +71,7 @@ struct ReturnWaveItemRecord
     QString obxCode;        // 容器号（WMS 下发时携带）
 };
 
-// ──── S0 新增：格口容器绑定 ────
+// ──── 新增：格口容器绑定 ────
 struct GridBoxBindRecord
 {
     int     id          = 0;
@@ -78,7 +83,7 @@ struct GridBoxBindRecord
     QString unbindTime;
 };
 
-// ──── S0 新增：分拣流水 ────
+// ──── 新增：分拣流水 ────
 struct SortTxnRecord
 {
     int     id          = 0;
@@ -92,7 +97,7 @@ struct SortTxnRecord
     QString sortTime;
 };
 
-// ──── S0 新增：出站消息 ────
+// ──── 新增：出站消息 ────
 struct OutboxRecord
 {
     QString msgId;
@@ -105,7 +110,7 @@ struct OutboxRecord
     QString createdAt;
 };
 
-// ──── S0 新增：异常记录 ────
+// ──── 新增：异常记录 ────
 struct ExceptionRecord
 {
     int     id          = 0;
@@ -121,8 +126,7 @@ struct ExceptionRecord
 class SortingDatabase
 {
 public:
-    SortingDatabase();
-    ~SortingDatabase();
+    static SortingDatabase& instance();  // ★ 单例
 
     // ──── 生命周期 ────
     bool open(const QString& dbPath = QString());
@@ -133,20 +137,23 @@ public:
     // 原有接口（保留兼容）
     // ═══════════════════════════════════════════════════════════════
     bool insertRecord(const QString& orderCode, const QString& barcode,
+                      const QString& sku,
                       const QString& gridNum, const QString& carNum,
+                      const QString& firstCar, const QString& lastCar,
                       int gridCount, const QString& volu);
     QVector<SortingRecord> queryByBarcode(const QString& barcode, int limit = 500);
     QVector<SortingRecord> queryByTime(const QDateTime& from, const QDateTime& to, int limit = 1000);
     QVector<SortingRecord> queryByOrderCode(const QString& orderCode, int limit = 1000);
     QVector<SortingRecord> queryAll(int limit = 1000);
     QVector<SortingRecord> queryAllWithPending(int limit = 1000);  // ★ 留空查全部：已分拣 + 待分拣
+    QVector<ReturnWaveItemRecord> querySkuGridMapping(const QString& sku, const QString& orderCode = "");  // ★ 按 SKU 查询格口分配
     SortingStatistics statistics();
-    int recordCount() const;
-    int todayRecordCount() const;
+    int recordCount();
+    int todayRecordCount();
     void cleanupOldRecords(int retainDays = 30);
 
     // ═══════════════════════════════════════════════════════════════
-    // S0 新增：波次管理（T-S0-02）
+    // 新增：波次管理
     // ═══════════════════════════════════════════════════════════════
 
     // 插入/更新波次头（幂等，未分拣时允许覆盖）
@@ -172,11 +179,19 @@ public:
     // ═══════════════════════════════════════════════════════════════
 
     // 绑定容器（先归档旧绑定，再插入新绑定）
-    bool bindGridBox(const QString& gridNum, const QString& boxcode, const QString& orderCode);
+    bool bindGridBox(const QString& gridNum, const QString& boxcode);
     // 获取格口当前活跃绑定
     GridBoxBindRecord getActiveBind(const QString& gridNum);
     // 归档指定格口的所有活跃绑定（满箱/取消时调用）
     bool archiveGridBinds(const QString& gridNum);
+
+    // ═══════════════════════════════════════════════════════════════
+    // S0 新增：完结波次历史存档（T-S0-02）
+    // ═══════════════════════════════════════════════════════════════
+
+    // 将指定波次的完整数据快照到历史数据库 wave_history.db
+    // 包含：波次头、波次明细、分拣记录、异常记录、满箱回传、完结回传
+    bool archiveWave(const QString& orderCode);
 
     // ═══════════════════════════════════════════════════════════════
     // S0 新增：分拣流水（T-S0-02）
@@ -230,12 +245,63 @@ public:
     QString databasePath() const { return m_dbPath; }
 
 private:
-    void createTables();        // 建表（含 S0 新增表）
+    SortingDatabase();
+    ~SortingDatabase();
+    SortingDatabase(const SortingDatabase&) = delete;
+    SortingDatabase& operator=(const SortingDatabase&) = delete;
+
+    void createTables();        // 建表
     QString currentTimeStr() const;
-    QSqlDatabase ensureConnection();  // ★ 跨线程安全：在调用线程中按需创建数据库连接
+
+    // ★ 在专用 DB 线程上执行操作（阻塞调用线程，等待完成）
+    //   所有 SQLite 操作必须通过此方法委托到 DB 线程执行
+    template<typename Func>
+    auto runOnDbThread(Func&& func) -> decltype(func())
+    {
+        using ReturnType = decltype(func());
+
+        // ★ 防护：数据库未初始化，直接返回默认值
+        if (!m_pDbTarget) {
+            Data_WARN("[SortingDB] runOnDbThread 失败: m_pDbTarget 为空 (DB 未初始化，请先调用 open())");
+            if constexpr (std::is_void_v<ReturnType>)
+                return;
+            else
+                return ReturnType{};
+        }
+
+        quintptr callerTid = (quintptr)QThread::currentThreadId();
+        Data_INFO("[SortingDB] runOnDbThread 提交操作 callerTid=%llu targetTid=%llu",
+            (unsigned long long)callerTid,
+            (unsigned long long)(m_pDbTarget ? (quintptr)m_pDbTarget->thread()->currentThreadId() : 0));
+
+        if constexpr (std::is_void_v<ReturnType>)
+        {
+            QMetaObject::invokeMethod(m_pDbTarget, [&]() {
+                quintptr dbTid = (quintptr)QThread::currentThreadId();
+                Data_INFO("[SortingDB] runOnDbThread( void) 开始执行 dbTid=%llu m_bOpened=%d",
+                    (unsigned long long)dbTid, (int)m_bOpened);
+                func();
+                Data_INFO("[SortingDB] runOnDbThread( void) 执行完成 dbTid=%llu",
+                    (unsigned long long)dbTid);
+            }, Qt::BlockingQueuedConnection);
+        }
+        else
+        {
+            ReturnType result{};
+            QMetaObject::invokeMethod(m_pDbTarget, [&]() {
+                quintptr dbTid = (quintptr)QThread::currentThreadId();
+                Data_INFO("[SortingDB] runOnDbThread(非void) 开始执行 dbTid=%llu m_bOpened=%d",
+                    (unsigned long long)dbTid, (int)m_bOpened);
+                result = func();
+                Data_INFO("[SortingDB] runOnDbThread(非void) 执行完成 dbTid=%llu",
+                    (unsigned long long)dbTid);
+            }, Qt::BlockingQueuedConnection);
+            return result;
+        }
+    }
 
     QString         m_dbPath;
-    QString         m_connectionName;
-    mutable QMutex  m_mutex;
-    bool            m_bOpened = false;
+    QThread*        m_pDbThread  = nullptr;  // ★ 专用数据库线程（单连接）
+    QObject*        m_pDbTarget  = nullptr;  // ★ DB 线程上的事件接收者
+    QAtomicInt      m_bOpened{0};            // ★ 原子标记，跨线程安全读取
 };

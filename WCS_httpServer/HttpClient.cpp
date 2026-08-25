@@ -91,6 +91,15 @@ void HttpClient::onReplyFinished()
 
     QByteArray respBody = reply->readAll();
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    // ★ status=0 时记录 Qt 网络层错误，方便排查连接失败原因
+    if (statusCode == 0) {
+        HTTP_LOG_ERROR("回传网络层失败 orderCode=%s error=%d errorString=%s",
+            pr.orderCode.toLocal8Bit().data(),
+            reply->error(),
+            reply->errorString().toLocal8Bit().data());
+    }
+
     reply->deleteLater();
 
     QJsonDocument doc = QJsonDocument::fromJson(respBody);

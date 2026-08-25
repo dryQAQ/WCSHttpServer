@@ -7,7 +7,7 @@
     <!-- 正式环境满箱回传 URL（H7 满箱同步到WMS） -->
     <feedbackUrl>http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs</feedbackUrl>
     <!-- 测试环境满箱回传 URL（H7） -->
-    <feedbackTestUrl>http://127.0.0.1:8099/gids5/service/thirdPartyData/dz_bxh_wcs_cs</feedbackTestUrl>
+    <feedbackTestUrl>http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs</feedbackTestUrl>
     <!-- 正式环境完结回传 URL（H8 波次完结通知WMS） -->
     <feedbackEndUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndUrl>
     <!-- 测试环境完结回传 URL（H8） -->
@@ -74,6 +74,11 @@
     <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
     <!-- ④ RFID 小车号推送（RFID → WCS，EPC+barcode+carNum 映射） -->
     <apiRfidCarNumReport>/api/rfid/carNumReport</apiRfidCarNumReport>
+    <binding grid="001">BOX001</binding>
+    <binding grid="002">BOX002</binding>
+    <binding grid="003">BOX003</binding>
+    <binding grid="004">BOX004</binding>
+    <binding grid="005">BOX005</binding>
     <gridName num="1">1号格口</gridName>
     <gridName num="10">10号格口</gridName>
     <gridName num="11">11号格口</gridName>

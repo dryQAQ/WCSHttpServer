@@ -31,6 +31,7 @@
 #include <QDateEdit>
 #include <QTableWidget>
 #include <QSpinBox>
+#include <QComboBox>
 #include "HttpServer.h"
 #include "HttpClient.h"
 #include "PlcManager.h"
@@ -55,6 +56,7 @@ private slots:
     void flushLogBuffer();    // 定时批量刷新日志到UI（防高频卡死）
     void onQueryRecords();    // ★ 查询分拣记录
     void onStartSortingClicked(); // ★ 开始分拣按钮点击
+    void doActualStop();     // ★ 实际执行服务停止（H8回传完成后调用）
 
 private:
     void setupUI();           // 构建所有UI控件
@@ -68,7 +70,7 @@ private:
     HttpServer*  m_pServer  = nullptr;   // HTTP Server（内部持有 PlcManager/WaveManager/TaskQueue 等）
     HttpClient*  m_pClient  = nullptr;   // WMS回传客户端
     PlcManager*  m_pPlcMgr  = nullptr;   // PLC管理器引用（生命周期由 HttpServer 管理，此处仅持有句柄）
-    SortingDatabase m_queryDb;           // ★ UI 查询专用数据库（独立于服务，随时可查）
+    SortingDatabase* m_pQueryDb = nullptr;  // ★ UI 查询数据库（单例引用）
 
     // ──── 服务控制区 UI ────
     QPushButton* m_btnStartStop    = nullptr;  // 启动/停止按钮
@@ -144,7 +146,9 @@ private:
     bool         m_lastS7Connected  = false;   // ★ 缓存S7状态
 
     // ──── 分拣记录查询 UI ────
-    QLineEdit*   m_editQueryBarcode = nullptr;   // EPC编码查询输入
+    QComboBox*   m_cmbQueryMode     = nullptr;   // ★ 查询模式：按EPC查询 / 按SKU查询格口分配
+    QLineEdit*   m_editQueryBarcode  = nullptr;   // EPC编码查询输入
+    QLineEdit*   m_editQuerySku      = nullptr;   // ★ SKU编码查询输入
     QDateEdit*   m_editQueryDateFrom = nullptr;   // 查询起始日期
     QDateEdit*   m_editQueryDateTo   = nullptr;   // 查询结束日期
     QPushButton* m_btnQueryRecords   = nullptr;   // 查询按钮
@@ -153,4 +157,5 @@ private:
     QLabel*      m_lblRecordCount    = nullptr;   // 记录统计标签
     QLabel*      m_lblDbStats        = nullptr;   // 数据库统计标签
     QTimer*      m_dbCleanupTimer    = nullptr;   // ★ 数据库清理定时器（每日凌晨）
+    QTimer*      m_stopTimeoutTimer = nullptr;   // ★ 停止超时安全网（30秒）
 };
