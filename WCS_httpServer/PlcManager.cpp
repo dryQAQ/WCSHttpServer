@@ -28,10 +28,27 @@ PlcManager::PlcManager(QObject* parent)
         m_pSendPool = new Hanchine::ThreadPool(cfg.plcSendPoolSize);
         PLC_LOG_INFO("PLC管理器已创建 sendPool=%d", cfg.plcSendPoolSize);
     }
+
+    // ★ 2026-09-04 生产增强：S7 连接成功（首次成功 / 心跳线程重连成功）→ 在主线程启动锁格轮询
+    //   心跳线程是 std::thread，不能直接操作主线程 QTimer（跨线程操作 QTimer 未定义行为），
+    //   故经 s7Connected 信号（auto 连接：跨线程自动 Queued）回到主线程执行
+    connect(this, &PlcManager::s7Connected, this, [this]() {
+        if (!m_s7LockTimer)
+        {
+            m_s7LockTimer = new QTimer(this);
+            connect(m_s7LockTimer, &QTimer::timeout, this, &PlcManager::pollS7LockStatus);
+        }
+        if (!m_s7LockTimer->isActive())
+            m_s7LockTimer->start(PLC_S7_LOCK_INTERVAL_MS);
+        memset(m_s7PlcLastData, 0, PLC_S7_LOCK_READ_SIZE);  // 重置上次数据，避免重连后误判边沿
+        PLC_LOG_INFO("S7锁格轮询已启动 interval=%dms", PLC_S7_LOCK_INTERVAL_MS);
+    });
 }
 
 PlcManager::~PlcManager()
 {
+    // ★ 2026-09-04 崩溃定位日志
+    PLC_LOG_INFO("[析构] PlcManager 开始销毁");
     // 停止 S7 心跳线程
     m_bHeartThreadStart = false;
     if (m_heartThread.joinable())
@@ -48,8 +65,7 @@ PlcManager::~PlcManager()
         delete m_pSendPool;
         m_pSendPool = nullptr;
     }
-
-    PLC_LOG_INFO("PLC管理器已销毁 tcpSend=%lld tcpErr=%lld recv=%lld",
+    PLC_LOG_INFO("[析构] PlcManager 销毁完成 tcpSend=%lld tcpErr=%lld recv=%lld",
         m_tcpSendCount.load(), m_tcpSendErrCount.load(),
         m_recvCount.load());
 }
@@ -558,34 +574,38 @@ bool PlcManager::connectS7(const char* ip)
         disconnectS7();
     }
 
+    // ★ 保存目标 IP（首次失败后由心跳线程用此 IP 自动重连）
+    if (ip)
+        strncpy_s(m_plcConfig.szS7Ip, sizeof(m_plcConfig.szS7Ip), ip, 23);
+
     m_S7Plc = new CSiemensPLC();
     if (!m_S7Plc->connectTo(ip))
     {
+        // ★ 2026-09-04 生产增强：首次连接失败（如 PLC 尚未开机/网络未就绪）不销毁对象，
+        //   启动心跳线程每 2s 自动重连；重连成功后由心跳线程启动锁格轮询
         QString err = m_S7Plc->lastErrorText();
-        PLC_LOG_ERROR("S7连接失败 ip=%s err=%s", ip, err.toLocal8Bit().data());
-        emit s7Error(QString("S7连接失败: %1").arg(err));
-        delete m_S7Plc;
-        m_S7Plc = nullptr;
+        PLC_LOG_WARN("S7首次连接失败 ip=%s err=%s（心跳线程将自动重连）", ip, err.toLocal8Bit().data());
+        emit s7Error(QString("S7连接失败: %1（将自动重连）").arg(err));
+
+        if (!m_bHeartThreadStart)
+        {
+            m_bHeartThreadStart = true;
+            m_heartThread = std::thread(&PlcManager::OnS7HeartThread, this);
+            PLC_LOG_INFO("S7心跳线程已启动（等待重连） ip=%s", m_plcConfig.szS7Ip);
+        }
         return false;
     }
 
-    strncpy_s(m_plcConfig.szS7Ip, sizeof(m_plcConfig.szS7Ip), ip, 23);
     PLC_LOG_INFO("S7连接成功 ip=%s", ip);
 
     // 启动 S7 心跳线程（与 WCSApp simensS7::OnHeartThread 一致）
-    m_bHeartThreadStart = true;
-    m_heartThread = std::thread(&PlcManager::OnS7HeartThread, this);
-
-    // ★ 启动 S7 锁格轮询定时器（与 WCSApp FrmMainV2 S7 边沿检测一致）
-    if (!m_s7LockTimer)
+    if (!m_bHeartThreadStart)
     {
-        m_s7LockTimer = new QTimer(this);
-        connect(m_s7LockTimer, &QTimer::timeout, this, &PlcManager::pollS7LockStatus);
+        m_bHeartThreadStart = true;
+        m_heartThread = std::thread(&PlcManager::OnS7HeartThread, this);
     }
-    m_s7LockTimer->start(PLC_S7_LOCK_INTERVAL_MS);
-    memset(m_s7PlcLastData, 0, PLC_S7_LOCK_READ_SIZE);  // 重置上次数据，避免重连后误判边沿
-    PLC_LOG_INFO("S7锁格轮询已启动 interval=%dms", PLC_S7_LOCK_INTERVAL_MS);
 
+    // ★ 锁格轮询由 s7Connected 信号统一在主线程启动（见构造器 self-connect，兼容心跳重连成功路径）
     emit s7Connected(QString::fromLocal8Bit(ip));
     return true;
 }
@@ -745,17 +765,23 @@ void PlcManager::OnS7HeartThread()
 
         if (m_S7Plc && !m_S7Plc->isConnected())
         {
-            PLC_LOG_WARN("S7心跳检测到断线，尝试重连 ip=%s", m_plcConfig.szS7Ip);
+            // ★ 2026-09-04：连续失败日志降频（每约 20 次 ≈ 40~60s 一条），避免 PLC 长时间离线刷屏
+            static int s_heartFailLog = 0;
+            if (++s_heartFailLog == 1)
+                PLC_LOG_WARN("S7心跳检测到断线，开始自动重连 ip=%s（此后每~40s汇报一次）", m_plcConfig.szS7Ip);
             Sleep(100);
             m_S7Plc->connectTo(m_plcConfig.szS7Ip);
             if (m_S7Plc->isConnected())
             {
+                s_heartFailLog = 0;
                 PLC_LOG_INFO("S7心跳重连成功 ip=%s", m_plcConfig.szS7Ip);
                 emit s7Connected(QString::fromLocal8Bit(m_plcConfig.szS7Ip));
             }
             else
             {
-                PLC_LOG_ERROR("S7心跳重连失败 ip=%s", m_plcConfig.szS7Ip);
+                if (s_heartFailLog % 20 == 1)
+                    PLC_LOG_ERROR("S7心跳重连失败（已连续%3d次未成功） ip=%s",
+                                  s_heartFailLog, m_plcConfig.szS7Ip);
             }
         }
     }

@@ -18,7 +18,10 @@ ParseWorker::ParseWorker(TaskQueue* pQueue, GridBuffer* pBuffer, QObject* parent
 void ParseWorker::stop()
 {
     m_bRunning = false;
-    m_pQueue->wakeAll();
+    // ★ 2026-09-04 修复闪退：原 wakeAll() 唤醒后队列仍空，pop() 会再次 wait 永久阻塞，
+    //   导致 wait(3s) 超时后线程仍在运行，Qt 析构 QThread 子类时 "Destroyed while thread
+    //   is still running" 闪退。改为 stop() 置位停止标志，pop() 返回空任务使 run() 正常退出。
+    m_pQueue->stop();
 }
 
 void ParseWorker::run()

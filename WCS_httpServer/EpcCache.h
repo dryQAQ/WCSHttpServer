@@ -37,6 +37,8 @@ struct EpcCacheEntry
     bool      skuBound = false;  // ★ SKU-EPC 绑定是否完成（通过 RFID 查询获取）
     QDateTime expireTime;         // TTL 过期时间
     QDateTime receivedAt;         // ★ RFID 推送首次到达时间（用于 1s 超时判断，PLC_SEND_TIMEOUT_MS）
+    QDateTime sentAt;             // ★ PLC 发送指令时间（发送动作执行后记录，用于追溯 开始处理→发送 耗时）
+    QString   seq;                // ★ 2026-09-05 RFID 推送流水号（保存追溯用）
 
     bool isExpired()      const { return expireTime <= QDateTime::currentDateTime(); }
     bool isReadyForPlc()  const { return skuBound && !carNum.isEmpty(); }
@@ -101,6 +103,35 @@ public:
             epc.toLocal8Bit().data(), carNum.toLocal8Bit().data(),
             it->barcode.toLocal8Bit().data(), it->expireTime.toString("HH:mm:ss").toLocal8Bit().data());
         return carNum;
+    }
+
+    // ★ 2026-09-05：保存该EPC最近一次推送的流水号（追溯用；随条目TTL过期清理）
+    void setSeq(const QString& epc, const QString& seq)
+    {
+        if (epc.isEmpty() || seq.isEmpty()) return;
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return;                 // 条目不存在（已被清理）→ 忽略
+        if (it->isExpired())
+        {
+            m_cache.erase(it);
+            return;
+        }
+        it->seq = seq;
+    }
+
+    // ★ 2026-09-05：读取EPC的流水号（无记录/已过期返回空）
+    QString getSeq(const QString& epc) const
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return QString();
+        if (it->isExpired())
+        {
+            m_cache.erase(it);
+            return QString();
+        }
+        return it->seq;
     }
 
     // 检查EPC是否在缓存中且未过期
@@ -202,9 +233,16 @@ public:
                 // ★ 更新 carNum（RFID 推送的）
                 entry.carNum = it.value().second.isEmpty() ? DEFAULT_CAR_STR : it.value().second;
                 entry.expireTime = expire;
-                // ★ 记录 RFID 推送到达时间（用于 1s 超时判断）
-                //   每次 RFID 推送都刷新 receivedAt，因为现场每次推送都是新的读取事件
-                entry.receivedAt = QDateTime::currentDateTime();
+                // ★ 记录 RFID 推送首次到达时间（用于 1s 超时判断，PLC_SEND_TIMEOUT_MS）
+                //   仅首次推送时记录并作为计时起点；重复推送不刷新，避免同一EPC因多次读到被延后计时起点
+                if (!hasExisting)
+                {
+                    entry.receivedAt = QDateTime::currentDateTime();
+                }
+                else
+                {
+                    entry.receivedAt = existing->receivedAt;   // 保留首次到达时间，防止重复推送重置计时
+                }
                 m_cache[it.key()] = entry;
                 writeCount++;
                 if (!it.value().second.isEmpty() && it.value().second != DEFAULT_CAR_STR)
@@ -280,6 +318,25 @@ public:
         auto it = m_cache.find(epc);
         if (it == m_cache.end()) return -1;
         return it->receivedAt.msecsTo(QDateTime::currentDateTime());
+    }
+
+    // ★ 记录 EPC 的 PLC 发送指令时间（发送动作执行后调用）
+    void markSent(const QString& epc)
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return;
+        it->sentAt = QDateTime::currentDateTime();
+    }
+
+    // ★ 获取 开始处理(RFID首次到达) → PLC发送 的耗时；未发送返回 -1
+    qint64 getHandleSendMs(const QString& epc) const
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return -1;
+        if (it->sentAt.isNull()) return -1;   // 尚未发送
+        return it->receivedAt.msecsTo(it->sentAt);
     }
 
     // ★ 获取 EPC 对应的 barcode 和 carNum（用于就绪后发送 PLC）

@@ -67,6 +67,10 @@
       <AdditionalLibraryDirectories>D:\WCS\WCSApp\WCS_httpServer\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>HPSocket_U.lib;hlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <ClCompile>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
     <ClCompile>
@@ -77,6 +81,7 @@
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <AdditionalIncludeDirectories>..\..\inc\HPSocket;..\..\inc\hlog;..\..\wcsapps;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>HPSOCKET_STATIC_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -110,8 +115,10 @@
     <ClCompile Include="HttpServer.cpp" />
     <ClCompile Include="log_center.cpp" />
     <ClCompile Include="MainWindow.cpp" />
+    <ClCompile Include="OutboxManager.cpp" />
     <ClCompile Include="ParseWorker.cpp" />
     <ClCompile Include="PlcManager.cpp" />
+    <ClCompile Include="RfidPushClient.cpp" />
     <ClCompile Include="SiemensPLC.cpp" />
     <ClCompile Include="snap7.cpp" />
     <ClCompile Include="SortingDatabase.cpp" />
@@ -130,6 +137,7 @@
     <QtMoc Include="log_center.h" />
     <ClInclude Include="define.h" />
     <ClInclude Include="EpcCache.h" />
+    <QtMoc Include="OutboxManager.h" />
     <ClInclude Include="SortingDatabase.h" />
     <ClInclude Include="sqlite3.h" />
     <ClInclude Include="sqlite3ext.h" />
@@ -138,6 +146,7 @@
     <QtMoc Include="WaveManager.h" />
     <QtMoc Include="ParseWorker.h" />
     <QtMoc Include="PlcManager.h" />
+    <QtMoc Include="RfidPushClient.h" />
     <QtMoc Include="MainWindow.h" />
     <QtMoc Include="HttpServer.h" />
     <QtMoc Include="HttpClient.h" />

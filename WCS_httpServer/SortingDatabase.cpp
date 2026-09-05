@@ -12,6 +12,197 @@
 // （宏定义已移至 LogService.h 统一管理）
 
 // ============================================================================
+// UI 只读查询实现（2026-09-04 P0修复）
+// 与原 runOnDbThread 逻辑一致，仅将连接改为调用方传入的只读连接（WAL 并行读），
+// 供 statistics/queryByBarcode/queryAllWithPending/cleanupOldRecords 复用，
+// 避免万级落库占用 DB 线程时阻塞 UI 查询。
+// ============================================================================
+namespace {
+
+QVector<SortingRecord> queryByBarcodeImpl(const QSqlDatabase& db, const QString& barcode, int limit)
+{
+    QVector<SortingRecord> result;
+    if (!db.isValid() || !db.isOpen()) return result;
+
+    // ① 查询实际分拣记录（sorting_records 表，PLC 落格反馈写入）
+    QSqlQuery q(db);
+    q.prepare(SQL_QUERY_BY_BARCODE);
+    q.addBindValue(barcode);
+    q.addBindValue(limit);
+    if (q.exec()) {
+        while (q.next()) {
+            SortingRecord rec;
+            rec.id = q.value(0).toInt();
+            rec.orderCode = q.value(1).toString();
+            rec.barcode = q.value(2).toString();
+            rec.sku = q.value(3).toString();           // ★ SKU编码
+            rec.gridNum = q.value(4).toString();
+            rec.carNum = q.value(5).toString();
+            rec.firstCar = q.value(6).toString();      // ★ 首车号
+            rec.lastCar  = q.value(7).toString();      // ★ 尾车号
+            rec.gridCount = q.value(8).toInt();
+            rec.volu = q.value(9).toString();
+            rec.sortTime = q.value(10).toString();
+            rec.createTime = q.value(11).toString();
+            rec.status = QString::fromUtf8("已分拣");  // 来自 sorting_records 表，PLC 已落格
+            result.append(rec);
+        }
+    }
+
+    // ② 查询波次计划明细（return_wave_item 表，波次下发时写入）
+    //    使用 NOT EXISTS 排除已在 sorting_records 中落格的同波次同EPC编码，
+    //    保证同一 (order_code, inco) 不会同时出现「已分拣」和「待分拣」两种状态
+    {
+        QSqlQuery q2(db);
+        q2.prepare(SQL_QUERY_PENDING_BY_BARCODE);
+        q2.addBindValue(barcode);
+        q2.addBindValue(limit);
+        if (q2.exec()) {
+            while (q2.next()) {
+                SortingRecord rec;
+                rec.id = 0;  // 计划明细无自增ID
+                rec.orderCode = q2.value(0).toString();
+                rec.barcode = q2.value(1).toString();
+                rec.gridNum = q2.value(2).toString();
+                rec.carNum = "1";  // 计划明细无小车号，默认=1
+                rec.gridCount = q2.value(3).toInt();  // plan_qty
+                rec.volu = q2.value(4).toString();
+                rec.sortTime = "";   // 尚未分拣，无分拣时间
+                rec.createTime = ""; // 计划明细无创建时间
+                rec.status = QString::fromUtf8("待分拣");  // 来自 return_wave_item 表，尚未落格
+                result.append(rec);
+            }
+        }
+    }
+
+    Data_INFO("[SortingDB] queryByBarcode barcode=%s limit=%d resultCount=%d",
+        barcode.toLocal8Bit().data(), limit, result.size());
+    for (const auto& rec : result)
+    {
+        Data_INFO("[SortingDB] queryByBarcode 记录 id=%d epc=%s grid=%s carNum=%s firstCar=%s lastCar=%s orderCode=%s status=%s",
+            rec.id, rec.barcode.toLocal8Bit().data(), rec.gridNum.toLocal8Bit().data(),
+            rec.carNum.toLocal8Bit().data(),
+            rec.firstCar.isEmpty() ? "(空)" : rec.firstCar.toLocal8Bit().data(),
+            rec.lastCar.isEmpty()  ? "(空)" : rec.lastCar.toLocal8Bit().data(),
+            rec.orderCode.toLocal8Bit().data(), rec.status.toLocal8Bit().data());
+    }
+    return result;
+}
+
+QVector<SortingRecord> queryAllWithPendingImpl(const QSqlDatabase& db, int limit)
+{
+    QVector<SortingRecord> result;
+    if (!db.isValid() || !db.isOpen()) return result;
+
+    // ① 已分拣：sorting_records 全部记录
+    {
+        QSqlQuery q(db);
+        q.prepare(SQL_QUERY_ALL);
+        q.addBindValue(limit);
+        if (q.exec()) {
+            while (q.next()) {
+                SortingRecord rec;
+                rec.id = q.value(0).toInt();
+                rec.orderCode = q.value(1).toString();
+                rec.barcode = q.value(2).toString();
+                rec.sku = q.value(3).toString();           // ★ SKU编码
+                rec.gridNum = q.value(4).toString();
+                rec.carNum = q.value(5).toString();
+                rec.firstCar = q.value(6).toString();      // ★ 首车号
+                rec.lastCar  = q.value(7).toString();      // ★ 尾车号
+                rec.gridCount = q.value(8).toInt();
+                rec.volu = q.value(9).toString();
+                rec.sortTime = q.value(10).toString();
+                rec.createTime = q.value(11).toString();
+                rec.status = QString::fromUtf8("已分拣");
+                result.append(rec);
+            }
+        }
+    }
+
+    // ② 待分拣：return_wave_item 中排除已落格（NOT EXISTS）
+    {
+        QSqlQuery q(db);
+        q.prepare(SQL_QUERY_ALL_PENDING);
+        q.addBindValue(limit);
+        if (q.exec()) {
+            while (q.next()) {
+                SortingRecord rec;
+                rec.id = 0;
+                rec.orderCode = q.value(0).toString();
+                rec.barcode = q.value(1).toString();
+                rec.gridNum = q.value(2).toString();
+                rec.carNum = "1";
+                rec.gridCount = q.value(3).toInt();
+                rec.volu = q.value(4).toString();
+                rec.sortTime = "";
+                rec.createTime = "";
+                rec.status = QString::fromUtf8("待分拣");
+                result.append(rec);
+            }
+        }
+    }
+
+    Data_INFO("[SortingDB] queryAllWithPending limit=%d resultCount=%d", limit, result.size());
+    return result;
+}
+
+SortingStatistics statisticsImpl(const QSqlDatabase& db)
+{
+    SortingStatistics stats;
+    if (!db.isValid() || !db.isOpen()) return stats;
+
+    QSqlQuery q(db);
+    if (q.exec(SQL_COUNT_ALL) && q.next())
+        stats.totalRecords = q.value(0).toInt();
+    else
+        Data_WARN("[SortingDB] statistics SQL_COUNT_ALL 失败 err=%s", q.lastError().text().toLocal8Bit().data());
+
+    QString today = QDate::currentDate().toString("yyyy-MM-dd");
+    q.prepare(SQL_COUNT_TODAY);
+    q.addBindValue(today + " 00:00:00");
+    if (q.exec() && q.next())
+        stats.todayRecords = q.value(0).toInt();
+    else
+        Data_WARN("[SortingDB] statistics SQL_COUNT_TODAY 失败 err=%s", q.lastError().text().toLocal8Bit().data());
+
+    if (q.exec(SQL_COUNT_WAVES) && q.next())
+        stats.totalWaves = q.value(0).toInt();
+    else
+        Data_WARN("[SortingDB] statistics SQL_COUNT_WAVES 失败 err=%s", q.lastError().text().toLocal8Bit().data());
+
+    if (q.exec(SQL_COUNT_GRIDS) && q.next())
+        stats.totalGrids = q.value(0).toInt();
+    else
+        Data_WARN("[SortingDB] statistics SQL_COUNT_GRIDS 失败 err=%s", q.lastError().text().toLocal8Bit().data());
+
+    if (q.exec(SQL_LAST_SORT_TIME) && q.next())
+        stats.lastSortTime = q.value(0).toString();
+
+    Data_INFO("[SortingDB] statistics 结果: total=%d today=%d waves=%d grids=%d lastSort=%s",
+        stats.totalRecords, stats.todayRecords, stats.totalWaves, stats.totalGrids,
+        stats.lastSortTime.toLocal8Bit().data());
+    return stats;
+}
+
+void cleanupOldRecordsImpl(const QSqlDatabase& db, int retainDays)
+{
+    if (!db.isValid() || !db.isOpen()) return;
+    QDateTime cutoff = QDateTime::currentDateTime().addDays(-retainDays);
+    QSqlQuery q(db);
+    q.prepare(SQL_DELETE_OLD);
+    q.addBindValue(cutoff.toString("yyyy-MM-dd HH:mm:ss"));
+    if (q.exec()) {
+        int deleted = q.numRowsAffected();
+        if (deleted > 0)
+            qDebug() << "[SortingDB] 已清理" << deleted << "条旧记录（" << retainDays << "天前）";
+        q.exec(SQL_PRAGMA_OPTIMIZE);
+    }
+}
+
+} // namespace
+
+// ============================================================================
 // 构造 / 析构
 // ============================================================================
 
@@ -122,6 +313,34 @@ void SortingDatabase::close()
 bool SortingDatabase::isOpen() const
 {
     return m_bOpened != 0;
+}
+
+// ★ 获取当前线程的只读查询连接（懒创建，每线程独立）
+//   WAL 模式下只读连接与 DB 线程的写连接并行工作：
+//   落库任务（如万级波次明细 insertWaveItems）占用 DB 线程时，UI 查询走本连接并行读，不阻塞
+QSqlDatabase SortingDatabase::queryDb() const
+{
+    if (!m_queryConns.hasLocalData())
+    {
+        QString connName = QString("SortingDB_Query_%1").arg((quintptr)QThread::currentThreadId());
+        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
+        db.setDatabaseName(m_dbPath);
+        if (!db.open())
+        {
+            Data_ERROR("[SortingDB] 只读连接打开失败 conn=%s errText=%s",
+                connName.toLocal8Bit().data(),
+                db.lastError().text().toLocal8Bit().data());
+        }
+        else
+        {
+            db.exec(SQL_PRAGMA_BUSY_TIMEOUT);   // 等待写锁上限（WAL 下写不阻塞读，此处仅防极端竞争）
+            Data_INFO("[SortingDB] 只读连接已创建 conn=%s tid=%llu",
+                connName.toLocal8Bit().data(),
+                (unsigned long long)(quintptr)QThread::currentThreadId());
+        }
+        m_queryConns.setLocalData(db);
+    }
+    return m_queryConns.localData();
 }
 
 // ============================================================================
@@ -237,82 +456,13 @@ bool SortingDatabase::insertRecord(const QString& orderCode, const QString& barc
 
 QVector<SortingRecord> SortingDatabase::queryByBarcode(const QString& barcode, int limit)
 {
+    // ★ UI 查询走只读连接（WAL 并行读）：万级落库占用 DB 线程时不阻塞调用线程
+    QSqlDatabase readDb = queryDb();
+    if (readDb.isValid() && readDb.isOpen())
+        return queryByBarcodeImpl(readDb, barcode, limit);
+    // 降级：只读连接不可用（DB 未初始化等）→ 走 DB 线程原路径
     return runOnDbThread([&]() -> QVector<SortingRecord> {
-        QVector<SortingRecord> result;
-        if (!m_bOpened) return result;
-        QSqlDatabase db = QSqlDatabase::database("SortingDB");
-        if (!db.isOpen()) return result;
-
-        // ① 查询实际分拣记录（sorting_records 表，PLC 落格反馈写入）
-        QSqlQuery q(db);
-        q.prepare(SQL_QUERY_BY_BARCODE);
-        q.addBindValue(barcode);
-        q.addBindValue(limit);
-        if (q.exec()) {
-            while (q.next()) {
-                SortingRecord rec;
-                rec.id = q.value(0).toInt();
-                rec.orderCode = q.value(1).toString();
-                rec.barcode = q.value(2).toString();
-                rec.sku = q.value(3).toString();           // ★ SKU编码
-                rec.gridNum = q.value(4).toString();
-                rec.carNum = q.value(5).toString();
-                rec.firstCar = q.value(6).toString();      // ★ 首车号
-                rec.lastCar  = q.value(7).toString();      // ★ 尾车号
-                rec.gridCount = q.value(8).toInt();
-                rec.volu = q.value(9).toString();
-                rec.sortTime = q.value(10).toString();
-                rec.createTime = q.value(11).toString();
-                rec.status = QString::fromUtf8("已分拣");  // 来自 sorting_records 表，PLC 已落格
-                result.append(rec);
-            }
-        }
-
-        // ② 查询波次计划明细（return_wave_item 表，波次下发时写入）
-        //    使用 NOT EXISTS 排除已在 sorting_records 中落格的同波次同EPC编码，
-        //    保证同一 (order_code, inco) 不会同时出现「已分拣」和「待分拣」两种状态
-        {
-            QSqlQuery q2(db);
-            // SQL_QUERY_PENDING_BY_BARCODE:
-            //   SELECT i.order_code, i.inco, i.grid_num, i.plan_qty, i.volu
-            //   FROM return_wave_item i
-            //   WHERE i.inco = ? AND NOT EXISTS (
-            //     SELECT 1 FROM sorting_records s
-            //     WHERE s.barcode = i.inco AND s.order_code = i.order_code)
-            //   ORDER BY i.id DESC LIMIT ?
-            q2.prepare(SQL_QUERY_PENDING_BY_BARCODE);
-            q2.addBindValue(barcode);
-            q2.addBindValue(limit);
-            if (q2.exec()) {
-                while (q2.next()) {
-                    SortingRecord rec;
-                    rec.id = 0;  // 计划明细无自增ID
-                    rec.orderCode = q2.value(0).toString();
-                    rec.barcode = q2.value(1).toString();
-                    rec.gridNum = q2.value(2).toString();
-                    rec.carNum = "1";  // 计划明细无小车号，默认=1
-                    rec.gridCount = q2.value(3).toInt();  // plan_qty
-                    rec.volu = q2.value(4).toString();
-                    rec.sortTime = "";   // 尚未分拣，无分拣时间
-                    rec.createTime = ""; // 计划明细无创建时间
-                    rec.status = QString::fromUtf8("待分拣");  // 来自 return_wave_item 表，尚未落格
-                    result.append(rec);
-                }
-            }
-        }
-
-        Data_INFO("[SortingDB] queryByBarcode barcode=%s limit=%d resultCount=%d",
-            barcode.toLocal8Bit().data(), limit, result.size());
-        for (const auto& rec : result)
-        {
-            Data_INFO("[SortingDB] queryByBarcode 记录 id=%d epc=%s grid=%s carNum=%s firstCar=%s lastCar=%s orderCode=%s status=%s",
-                rec.id, rec.barcode.toLocal8Bit().data(), rec.gridNum.toLocal8Bit().data(),
-                rec.carNum.toLocal8Bit().data(),
-                rec.firstCar.isEmpty() ? "(空)" : rec.firstCar.toLocal8Bit().data(),
-                rec.lastCar.isEmpty()  ? "(空)" : rec.lastCar.toLocal8Bit().data(),
-                rec.orderCode.toLocal8Bit().data(), rec.status.toLocal8Bit().data());
-        }
-        return result;
+        return queryByBarcodeImpl(QSqlDatabase::database("SortingDB"), barcode, limit);
     });
 }
 
@@ -428,118 +578,25 @@ QVector<SortingRecord> SortingDatabase::queryAll(int limit)
 // ═════════════════════════════════════════════════════════════════════════════
 QVector<SortingRecord> SortingDatabase::queryAllWithPending(int limit)
 {
+    // ★ UI 查询走只读连接（WAL 并行读）：万级落库占用 DB 线程时不阻塞调用线程
+    QSqlDatabase readDb = queryDb();
+    if (readDb.isValid() && readDb.isOpen())
+        return queryAllWithPendingImpl(readDb, limit);
+    // 降级：只读连接不可用（DB 未初始化等）→ 走 DB 线程原路径
     return runOnDbThread([&]() -> QVector<SortingRecord> {
-        QVector<SortingRecord> result;
-        if (!m_bOpened) return result;
-        QSqlDatabase db = QSqlDatabase::database("SortingDB");
-        if (!db.isOpen()) return result;
-
-        // ① 已分拣：sorting_records 全部记录
-        {
-            QSqlQuery q(db);
-            q.prepare(SQL_QUERY_ALL);
-            q.addBindValue(limit);
-            if (q.exec()) {
-                while (q.next()) {
-                    SortingRecord rec;
-                    rec.id = q.value(0).toInt();
-                    rec.orderCode = q.value(1).toString();
-                    rec.barcode = q.value(2).toString();
-                    rec.sku = q.value(3).toString();           // ★ SKU编码
-                    rec.gridNum = q.value(4).toString();
-                    rec.carNum = q.value(5).toString();
-                    rec.firstCar = q.value(6).toString();      // ★ 首车号
-                    rec.lastCar  = q.value(7).toString();      // ★ 尾车号
-                    rec.gridCount = q.value(8).toInt();
-                    rec.volu = q.value(9).toString();
-                    rec.sortTime = q.value(10).toString();
-                    rec.createTime = q.value(11).toString();
-                    rec.status = QString::fromUtf8("已分拣");
-                    result.append(rec);
-                }
-            }
-        }
-
-        // ② 待分拣：return_wave_item 中排除已落格（NOT EXISTS）
-        {
-            QSqlQuery q(db);
-            // SQL_QUERY_ALL_PENDING:
-            //   SELECT i.order_code, i.inco, i.grid_num, i.plan_qty, i.volu
-            //   FROM return_wave_item i
-            //   WHERE NOT EXISTS (SELECT 1 FROM sorting_records s
-            //     WHERE s.barcode = i.inco AND s.order_code = i.order_code)
-            //   ORDER BY i.id DESC LIMIT ?
-            q.prepare(SQL_QUERY_ALL_PENDING);
-            q.addBindValue(limit);
-            if (q.exec()) {
-                while (q.next()) {
-                    SortingRecord rec;
-                    rec.id = 0;
-                    rec.orderCode = q.value(0).toString();
-                    rec.barcode = q.value(1).toString();
-                    rec.gridNum = q.value(2).toString();
-                    rec.carNum = "1";
-                    rec.gridCount = q.value(3).toInt();
-                    rec.volu = q.value(4).toString();
-                    rec.sortTime = "";
-                    rec.createTime = "";
-                    rec.status = QString::fromUtf8("待分拣");
-                    result.append(rec);
-                }
-            }
-        }
-
-        Data_INFO("[SortingDB] queryAllWithPending limit=%d resultCount=%d", limit, result.size());
-        return result;
+        return queryAllWithPendingImpl(QSqlDatabase::database("SortingDB"), limit);
     });
 }
 
 SortingStatistics SortingDatabase::statistics()
 {
+    // ★ UI 查询走只读连接（WAL 并行读）：万级落库占用 DB 线程时不阻塞调用线程
+    QSqlDatabase readDb = queryDb();
+    if (readDb.isValid() && readDb.isOpen())
+        return statisticsImpl(readDb);
+    // 降级：只读连接不可用（DB 未初始化等）→ 走 DB 线程原路径
     return runOnDbThread([&]() -> SortingStatistics {
-        SortingStatistics stats;
-        if (!m_bOpened) {
-            Data_WARN("[SortingDB] statistics 跳过: 数据库未打开");
-            return stats;
-        }
-        QSqlDatabase db = QSqlDatabase::database("SortingDB");
-        if (!db.isValid() || !db.isOpen()) {
-            Data_WARN("[SortingDB] statistics 跳过: 数据库连接无效 isValid=%d isOpen=%d",
-                db.isValid() ? 1 : 0, db.isOpen() ? 1 : 0);
-            return stats;
-        }
-
-        QSqlQuery q(db);
-        if (q.exec(SQL_COUNT_ALL) && q.next())
-            stats.totalRecords = q.value(0).toInt();
-        else
-            Data_WARN("[SortingDB] statistics SQL_COUNT_ALL 失败 err=%s", q.lastError().text().toLocal8Bit().data());
-
-        QString today = QDate::currentDate().toString("yyyy-MM-dd");
-        q.prepare(SQL_COUNT_TODAY);
-        q.addBindValue(today + " 00:00:00");
-        if (q.exec() && q.next())
-            stats.todayRecords = q.value(0).toInt();
-        else
-            Data_WARN("[SortingDB] statistics SQL_COUNT_TODAY 失败 err=%s", q.lastError().text().toLocal8Bit().data());
-
-        if (q.exec(SQL_COUNT_WAVES) && q.next())
-            stats.totalWaves = q.value(0).toInt();
-        else
-            Data_WARN("[SortingDB] statistics SQL_COUNT_WAVES 失败 err=%s", q.lastError().text().toLocal8Bit().data());
-
-        if (q.exec(SQL_COUNT_GRIDS) && q.next())
-            stats.totalGrids = q.value(0).toInt();
-        else
-            Data_WARN("[SortingDB] statistics SQL_COUNT_GRIDS 失败 err=%s", q.lastError().text().toLocal8Bit().data());
-
-        if (q.exec(SQL_LAST_SORT_TIME) && q.next())
-            stats.lastSortTime = q.value(0).toString();
-
-        Data_INFO("[SortingDB] statistics 结果: total=%d today=%d waves=%d grids=%d lastSort=%s",
-            stats.totalRecords, stats.todayRecords, stats.totalWaves, stats.totalGrids,
-            stats.lastSortTime.toLocal8Bit().data());
-        return stats;
+        return statisticsImpl(QSqlDatabase::database("SortingDB"));
     });
 }
 
@@ -584,15 +641,13 @@ QVector<ReturnWaveItemRecord> SortingDatabase::querySkuGridMapping(const QString
         if (orderCode.isEmpty())
         {
             // 不指定波次：查询所有波次中该 SKU 的格口分配
-            q.prepare("SELECT id, order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code "
-                      "FROM return_wave_item WHERE inco = ? ORDER BY order_code DESC, grid_num ASC");
+            q.prepare(SQL_QUERY_SKU_GRID_MAPPING);
             q.addBindValue(sku);
         }
         else
         {
             // 指定波次：只查询该波次中的分配
-            q.prepare("SELECT id, order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code "
-                      "FROM return_wave_item WHERE inco = ? AND order_code = ? ORDER BY grid_num ASC");
+            q.prepare(SQL_QUERY_SKU_GRID_MAPPING_BY_ORDER);
             q.addBindValue(sku);
             q.addBindValue(orderCode);
         }
@@ -625,20 +680,16 @@ QVector<ReturnWaveItemRecord> SortingDatabase::querySkuGridMapping(const QString
 
 void SortingDatabase::cleanupOldRecords(int retainDays)
 {
+    // ★ UI 维护操作走只读连接（WAL 并行读）：万级落库占用 DB 线程时不阻塞调用线程
+    QSqlDatabase readDb = queryDb();
+    if (readDb.isValid() && readDb.isOpen())
+    {
+        cleanupOldRecordsImpl(readDb, retainDays);
+        return;
+    }
+    // 降级：只读连接不可用（DB 未初始化等）→ 走 DB 线程原路径
     runOnDbThread([&]() {
-        if (!m_bOpened) return;
-        QSqlDatabase db = QSqlDatabase::database("SortingDB");
-        if (!db.isOpen()) return;
-        QDateTime cutoff = QDateTime::currentDateTime().addDays(-retainDays);
-        QSqlQuery q(db);
-        q.prepare(SQL_DELETE_OLD);
-        q.addBindValue(cutoff.toString("yyyy-MM-dd HH:mm:ss"));
-        if (q.exec()) {
-            int deleted = q.numRowsAffected();
-            if (deleted > 0)
-                qDebug() << "[SortingDB] 已清理" << deleted << "条旧记录（" << retainDays << "天前）";
-            q.exec(SQL_PRAGMA_OPTIMIZE);
-        }
+        cleanupOldRecordsImpl(QSqlDatabase::database("SortingDB"), retainDays);
     });
 }
 

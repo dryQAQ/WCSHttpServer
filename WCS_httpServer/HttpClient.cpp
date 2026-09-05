@@ -14,13 +14,25 @@ HttpClient::HttpClient(QObject* parent)
 
 HttpClient::~HttpClient()
 {
+    // ★ 2026-09-04 崩溃定位日志
+    HTTP_LOG_INFO("[析构] HttpClient 开始销毁 pending=%d", m_pending.size());
     // 取消所有进行中的 WMS 回传请求
     for (auto it = m_pending.begin(); it != m_pending.end(); ++it)
     {
         if (it->timer)  { it->timer->stop(); delete it->timer; }
-        if (it->reply)  { it->reply->abort(); it->reply->deleteLater(); }
+        if (it->reply)
+        {
+            // ★ 2026-09-02 防崩溃：abort() 可能同步触发 finished → onReplyFinished /
+            //   onRfidBindingReplyFinished 执行 m_pending.erase()，导致本循环迭代器失效（UB/崩溃）。
+            //   先断开 finished 连接再 abort（与 onReplyTimeout 中的处理一致）
+            disconnect(it->reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
+            disconnect(it->reply, &QNetworkReply::finished, this, &HttpClient::onRfidBindingReplyFinished);
+            it->reply->abort();
+            it->reply->deleteLater();
+        }
     }
     m_pending.clear();
+    HTTP_LOG_INFO("[析构] HttpClient 销毁完成");
 }
 
 void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
@@ -69,6 +81,7 @@ void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
     pr.timer       = timer;
     pr.orderCode   = orderCode;
     pr.sumLocation = sumLocation;
+    pr.url         = m_url;   // ★ 2026-09-04：记录目标URL（失败/超时日志提示用）
     m_pending.insert(reply, pr);
 
     // 连接信号（异步，不阻塞主线程）
@@ -93,11 +106,17 @@ void HttpClient::onReplyFinished()
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
     // ★ status=0 时记录 Qt 网络层错误，方便排查连接失败原因
+    // ★ 2026-09-04：日志与 UI 明确提示"回传地址不通/网络失败"，带 URL 与错误描述
     if (statusCode == 0) {
-        HTTP_LOG_ERROR("回传网络层失败 orderCode=%s error=%d errorString=%s",
+        QString errText = reply->errorString();
+        HTTP_LOG_ERROR("回传网络层失败（地址不通或网络异常） url=%s orderCode=%s error=%d errorString=%s",
+            pr.url.toLocal8Bit().data(),
             pr.orderCode.toLocal8Bit().data(),
             reply->error(),
-            reply->errorString().toLocal8Bit().data());
+            errText.toLocal8Bit().data());
+        LogCenter::Instance()->wcs_run_log_warn(false,
+            QString("[回传] 网络失败（请检查回传地址是否可达） url=%1 orderCode=%2 error=%3")
+                .arg(pr.url).arg(pr.orderCode).arg(errText));
     }
 
     reply->deleteLater();
@@ -127,11 +146,13 @@ void HttpClient::onReplyTimeout()
         if (it->timer == timer)
         {
             PendingRequest& pr = it.value();
-            HTTP_LOG_WARN("回传超时 orderCode=%s timeout=%dms",
+            // ★ 2026-09-04：超时日志明确提示"可能地址不通/响应慢"，带 URL
+            HTTP_LOG_WARN("回传超时（可能地址不通或响应过慢） url=%s orderCode=%s timeout=%dms",
+                pr.url.toLocal8Bit().data(),
                 pr.orderCode.toLocal8Bit().data(), m_timeoutMs);
             LogCenter::Instance()->wcs_run_log_warn(false,
-                QString("[Report] 回传超时 orderCode=%1 timeout=%2ms")
-                    .arg(pr.orderCode).arg(m_timeoutMs));
+                QString("[回传] 超时（可能地址不通或响应过慢） url=%1 orderCode=%2 timeout=%3ms")
+                    .arg(pr.url).arg(pr.orderCode).arg(m_timeoutMs));
 
             // ★ 关键修复：先断开 finished 信号再 abort
             //   防止 onReplyFinished 在 abort 时同步触发导致双重 erase
@@ -177,6 +198,7 @@ void HttpClient::sendGenericFeedback(const QJsonObject& json, const QString& con
     pr.timer       = timer;
     pr.orderCode   = context.isEmpty() ? "lockGrid" : context;
     pr.sumLocation = 0;
+    pr.url         = m_url;   // ★ 2026-09-04：记录目标URL
     m_pending.insert(reply, pr);
 
     connect(reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
@@ -227,6 +249,7 @@ void HttpClient::sendEndFeedback(const QJsonObject& json, const QString& context
     pr.timer       = timer;
     pr.orderCode   = context.isEmpty() ? "end" : context;
     pr.sumLocation = 0;
+    pr.url         = m_endUrl;   // ★ 2026-09-04：记录 H8 完结回传目标URL
     m_pending.insert(reply, pr);
 
     connect(reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
@@ -272,6 +295,10 @@ void HttpClient::queryRfidBinding(const QStringList& epcList)
     QUrl url(m_rfidQueryUrl);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
+    // ★ 2026-09-05：RFID 查询接口鉴权 —— Authorization 头完整值（形如 "APP_KEYS xxx"）由 XML 配置
+    //   （rfidAppkey）直接提供，代码不做拼凑；空则不发送，兼容本地 mock
+    if (!m_rfidAppkey.isEmpty())
+        request.setRawHeader("Authorization", m_rfidAppkey.toUtf8());
 
     QNetworkReply* reply = m_pNetworkMgr->post(request, postData);
 
@@ -285,6 +312,7 @@ void HttpClient::queryRfidBinding(const QStringList& epcList)
     pr.timer       = timer;
     pr.orderCode   = "rfidQuery";
     pr.sumLocation = epcList.size();
+    pr.url         = m_rfidQueryUrl;   // ★ 2026-09-04：记录目标URL
     m_pending.insert(reply, pr);
 
     connect(reply, &QNetworkReply::finished, this, &HttpClient::onRfidBindingReplyFinished);
@@ -328,7 +356,8 @@ void HttpClient::onRfidBindingReplyFinished()
     QMap<QString, QString> epcBarcodeMap;
     if (statusCode != 200)
     {
-        HTTP_LOG_WARN("RFID绑定查询失败 HTTP状态异常 status=%d body=%s epcList大小=%d",
+        HTTP_LOG_WARN("RFID绑定查询失败 HTTP状态异常 url=%s status=%d body=%s epcList大小=%d",
+            pr.url.toLocal8Bit().data(),
             statusCode, QString::fromUtf8(respBody).left(200).toLocal8Bit().data(),
             pr.sumLocation);
         // ★ 日志: 详细记录失败信息，方便排查是网络问题还是 RFID 服务问题

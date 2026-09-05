@@ -65,18 +65,23 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (m_bRunning)
+    if (m_bRunning || m_stopPhase == StopEnding)
     {
         auto ret = QMessageBox::question(this, "确认退出",
-            "HTTP服务正在运行中，确定退出吗？",
+            m_bRunning
+                ? QString("HTTP服务正在运行中，确定退出吗？\n（建议先点击\"结束任务\"完成完结回传）")
+                : QString("服务正在停止中（完结回传未完成），确定退出吗？\n（H8 未确认消息将在下次启动自动补传）"),
             QMessageBox::Yes | QMessageBox::No);
         if (ret != QMessageBox::Yes)
         {
             event->ignore();
             return;
         }
+        // ★ 2026-09-02：退出前执行停止收尾（幂等），避免服务/线程随窗口析构残留
+        doActualStop();
     }
-    onStartStop();
+    // ★ 2026-09-02 修复：未运行时关闭窗口不再调用 onStartStop()
+    //   （原实现会误走"启动"分支，意外创建 HttpServer/HttpClient 后再随窗口销毁，存在崩溃风险）
     event->accept();
 }
 
@@ -573,37 +578,65 @@ void MainWindow::applyConfig()
 
 void MainWindow::onStartStop()
 {
-    if (m_bRunning)//状态：开启 --> 关闭
+    if (m_bRunning)//状态：开启 --> 关闭（点击"结束任务"）
     {
-        // ★ 纠正2: 点击"结束任务"按钮时触发完结回传（H8）
-        //   唯一触发时机，移除所有自动触发逻辑
-        if (m_pServer)
+        // ★ 2026-09-02 修复"结束任务卡死/闪退"：
+        //   ① 点击后触发 H8 完结回传，进入 StopEnding 等待阶段；
+        //   ② 等待期间按钮保持可点，再次点击 = 取消等待、立即停止
+        //      （H8 未确认的消息保留在 outbox_end，下次启动自动补传）；
+        //   ③ 无论 H8 成功/失败耗尽/超时/用户取消，最终都走到幂等的 doActualStop()，
+        //      服务停止后软件保持运行，不卡死、不闪退。
+        if (m_stopPhase == StopEnding)
+        {
+            appendLog("[完结回传] 用户取消等待，立即停止服务（H8 未确认，下次启动自动补传）", true);
+            doActualStop();
+            return;
+        }
+        m_stopPhase = StopEnding;
+
+        // ★ 2026-09-02：sendEnd 返回 false = 无活跃波次/状态不允许完结（同步拒绝）
+        //   → 无需等待回传，立即停止服务（不卡 30s 等待）
+        if (m_pServer && !m_pServer->sendEnd())
+        {
+            appendLog("[完结回传] 无活跃波次或状态不允许完结，直接停止服务", true);
+            m_stopPhase = StopNone;   // 允许 doActualStop 正常执行（非重复路径）
+            doActualStop();
+            return;
+        }
+        else if (!m_pServer)
+        {
+            appendLog("[完结回传] 服务未运行，无法触发完结回传", true);
+            m_stopPhase = StopNone;
+            doActualStop();
+            return;
+        }
+        else
         {
             appendLog("[完结回传] 已触发完结回传（H8）");
-            m_pServer->sendEnd();
         }
 
         // ★ 不立即停止服务，等待 H8 完结回传结果返回
-        //   实际停止由 endReportFinished 信号触发 doActualStop()
+        //   实际停止由 endReportFinished 信号 / 超时 / 用户取消 → doActualStop()
         m_bRunning = false;
-        m_btnStartStop->setEnabled(false);  // 禁用按钮防止重复点击
-        m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "停止中..."));
+        m_btnStartStop->setEnabled(true);  // ★ 保持可点 = "立即停止"（不再禁用，避免无法取消）
+        m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "停止中…(点击立即停止)"));
         m_btnStartStop->setStyleSheet(
             "QPushButton { background-color: #FF9800; color: white; font-size: 14px; font-weight: bold; "
             "border-radius: 4px; padding: 6px 16px; }");
         m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 停止中"));
         m_lblServerStatus->setStyleSheet("font-size: 14px; color: #FF9800;");
 
-        // ★ 安全网：30秒超时后强制停止，防止按钮永久卡死
+        // ★ 安全网：END_WAIT_TIMEOUT_MS 超时后强制停止（doActualStop 幂等，可安全重复触发）
         if (!m_stopTimeoutTimer) {
             m_stopTimeoutTimer = new QTimer(this);
             m_stopTimeoutTimer->setSingleShot(true);
             connect(m_stopTimeoutTimer, &QTimer::timeout, this, [this]() {
-                appendLog("[完结回传] 超时未完成，强制停止服务", true);
+                appendLog(QString("[完结回传] 等待超时(%1s)，强制停止服务（H8 未确认，下次启动自动补传）")
+                              .arg(END_WAIT_TIMEOUT_MS / 1000), true);
                 doActualStop();
             });
         }
-        m_stopTimeoutTimer->start(30000);  // 30秒超时
+        m_stopTimeoutTimer->start(END_WAIT_TIMEOUT_MS);  // 等待上限（不卡死）
         // 重置TCP状态
         m_lblTcpStatus->setText(QCoreApplication::translate("MainWindow", "TCP: 未连接"));
         m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
@@ -652,13 +685,19 @@ void MainWindow::onStartStop()
         m_btnStartSorting->setEnabled(false);
         m_bindingDirty = false;
 
-        appendLog("服务正在停止，等待完结回传结果...");
+        appendLog(QString("服务正在停止，等待完结回传结果（最长 %1s；可再次点击按钮立即停止）...")
+                      .arg(END_WAIT_TIMEOUT_MS / 1000));
     }
     else    //状态：关闭 --> 开启
     {
+        // ★ 2026-09-02：新启动会话，重置停止阶段（防上一轮 StopEnding 残留影响）
+        m_stopPhase = StopNone;
+
         // ★ 服务始终允许启动以接收 WMS 的绑定请求和波次数据
         //    容器绑定校验移至波次推送入口（InsertWaveInfo），避免循环依赖：
         //    服务必须运行才能接收 BindingLatticePort 请求完成绑定
+        // ★ 防泄漏配对：每次启动新建 HttpServer/HttpClient（parent=this），
+        //    释放点=doActualStop() 中的 deleteLater（勿只 stop() 不析构，勿复用旧实例）
         m_pServer = new HttpServer(this);
 
         AppConfig& cfg = ConfigManager::instance()->config();
@@ -672,17 +711,17 @@ void MainWindow::onStartStop()
         m_pClient = new HttpClient(this);
         m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
         m_pClient->setUrl(cfg.activeFeedbackUrl());
-        m_pClient->setEndUrl(cfg.activeEndFeedbackUrl());  // ★ H8 完结回传专用 URL
+        m_pClient->setEndUrl(cfg.activeEndFeedbackUrl());  // ★ 完结回传专用 URL
         m_pClient->setAppkey(cfg.activeAppkey());
         m_pClient->setTimeout(cfg.httpTimeoutMs);
         m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);  // ★ RFID SKU-EPC 绑定查询 URL
+        m_pClient->setRfidAppkey(cfg.rfidAppkey);      // ★ 2026-09-04 RFID 查询鉴权 AppKey
         m_pServer->setHttpClient(m_pClient);              // ★ 设置 HttpClient 供 RFID 查询使用
 
         // ★ 从配置文件加载 API 路由路径
         m_pServer->setApiInsertWaveInfo(cfg.apiInsertWaveInfo);
         m_pServer->setApiBindingLatticePort(cfg.apiBindingLatticePort);
         m_pServer->setApiInsertWaveIn(cfg.apiInsertWaveIn);
-        m_pServer->setApiRfidCarNumReport(cfg.apiRfidCarNumReport);  // ★ RFID 小车号推送
 
         m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
         m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
@@ -713,31 +752,51 @@ void MainWindow::onStartStop()
 
             // ★ 配置摘要日志
             {
-                QString summary;
-                summary += "\n\n══════════════════ 配置摘要 ══════════════════\n\n";
-                summary += QString(" 监听端口:        %1 (WMS) / %2 (PLC)\n\n")
-                    .arg(port).arg(cfg.plcListenPort);
-                summary += QString(" 回传URL:         %1 (%2)\n\n")
-                    .arg(cfg.activeFeedbackUrl())
-                    .arg(cfg.useTestEnv ? "测试" : "正式");
-                summary += QString(" AppKey:          %1\n\n").arg(cfg.activeAppkey());
-                summary += QString(" 仓库:            %1\n\n").arg(cfg.warehouseCode);
-                summary += QString(" 货主:            %1\n\n").arg(cfg.goodsOwner);
-                summary += QString(" 波次超时:        %1分钟(%2), 期望绑定: %3\n\n")
-                    .arg(cfg.waveTimeoutMin)
-                    .arg(cfg.waveTimeoutMin == 0 ? "不超时" : QString::number(cfg.waveTimeoutMin) + "分钟")
-                    .arg(cfg.expectedBindCount);
-                summary += QString(" 重试:            %1次, 间隔: %2秒\n\n")
-                    .arg(OUTBOX_RETRY_MAX_DEFAULT).arg(OUTBOX_RETRY_INTERVAL_SEC);
-                summary += QString(" 日志:            保留%1天\n").arg(cfg.logRetainDays);
-                summary += QString(" 配置文件版本:    %1 (软件版本: %2)\n\n")
-                    .arg(cfg.configVersion).arg(CONFIG_VERSION);
+                //QString summary;
+                //summary += "\n\n══════════════════ 配置摘要 ══════════════════\n\n";
+                //summary += QString(" 监听端口:        %1 (WMS) / %2 (PLC)\n\n")
+                //    .arg(port).arg(cfg.plcListenPort);
+                //summary += QString(" 回传URL:         %1 (%2)\n\n")
+                //    .arg(cfg.activeFeedbackUrl())
+                //    .arg(cfg.useTestEnv ? "测试" : "正式");
+                //summary += QString(" AppKey:          %1\n\n").arg(cfg.activeAppkey());
+                //summary += QString(" 仓库:            %1\n\n").arg(cfg.warehouseCode);
+                //summary += QString(" 货主:            %1\n\n").arg(cfg.goodsOwner);
+                //summary += QString(" 波次超时:        %1分钟(%2), 期望绑定: %3\n\n")
+                //    .arg(cfg.waveTimeoutMin)
+                //    .arg(cfg.waveTimeoutMin == 0 ? "不超时" : QString::number(cfg.waveTimeoutMin) + "分钟")
+                //    .arg(cfg.expectedBindCount);
+                //summary += QString(" 重试:            %1次, 间隔: %2秒\n\n")
+                //    .arg(OUTBOX_RETRY_MAX_DEFAULT).arg(OUTBOX_RETRY_INTERVAL_SEC);
+                //summary += QString(" 日志:            保留%1天\n").arg(cfg.logRetainDays);
+                //summary += QString(" 配置文件版本:    %1 (软件版本: %2)\n\n")
+                //    .arg(cfg.configVersion).arg(CONFIG_VERSION);
+                //if (cfg.configVersion != CONFIG_VERSION)
+                //{
+                //    summary += QString(" ⚠ 配置文件版本不匹配! 请检查配置\n\n");
+                //}
+                //summary += "══════════════════════════════════════════════\n\n";
+                //appendLog(summary);
+
+                appendLog("\n\n══════════════════ 配置摘要 ══════════════════\n\n");
+                appendLog ( QString(" 监听端口:        %1 (WMS) / %2 (PLC)\n\n") .arg(port).arg(cfg.plcListenPort));
+                appendLog ( QString(" 回传URL:         %1 (%2)\n\n").arg(cfg.activeFeedbackUrl()).arg(cfg.useTestEnv ? "测试" : "正式"));
+                appendLog(QString(" AppKey:          %1\n\n").arg(cfg.activeAppkey()));
+                appendLog(QString(" 仓库:            %1\n\n").arg(cfg.warehouseCode));
+                appendLog(QString(" 货主:            %1\n\n").arg(cfg.goodsOwner));
+                appendLog(QString(" 波次超时:        %1分钟(%2), 期望绑定: %3\n\n").arg(cfg.waveTimeoutMin).arg(cfg.waveTimeoutMin == 0 ? "不超时" : QString::number(cfg.waveTimeoutMin) + "分钟").arg(cfg.expectedBindCount));
+                appendLog(QString(" 重试:            %1次, 间隔: %2秒\n\n").arg(OUTBOX_RETRY_MAX_DEFAULT).arg(OUTBOX_RETRY_INTERVAL_SEC));
+                // ★ 2026-09-04 RFID 配置展示（方便现场排查 RFID 链路）
+                appendLog(QString(" RFID查询接口:    %1\n\n").arg(cfg.rfidQueryUrl));
+                appendLog(QString(" RFID推送服务端:  %1:%2 (WCS主动连接)\n\n").arg(cfg.rfidPushServerIp).arg(cfg.rfidPushServerPort));
+                appendLog(QString(" 日志:            保留%1天\n").arg(cfg.logRetainDays));
+                appendLog(QString(" 配置文件版本:    %1 (软件版本: %2)\n\n").arg(cfg.configVersion).arg(CONFIG_VERSION));
                 if (cfg.configVersion != CONFIG_VERSION)
                 {
-                    summary += QString(" ⚠ 配置文件版本不匹配! 请检查配置\n\n");
+                    appendLog ( QString(" ⚠ 配置文件版本不匹配! 请检查配置\n\n"));
                 }
-                summary += "══════════════════════════════════════════════\n\n";
-                appendLog(summary);
+                appendLog ( "\n══════════════════════════════════════════════\n\n");
+               
                 WCS_LOG_INFO("配置摘要: 端口=%d/%d URL=%s env=%s warehouse=%s goodsOwner=%s waveTimeout=%d bindCount=%d",
                     port, cfg.plcListenPort, cfg.activeFeedbackUrl().toLocal8Bit().data(),
                     cfg.useTestEnv ? "test" : "prod",
@@ -954,6 +1013,9 @@ void MainWindow::onStartStop()
         else
         {
             appendLog("服务启动失败！", true);
+            // ★ 防止泄漏：启动失败时 m_pServer/m_pClient 已 new 但未 start，需主动析构释放
+            if (m_pServer) { m_pServer->deleteLater(); }
+            if (m_pClient) { m_pClient->deleteLater(); }
             m_pServer = nullptr;
             m_pClient = nullptr;
         }
@@ -1170,16 +1232,31 @@ void MainWindow::updatePlcPanel()
     }
 }
 
-// ★ 实际执行服务停止（由 H8 完结回传完成后调用）
+// ★ 实际执行服务停止 —— 唯一停止出口（2026-09-02 起幂等）
+//   调用方：H8 回传成功/耗尽（endReportFinished）、等待超时（安全网）、用户取消等待、程序退出
+//   保证：任意路径到达都只会执行一次完整收尾；服务停止后软件保持运行，可再次点击"开始启动"
 void MainWindow::doActualStop()
 {
+    // ★ 幂等：停止流程只执行一次（防 endReportFinished 与超时/取消重复触发）
+    if (m_stopPhase == StopDone)
+        return;
+    m_stopPhase = StopDone;
+
     // ★ 停止超时安全网（正常流程已完成）
     if (m_stopTimeoutTimer) m_stopTimeoutTimer->stop();
 
-    if (m_pServer) m_pServer->stop();
+    // ★ 防止启停泄漏：每次"结束任务→重新启动"若只 stop() 不析构，
+    //   旧的 HttpServer/HttpClient 会因 parent=this 一直残留到应用退出，
+    //   一天50波次即累积50个实例（线程/句柄/SQLite/缓存/线程池全部泄漏）。
+    //   deleteLater 会触发 HttpServer::~HttpServer() 完成 stop+worker收尾+资源清理，
+    //   并自动断开所有信号槽连接。
+    if (m_pServer) { m_pServer->stop(); m_pServer->deleteLater(); }
     m_pServer = nullptr;
+    if (m_pClient) { m_pClient->deleteLater(); }
     m_pClient = nullptr;
+    // PlcManager 由 HttpServer 内部持有，随其析构释放，仅置空避免悬垂指针
     m_pPlcMgr = nullptr;
+    m_bRunning = false;   // ★ 确保状态复位（取消等待路径直接进入）
 
     m_btnStartStop->setEnabled(true);
     m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始启动"));

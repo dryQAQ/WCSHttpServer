@@ -7,7 +7,7 @@
     <!-- 正式环境满箱回传 URL（H7 满箱同步到WMS） -->
     <feedbackUrl>http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs</feedbackUrl>
     <!-- 测试环境满箱回传 URL（H7） -->
-    <feedbackTestUrl>http://127.0.0.1:8099/gids5/service/thirdPartyData/dz_bxh_wcs_cs</feedbackTestUrl>
+    <feedbackTestUrl>http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs</feedbackTestUrl>
     <!-- 正式环境完结回传 URL（H8 波次完结通知WMS） -->
     <feedbackEndUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndUrl>
     <!-- 测试环境完结回传 URL（H8） -->
@@ -17,9 +17,18 @@
     <!-- 测试环境 AppKey -->
     <appkeyTest>dz_bxh_wcs_cs</appkeyTest>
     <!-- 是否使用测试环境（1=测试, 0=正式） -->
-    <useTestEnv>1</useTestEnv>
+    <useTestEnv>0</useTestEnv>
     <!-- RFID SKU-EPC 绑定查询 URL（WCS 查询 RFID 获取 EPC→barcode 映射） -->
-    <rfidQueryUrl>http://127.0.0.1:9100/open-api/rfid/query</rfidQueryUrl>
+    <rfidQueryUrl>http://172.31.10.201:9521/open-api/rfid/query</rfidQueryUrl>
+    <!-- RFID 查询 Authorization 请求头完整值（整串使用，代码不拼凑） -->
+    <rfidAppkey>APP_KEYS e1235fda-029c-4270-913f-530342af2073</rfidAppkey>
+    <!-- RFID 推送服务端（WCS 作为 TCP 客户端主动连接，接收 EPC+carNum JSON） -->
+    <rfidPushServerIp>192.168.100.125</rfidPushServerIp>
+    <rfidPushServerPort>2010</rfidPushServerPort>
+    <!-- 是否向 RFID 服务端发送心跳包 RFID{HEARTBEAT}0D（1=发送 0=不发送，默认1） -->
+    <rfidHeartbeatEnable>1</rfidHeartbeatEnable>
+    <!-- 心跳发送间隔（毫秒，默认2000=2秒） -->
+    <rfidHeartbeatIntervalMs>2000</rfidHeartbeatIntervalMs>
     <!-- 仓库编码 -->
     <warehouseCode>A</warehouseCode>
     <!-- 货主编码 -->
@@ -35,9 +44,9 @@
     <!-- 波次完成回传超时（毫秒） -->
     <waveCompleteTimeoutMs>2000</waveCompleteTimeoutMs>
     <!-- PLC TCP 监听端口（PLC 主动连接此端口，修改后需重启服务） -->
-    <plcListenPort>8192</plcListenPort>
-    <!-- S7 PLC IP 地址 -->
-    <plcS7Ip>192.168.0.1</plcS7Ip>
+    <plcListenPort>2000</plcListenPort>
+    <!-- S7 PLC IP 地址（2026-09-04 现场确认 192.168.100.10） -->
+    <plcS7Ip>192.168.100.10</plcS7Ip>
     <!-- S7 机架号 -->
     <plcS7Rack>0</plcS7Rack>
     <!-- S7 槽位号 -->
@@ -55,7 +64,7 @@
     <!-- 来源库位默认值（config 模式时使用） -->
     <h7DefaultFromLocation>A-01</h7DefaultFromLocation>
     <!-- 目标库位默认值（无容器号时兜底） -->
-    <h7DefaultTargetLocation>999</h7DefaultTargetLocation>
+    <h7DefaultTargetLocation>66</h7DefaultTargetLocation>
     <!-- EPC 任务内防重（true/false） -->
     <sortingEpcDedup>true</sortingEpcDedup>
     <!-- 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） -->
@@ -72,8 +81,6 @@
     <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
     <!-- ③ 波次取消（WMS → WCS，H5 退货任务取消） -->
     <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
-    <!-- ④ RFID 小车号推送（RFID → WCS，EPC+barcode+carNum 映射） -->
-    <apiRfidCarNumReport>/api/rfid/carNumReport</apiRfidCarNumReport>
     <gridName num="1">1号格口</gridName>
     <gridName num="10">10号格口</gridName>
     <gridName num="11">11号格口</gridName>

@@ -24,6 +24,7 @@
 #include "WaveManager.h"
 #include "ThreadPool.h"
 #include "PlcManager.h"
+#include "RfidPushClient.h"   // ★ 2026-09-04 RFID 推送 TCP 客户端（WCS 主动连接 RFID 服务端）
 
 #include "SortingDatabase.h"
 #include "EpcCache.h"
@@ -75,7 +76,6 @@ public:
     void setApiInsertWaveInfo(const QString& path)     { m_apiInsertWaveInfo = path; }
     void setApiBindingLatticePort(const QString& path) { m_apiBindingLatticePort = path; }
     void setApiInsertWaveIn(const QString& path)       { m_apiInsertWaveIn = path; }
-    void setApiRfidCarNumReport(const QString& path)   { m_apiRfidCarNumReport = path; }  // ★ RFID 小车号推送
     void setHttpClient(HttpClient* client);              // ★ HTTP 客户端（用于 RFID 查询，连接 rfidBindingResult 信号）
 
     // 获取容器绑定快照（线程安全拷贝）
@@ -127,7 +127,9 @@ public:
 
     // ──── S6 新增：完结回传（H8 波次完结通知WMS，T-S6-01~T-S6-05）────
     QJsonObject buildEndPayload(const QString& orderCode, int sumLocation); // ★ 构建完结报文（H8 波次完结通知WMS）
-    void sendEnd();                                 // ★ 完结触发入口（T-S6-01/02）
+    // ★ 完结触发入口（T-S6-01/02）；2026-09-02 返回 bool：true=已进入完结回传流程
+    //   （调用方应进入等待/兜底流程）；false=同步拒绝（无波次/状态不允许），调用方可立即收尾
+    bool sendEnd();
     void sendEndToWms(const QString& msgId, const QJsonObject& payload); // ★ 发送完结回传到 WMS（H8 波次完结通知WMS，T-S6-03）
     void onEndReplyFinished(const QString& msgId, bool success, const QString& body); // ★ 完结回传结果处理（H8 波次完结通知WMS，T-S6-04）
     void pollOutboxEnd();                           // ★ Outbox 完结回传重试调度（H8 波次完结通知WMS，T-S6-03）
@@ -137,6 +139,9 @@ public:
 
     // ★ 启动时从数据库恢复未完成波次（软件重启后继续处理同一批次数据）
     void restoreWaveFromDB();
+
+    // ★ 构建波次明细记录（从 GridBuffer 读取全量 SKU→格口映射，供落库复用）
+    QVector<ReturnWaveItemRecord> buildWaveItems(const QString& orderCode);
 
 signals:
     void serverStarted(int port);
@@ -149,6 +154,9 @@ signals:
     void fullboxReportReady(const QJsonObject& payload, const QString& msgId); // ★ S5 满箱回传（H7 满箱同步到WMS，T-S5-04）
     void endReportReady(const QJsonObject& payload, const QString& msgId);     // ★ S6 完结回传（H8 波次完结通知WMS，T-S6-03）
     void endReportFinished();  // ★ H8完结回传处理完毕（成功/重试耗尽），通知MainWindow可以停止服务
+    // ★ 2026-09-04 P0修复：波次明细异步落库完成（业务线程池执行完发回主线程，推进 BOUND）
+    //   ok=true 推进 BOUND；ok=false 保持 CREATED（落库重试已耗尽，写异常表+UI告警）
+    void wavePersistenceFinished(const QString& orderCode, bool ok, int skuCount);
 
 protected:
     // CHttpServerListener 回调
@@ -173,6 +181,8 @@ private:
     void sendGridLockFeedback(const QString& grid);  // ★ 锁格时回传分拣明细到 WMS
     QJsonObject buildReportFromRecords(const QString& orderCode,
                                        const QMap<QString, QVector<GridSortRecord>>& records); // ★ 从记录副本构建 33.md JSON（线程安全）
+    // ★ 2026-09-04 P0修复：波次明细异步落库完成回调（主线程）——推进 BOUND + 清理旧波次状态
+    void onWavePersistenceFinished(const QString& orderCode, bool ok, int skuCount);
 
     // ──── S5 新增：满箱同步（H7 满箱同步到WMS，T-S5-01~T-S5-07）────
     QJsonObject buildFullboxPayload(const QString& orderCode, const QString& grid,
@@ -193,6 +203,7 @@ private:
     WaveManager*   m_pWaveMgr = nullptr;
     ParseWorker*   m_pWorker  = nullptr;
     PlcManager*    m_pPlcMgr  = nullptr;
+    RfidPushClient* m_pRfidPush = nullptr;  // ★ 2026-09-04 RFID 推送 TCP 客户端（主动连接 RFID 服务端）
     
     SortingDatabase* m_pSortingDb = nullptr;  // ★ 分拣记录本地数据库
     EpcCache*       m_pEpcCache  = nullptr;  // ★ S4 EPC短缓存（T-S4-04）
@@ -206,7 +217,6 @@ private:
     QString m_apiInsertWaveInfo     = API_INSERT_WAVE_INFO;
     QString m_apiBindingLatticePort = API_BINDING_LATTICE_PORT;
     QString m_apiInsertWaveIn       = API_INSERT_WAVE_IN;
-    QString m_apiRfidCarNumReport   = API_RFID_CAR_NUM_REPORT;  // ★ RFID 小车号推送
 
     // ──── 业务线程池 ────
     Hanchine::ThreadPool* m_pBusinessPool   = nullptr;
@@ -227,6 +237,16 @@ private:
     // ──── S5 新增：Outbox 满箱回传重试调度（H7 满箱同步到WMS）────
     QTimer*                 m_outboxFullboxTimer = nullptr;  // ★ 满箱回传出站重试调度器（H7 满箱同步到WMS，T-S5-04）
     QTimer*                 m_outboxEndTimer = nullptr;  // ★ S6 完结回传出站重试调度器（H8 波次完结通知WMS，T-S6-03）
+    // ★ 2026-09-02 修复"结束任务卡死"：H8 完结回传会话兜底定时器（单次）
+    //   点击"结束任务"后启动，到期无论回传是否完成都强制结束会话（onEndSessionTimeout），
+    //   保证 endReportFinished 必然发出 → MainWindow 停止服务（不卡死、不退出程序）
+    QTimer*                 m_endSessionTimer = nullptr;
+    void                    onEndSessionTimeout();          // ★ H8 会话超时兜底（内部方法，定时器回调）
+
+    // ★ 2026-09-02 防崩溃（停止与在途请求竞态）：服务停止标志
+    //   stop() 最先置位；processRequest/sendJsonResponse 检测到后立即返回，
+    //   防止线程池任务在 m_pServer.Reset() 后继续调用 HP-Socket SendResponse（空指针崩溃）
+    std::atomic<bool>       m_stopping{false};
 
     // ──── PLC发送失败日志限流 ────
     QSet<QString>           m_warnedPlcFailCodes;
@@ -248,4 +268,9 @@ private:
     // ──── 回传耗时统计（H7/H8 网络请求慢排查）────
     QMap<QString, qint64>   m_msgSendTime;        // msgId → 发送时间戳（epoch ms）
     std::mutex              m_msgTimeMutex;        // 保护 m_msgSendTime
+
+    // ★ 2026-09-04 P0修复：波次明细异步落库是否仍在进行
+    //   提交异步任务时置 true，onWavePersistenceFinished 置 false；
+    //   stop() 检测到 true 时同步补落库，保证停止/重启不丢数据
+    std::atomic<bool>       m_wavePersistPending{false};
 };

@@ -59,6 +59,13 @@ private slots:
     void doActualStop();     // ★ 实际执行服务停止（H8回传完成后调用）
 
 private:
+    // ★ 2026-09-02 修复"结束任务卡死/闪退"：停止流程阶段状态机
+    //   StopNone   — 未在停止流程中（服务运行或已停止）
+    //   StopEnding — 已点击"结束任务"，触发 H8 回传，正在等待结果（可再次点击取消等待）
+    //   StopDone   — 停止收尾已完成（幂等出口，防重复执行）
+    enum StopPhase { StopNone = 0, StopEnding, StopDone };
+    StopPhase m_stopPhase = StopNone;
+
     void setupUI();           // 构建所有UI控件
     void setupConnections();  // 连接信号槽
     void applyConfig();       // 从ConfigManager读取配置填充UI

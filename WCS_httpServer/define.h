@@ -127,7 +127,7 @@
 #define PLC_RECONNECT_INTERVAL_MS 3000   // PLC 断线重连间隔(ms)
 
 // ── S7 协议 (Snap7) ──
-#define PLC_S7_IP               "192.168.0.1"  // S7 PLC IP 地址
+#define PLC_S7_IP               "192.168.100.10"  // S7 PLC IP 地址
 #define PLC_S7_RACK             0              // S7 机架号
 #define PLC_S7_SLOT             1              // S7 槽位号
 #define PLC_S7_DB_READ          77             // S7 读取DB号（锁格状态读取）
@@ -155,7 +155,6 @@
 #define API_INSERT_WAVE_INFO      "/api/DispatchSortingCommand/InsertWaveInfo"  // ① 波次下发（H4 WMS 推送波次数据 (POST)）
 #define API_BINDING_LATTICE_PORT  "/api/DispatchSortingCommand/BindingLatticePort" // ② 容器绑定（H6 WMS 绑定格口容器 (POST)）
 #define API_INSERT_WAVE_IN        "/api/DispatchSortingCommand/InsertWaveIn"   // ③ 波次取消（H5 WMS 退货任务取消 (POST)）
-#define API_RFID_CAR_NUM_REPORT   "/api/rfid/carNumReport"                    // ④ RFID 小车号推送（RFID 主动推送 EPC→barcode+carNum 映射 (POST)）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 连接监控阈值（健康检查日志分级输出 → HttpServer::logHealthStatus）
@@ -198,12 +197,26 @@
 // RFID 缓存配置（RFID 主动推送模式，不再主动查询）
 // ═══════════════════════════════════════════════════════════════════════════
 #define RFID_CACHE_TTL_SEC         300      // EPC 本地缓存 TTL（秒，默认5分钟）
-#define RFID_QUERY_URL             "http://127.0.0.1:9100/open-api/rfid/query"  // RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
+#define RFID_QUERY_URL             "http://172.31.10.201:9521/open-api/rfid/query"  // RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射，测试默认；生产地址在 http_server.xml 配置）
+// ★ 2026-09-05：RFID 查询接口鉴权 —— Authorization 请求头的完整值（形如 "APP_KEYS <key>"）
+//   生产环境由 http_server.xml 的 rfidAppkey 配置（整串直接使用，代码不拼凑）；
+//   此默认值仅供本地 mock（空=不发送鉴权头）
+#define RFID_APPKEY                "APP_KEYS e1235fda-029c-4270-913f-530342af2073"
+// ★ 2026-09-04：RFID 推送服务端地址（WCS 作为 TCP 客户端主动连接 RFID 服务端接收 ASCII 帧）
+//   帧格式（现场确认）：{流水号|小车号|epc}0D（0D 为帧尾字面字符）
+//   EPC 未读到（无条码）时 epc 字段为 NOREAD：{流水号|小车号|NOREAD}0D
+#define RFID_SERVER_IP             "192.168.100.125"
+#define RFID_SERVER_PORT           2010
+// ★ 2026-09-04：RFID 应用层心跳（RFID 服务端要求客户端每 2 秒发一次心跳保活）
+//   心跳报文格式（现场确认）：按字面 ASCII 发送 "RFID{HEARTBEAT}0D"（末尾 0D 为字面字符，非回车）
+#define RFID_HEARTBEAT_INTERVAL_MS  2000
+#define RFID_HEARTBEAT_MSG          "RFID{HEARTBEAT}0D"
 #define RFID_QUERY_TIMEOUT_MS      5000     // RFID 查询超时(ms)，默认5秒
 #define SKU_QUERY_MAX_RETRY        2        // SKU 查询最大重试次数（超时/失败后最多重试2次）
 #define SKU_QUERY_RETRY_INTERVAL_MS 3000    // SKU 查询重试间隔(ms)，默认3秒
 #define NOT_READY_RETRY_MAX         3        // 未就绪(carNum未到)最大重试次数
 #define NOT_READY_RETRY_INTERVAL_MS 5000     // 未就绪重试间隔(ms)，默认5秒
+#define EPC_CACHE_ALERT_THRESHOLD   10000    // EpcCache 条目数告警阈值（健康日志观测：理论容量=推送速率×300sTTL，超阈值预警）
 #define PLC_SEND_TIMEOUT_MS         1000     // RFID推送→PLC发送超时阈值(ms)，超过则入异常格口（现场实时性要求≤1s）
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -241,6 +254,11 @@
 #define SQL_PRAGMA_SYNC           "PRAGMA synchronous=NORMAL"     // 同步模式设为 NORMAL，在安全性和写入性能之间取得平衡
 #define SQL_PRAGMA_CACHE          "PRAGMA cache_size=5000"        // 设置缓存大小为 5000 页（约 20MB），减少磁盘 I/O
 #define SQL_PRAGMA_OPTIMIZE       "PRAGMA optimize"               // 执行数据库优化，清理删除记录后回收磁盘空间
+#define SQL_PRAGMA_BUSY_TIMEOUT   "PRAGMA busy_timeout=3000"      // 只读连接等待写锁超时(ms)：WAL 下写不阻塞读，此值防极端锁竞争
+
+// ──── 波次明细落库（异步）可靠性参数（2026-09-04 P0修复）────
+#define WAVE_PERSIST_RETRY_MAX        3        // 波次明细落库最大重试次数（本地SQLite失败概率极低，重试后仍失败写异常表+保持CREATED）
+#define WAVE_PERSIST_RETRY_INTERVAL_MS 1000    // 波次明细落库重试间隔(ms)
 
 // ──── 建表：分拣记录表 ────
 // 创建分拣记录主表，存储每条 PLC 落格反馈的完整信息
@@ -567,6 +585,22 @@
 // 按波次号查询所有明细
 #define SQL_SELECT_WAVE_ITEMS \
     "SELECT id, order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code FROM return_wave_item WHERE order_code = ?"
+// ★ 按 SKU 查询格口分配 — "已分拣数量"列实时 COUNT sorting_records（每落格一个EPC=一条记录，即EPC件数）
+//   不依赖运行时维护 sorted_qty 冗余列，历史数据也立即正确
+#define SQL_QUERY_SKU_GRID_MAPPING \
+    "SELECT i.id, i.order_code, i.inco, i.grid_num, i.grid_type, i.plan_qty, " \
+    "(SELECT COUNT(*) FROM sorting_records s " \
+    " WHERE s.order_code = i.order_code AND s.sku = i.inco " \
+    " AND CAST(s.grid_num AS INTEGER) = CAST(i.grid_num AS INTEGER)) AS sorted_qty, " \
+    "i.volu, i.obx_code " \
+    "FROM return_wave_item i WHERE i.inco = ? ORDER BY i.order_code DESC, i.grid_num ASC"
+#define SQL_QUERY_SKU_GRID_MAPPING_BY_ORDER \
+    "SELECT i.id, i.order_code, i.inco, i.grid_num, i.grid_type, i.plan_qty, " \
+    "(SELECT COUNT(*) FROM sorting_records s " \
+    " WHERE s.order_code = i.order_code AND s.sku = i.inco " \
+    " AND CAST(s.grid_num AS INTEGER) = CAST(i.grid_num AS INTEGER)) AS sorted_qty, " \
+    "i.volu, i.obx_code " \
+    "FROM return_wave_item i WHERE i.inco = ? AND i.order_code = ? ORDER BY i.grid_num ASC"
 // 更新已分拣件数（sorted_qty + 1）
 // 格口按整数比较，兼容 WMS "3" 与 PLC 反馈 "003"
 #define SQL_INCREMENT_SORTED_QTY \
@@ -639,8 +673,17 @@
 // 出站重试次数上限（默认 10 次）
 #define OUTBOX_RETRY_MAX_DEFAULT   3       // 完结回传（H8）最大重试次数（每波次仅1次，失败记录异常，不阻塞新波次）
 #define OUTBOX_RETRY_MAX_H7        2       // 满箱回传（H7）最大重试次数（每波次可能多次触发，降低重试避免堆积）
-// 出站重试间隔（秒，默认 30 秒）
+// 出站重试间隔（秒，默认 30 秒）——满箱回传（H7）等后台消息使用
 #define OUTBOX_RETRY_INTERVAL_SEC  30
+// ★ H8 完结回传快速重试间隔（毫秒，2026-09-02 修复"结束任务卡死"）
+//   点击"结束任务"后用户等待回传结果，失败重试须快速（5s 一拍），
+//   避免旧逻辑 next_retry=+30s 造成长时间无重试的静默等待
+#define OUTBOX_RETRY_INTERVAL_FAST_MS  5000
+// ★ 结束任务等待上限（毫秒，2026-09-02 修复"结束任务卡死/闪退"）
+//   点击"结束任务"触发 H8 后，UI 与 HttpServer 会话的最终兜底时长：
+//   到期无论回传成功/失败/无响应都结束等待并停止服务（不卡死、不退出程序），
+//   H8 未确认的消息保留在 outbox_end，下次启动自动补传
+#define END_WAIT_TIMEOUT_MS          30000
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UI/日志限制

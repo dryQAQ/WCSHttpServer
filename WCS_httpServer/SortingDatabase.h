@@ -15,6 +15,7 @@
 #include <QVector>
 #include <QSqlDatabase>
 #include <QThread>
+#include <QThreadStorage>
 #include <QAtomicInt>
 #include <type_traits>
 #include "LogService.h"
@@ -253,6 +254,11 @@ private:
     void createTables();        // 建表
     QString currentTimeStr() const;
 
+    // ★ 获取当前线程的只读查询连接（懒创建，每线程独立）
+    //   WAL 模式下只读连接与 DB 线程的写连接并行工作，落库任务占用 DB 线程时不阻塞调用线程
+    //   用途：UI 查询接口（statistics/queryByBarcode/queryAllWithPending/cleanupOldRecords）
+    QSqlDatabase queryDb() const;
+
     // ★ 在专用 DB 线程上执行操作（阻塞调用线程，等待完成）
     //   所有 SQLite 操作必须通过此方法委托到 DB 线程执行
     template<typename Func>
@@ -304,4 +310,6 @@ private:
     QThread*        m_pDbThread  = nullptr;  // ★ 专用数据库线程（单连接）
     QObject*        m_pDbTarget  = nullptr;  // ★ DB 线程上的事件接收者
     QAtomicInt      m_bOpened{0};            // ★ 原子标记，跨线程安全读取
+    // ★ UI 只读查询连接缓存（每线程独立；线程退出时自动析构，无泄漏）
+    mutable QThreadStorage<QSqlDatabase> m_queryConns;
 };

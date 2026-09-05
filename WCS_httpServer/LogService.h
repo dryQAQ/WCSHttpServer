@@ -67,3 +67,11 @@
 #ifndef WAVE_ITEM_INFO
 #define WAVE_ITEM_INFO(fmt, ...) hlog_format(HLOG_LEVEL_INFO, "WAVE_ITEM", "\t" fmt, ##__VA_ARGS__)
 #endif
+
+// ──── RFID 模块（RFID 推送 TCP 原始报文 + 解析，2026-09-04 新增）────
+// 写入 ./log/RFID/rfid.log —— 原始报文无条件落日志，方便维护排查
+#ifndef RFID_INFO
+#define RFID_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "RFID", "\t" fmt, ##__VA_ARGS__)
+#define RFID_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "RFID", "\t" fmt, ##__VA_ARGS__)
+#define RFID_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "RFID", "\t" fmt, ##__VA_ARGS__)
+#endif

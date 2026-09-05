@@ -38,12 +38,15 @@ public:
         return true;
     }
 
-    // 出队（阻塞等待）
+    // 出队（阻塞等待，直到有任务或 stop() 被调用）
     WaveTask pop()
     {
         QMutexLocker locker(&m_mutex);
-        while (m_queue.isEmpty())
+        while (m_queue.isEmpty() && !m_stopped)
             m_cond.wait(&m_mutex);
+        // ★ stop() 唤醒后队列仍空：返回空任务，让调用方（ParseWorker::run）退出循环
+        if (m_queue.isEmpty())
+            return WaveTask();
         return m_queue.dequeue();
     }
 
@@ -75,9 +78,18 @@ public:
         m_cond.wakeAll();
     }
 
+    // ★ 停止消费者：置位停止标志并唤醒 pop()，使其返回空任务（不再永久阻塞）
+    void stop()
+    {
+        QMutexLocker locker(&m_mutex);
+        m_stopped = true;
+        m_cond.wakeAll();
+    }
+
 private:
     QQueue<WaveTask> m_queue;
     QMutex           m_mutex;
     QWaitCondition   m_cond;
     int              m_maxPending;
+    bool             m_stopped = false;   // ★ 停止标志：pop() 退出等待用
 };

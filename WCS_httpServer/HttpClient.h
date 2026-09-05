@@ -30,6 +30,7 @@ public:
     void setAppkey(const QString& k) { m_appkey = k; }        // WMS认证AppKey（HTTP Header）
     void setTimeout(int ms)          { m_timeoutMs = ms; }    // 回传超时(ms)，默认HTTP_TIMEOUT_MS=3000
     void setRfidQueryUrl(const QString& url) { m_rfidQueryUrl = url; }  // ★ RFID SKU-EPC 绑定查询 URL
+    void setRfidAppkey(const QString& k)     { m_rfidAppkey = k; }      // ★ 2026-09-05 RFID 查询鉴权 key（空=不发送）
 
     // ──── 业务 ────
     // 回传波次完结通知到WMS（异步，不阻塞主线程）
@@ -75,6 +76,7 @@ private:
     QString m_appkey;           // WMS认证AppKey（放入HTTP Header: AppKey=xxx）
     int     m_timeoutMs = HTTP_TIMEOUT_MS;  // 超时时间(ms)，默认3000
     QString m_rfidQueryUrl;     // ★ RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
+    QString m_rfidAppkey;       // ★ 2026-09-05 RFID 查询鉴权 key（HTTP Header: Authorization: APP_KEYS <key>；空=不发送）
 
     // ──── 请求追踪 ────
     // 跟踪进行中的异步请求，用于超时处理和响应匹配
@@ -83,6 +85,7 @@ private:
         QTimer*        timer;       // 超时定时器（单次触发）
         QString        orderCode;   // 波次号（用于回调时标识是哪个波次）
         int            sumLocation;  // 格口总数（用于日志）
+        QString        url;         // ★ 2026-09-04：请求目标URL（网络失败/超时日志提示用）
     };
     // ★ reply → PendingRequest 映射：
     //    当 onReplyFinished 或 onReplyTimeout 触发时，通过 sender() 获取 reply/timer，

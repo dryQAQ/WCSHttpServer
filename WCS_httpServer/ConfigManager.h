@@ -27,6 +27,13 @@ struct AppConfig
 
     // ──── RFID 查询配置（WCS → RFID，SKU-EPC 绑定查询）────
     QString rfidQueryUrl      = RFID_QUERY_URL;        // RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
+    QString rfidAppkey        = RFID_APPKEY;           // ★ 2026-09-05：RFID 查询 Authorization 头完整值（如 "APP_KEYS xxx"，整串由 XML 提供；空=不发送）
+    // ★ 2026-09-04：RFID 推送服务端（WCS 作为 TCP 客户端主动连接，接收 EPC+carNum JSON）
+    QString rfidPushServerIp  = RFID_SERVER_IP;        // RFID 服务端 IP
+    int     rfidPushServerPort = RFID_SERVER_PORT;     // RFID 服务端端口
+    // ★ 2026-09-05：是否向 RFID 服务端发送心跳包（1=发送 0=不发送）
+    int     rfidHeartbeatEnable = 1;                   // 心跳开关（默认发送）
+    int     rfidHeartbeatIntervalMs = RFID_HEARTBEAT_INTERVAL_MS;  // 心跳间隔(毫秒, 默认2000=2s)
 
     // ──── WMS 业务参数 ────
     QString warehouseCode    = WMS_WAREHOUSE_CODE;    // 仓库编码
@@ -72,7 +79,6 @@ struct AppConfig
     QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① 波次下发（H4 WMS推送波次数据）(POST)
     QString apiBindingLatticePort = API_BINDING_LATTICE_PORT;  // ② 容器绑定（H6 格口容器绑定）(POST)
     QString apiInsertWaveIn       = API_INSERT_WAVE_IN;        // ③ 波次取消（H5 退货任务取消）(POST)
-    QString apiRfidCarNumReport   = API_RFID_CAR_NUM_REPORT;   // ④ RFID 小车号推送（RFID 主动推送小车号）(POST)
 
     // ──── 日志 ────
     int     logRetainDays     = LOG_RETAIN_DAYS;          // 日志保留天数

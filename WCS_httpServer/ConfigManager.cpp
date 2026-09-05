@@ -1,4 +1,5 @@
 #include "ConfigManager.h"
+#include "LogService.h"   // ★ 2026-09-04：启动/配置日志（LOG_INFO 写入 run.log）
 #include <QFile>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
@@ -43,6 +44,11 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "appkeyTest")         appkeyTest = xml.readElementText();
         else if (name == "useTestEnv")         useTestEnv = xml.readElementText().toInt();
         else if (name == "rfidQueryUrl")     rfidQueryUrl = xml.readElementText();  // ★ RFID SKU-EPC 绑定查询 URL
+        else if (name == "rfidAppkey")       rfidAppkey = xml.readElementText();   // ★ 2026-09-04 RFID 查询鉴权 AppKey
+        else if (name == "rfidPushServerIp") rfidPushServerIp = xml.readElementText();  // ★ 2026-09-04 RFID 推送服务端 IP
+        else if (name == "rfidPushServerPort") rfidPushServerPort = xml.readElementText().toInt();  // ★ 2026-09-04 RFID 推送服务端端口
+        else if (name == "rfidHeartbeatEnable") rfidHeartbeatEnable = xml.readElementText().toInt(); // ★ 2026-09-05 心跳开关(1=发送 0=不发送)
+        else if (name == "rfidHeartbeatIntervalMs") rfidHeartbeatIntervalMs = xml.readElementText().toInt(); // ★ 2026-09-05 心跳间隔(ms)
         else if (name == "warehouseCode")      warehouseCode = xml.readElementText();
         else if (name == "goodsOwner")         goodsOwner = xml.readElementText();
         else if (name == "waveTimeoutMin")     waveTimeoutMin = xml.readElementText().toInt();
@@ -63,7 +69,6 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "apiInsertWaveInfo")    apiInsertWaveInfo = xml.readElementText();
         else if (name == "apiBindingLatticePort") apiBindingLatticePort = xml.readElementText();
         else if (name == "apiInsertWaveIn")      apiInsertWaveIn = xml.readElementText();
-        else if (name == "apiRfidCarNumReport") apiRfidCarNumReport = xml.readElementText();
         else if (name == "configVersion")     configVersion = xml.readElementText().toInt();
         else if (name == "h7FromLocationSource")    fullboxFromLocationSource = xml.readElementText();
         else if (name == "h7DefaultFromLocation") fullboxDefaultFromLocation = xml.readElementText();
@@ -135,6 +140,15 @@ bool AppConfig::saveToFile(const QString& path) const
     // ──── RFID 查询配置 ────
     xml.writeComment(" RFID SKU-EPC 绑定查询 URL（WCS 查询 RFID 获取 EPC→barcode 映射） ");
     xml.writeTextElement("rfidQueryUrl",     rfidQueryUrl);
+    xml.writeComment(" RFID 查询 Authorization 头完整值（形如 APP_KEYS <key>，整串使用；空=不发送） ");
+    xml.writeTextElement("rfidAppkey",       rfidAppkey);
+    xml.writeComment(" RFID 推送服务端地址（WCS 作为 TCP 客户端主动连接接收 EPC+carNum） ");
+    xml.writeTextElement("rfidPushServerIp",   rfidPushServerIp);
+    xml.writeTextElement("rfidPushServerPort", QString::number(rfidPushServerPort));
+    xml.writeComment(" 是否向 RFID 服务端发送心跳包（1=发送 0=不发送，默认1） ");
+    xml.writeTextElement("rfidHeartbeatEnable", QString::number(rfidHeartbeatEnable));
+    xml.writeComment(" 心跳发送间隔（毫秒，默认2000=2秒） ");
+    xml.writeTextElement("rfidHeartbeatIntervalMs", QString::number(rfidHeartbeatIntervalMs));
 
     // ──── WMS 业务参数 ────
     xml.writeComment(" 仓库编码 ");
@@ -205,8 +219,6 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("apiBindingLatticePort", apiBindingLatticePort);
     xml.writeComment(" ③ 波次取消（WMS → WCS，H5 退货任务取消） ");
     xml.writeTextElement("apiInsertWaveIn",       apiInsertWaveIn);
-    xml.writeComment(" ④ RFID 小车号推送（RFID → WCS，EPC+barcode+carNum 映射） ");
-    xml.writeTextElement("apiRfidCarNumReport",   apiRfidCarNumReport);
 
     // ──── 容器绑定 ────
     QMapIterator<QString, QString> it(containerBindings);
@@ -239,17 +251,22 @@ bool AppConfig::saveToFile(const QString& path) const
 bool ConfigManager::load()
 {
     QString exePath = QCoreApplication::applicationDirPath();
+    // ★ 配置文件固定放在 exe 同目录的 config 子目录下：{exe}/config/http_server.xml
     QString configPath = exePath + "/" CONFIG_FILE;
 
     if (!QFile::exists(configPath))
     {
         // 配置文件不存在，使用 define.h 宏中的默认值自动创建
         // 所有 URL/AppKey/端口 默认值已在 AppConfig 结构体初始化列表中从 define.h 宏读取
+        LOG_WARN("[配置] 配置文件不存在: %s（将按默认值自动创建）", configPath.toLocal8Bit().constData());
         m_config.saveToFile(configPath);
+        LOG_INFO("[配置] 默认配置文件已创建: %s", configPath.toLocal8Bit().constData());
         return true;
     }
 
-    return m_config.loadFromFile(configPath);
+    bool ok = m_config.loadFromFile(configPath);
+    LOG_INFO("[配置] 配置文件已加载: %s（%s）", configPath.toLocal8Bit().constData(), ok ? "成功" : "失败");
+    return ok;
 }
 
 bool ConfigManager::save()

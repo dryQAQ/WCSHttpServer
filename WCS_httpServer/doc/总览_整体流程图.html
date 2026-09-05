@@ -35,7 +35,7 @@ td code { background: #f0f2f5; padding: 2px 6px; border-radius: 3px; font-size: 
 <div class="toolbar"><button class="btn-print" onclick="window.print()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>打印 PDF</button></div>
 <div class="container">
 
-<div class="header"><h1>WCS HttpServer 整体流程图</h1><p class="meta">代码: WCS HttpServer &nbsp;|&nbsp; 生成时间: 2026-08-13</p></div>
+<div class="header"><h1>WCS HttpServer 整体流程图</h1><p class="meta">代码: WCS HttpServer &nbsp;|&nbsp; 生成时间: 2026-08-18</p></div>
 
 <!-- 一、系统架构 -->
 <div class="card">
@@ -55,20 +55,22 @@ flowchart LR
         Cache["SKU缓存"]
         WM["波次管理器"]
         Plc["PLC管理器"]
-        DB["数据库"]
+        DB["数据库（单例）<br/>异步线程池写入"]
+        Pool["业务线程池<br/>异步DB写入"]
         Outbox["出站消息队列"]
         Client["HTTP客户端"]
     end
 
-    WMS -->|"H4 波次下发<br/>H5 取消波次<br/>H6 容器绑定"| HTTP
+    WMS -->|"H4 波次下发<br/>H5 取消波次<br/>H6 容器绑定(无需orderCode)"| HTTP
     RFID -->|"小车号推送"| HTTP
     HTTP --> Parse
     Parse --> Buf
-    Parse --> DB
     Parse --> WM
+    HTTP -->|"异步提交"| Pool
+    Pool -->|"DB写入"| DB
     Buf --> Cache
     Cache --> Plc
-    Plc -->|"TCP + S7"| PLC
+    Plc -->|"TCP"| PLC
     PLC -->|"落格反馈<br/>3字段/5字段<br/>锁格信号"| Plc
     Plc --> WM
     WM --> Outbox
@@ -82,87 +84,86 @@ flowchart LR
     <div class="card-header"><span class="card-number">2</span><h2>完整业务流程</h2></div>
     <div class="card-body"><div class="mermaid">
 flowchart TD
-    START["启动服务"] --> H6["① H6 容器绑定<br/>WMS 下发格口→容器绑定<br/>handleBindingLatticePort"]
-    H6 --> H6_VALIDATE["校验: 参数/格口范围/波次状态"]
-    H6_VALIDATE --> H6_CHECK_GRID{"格口是否<br/>因满箱被禁用？"}
-    H6_CHECK_GRID -->|"是"| H6_ENABLE["enableGrid 格口恢复"]
-    H6_CHECK_GRID -->|"否"| H6_WRITE["写入 m_containerBindings"]
-    H6_ENABLE --> H6_WRITE
-
-    H6_WRITE --> H4["② H4 波次下发<br/>WMS 推送波次数据<br/>ParseWorker 解析 SKU+格口"]
-    H4 --> H4_PARSE["waveParsed 回调<br/>setWaveData + setRecvSet"]
-    H4_PARSE --> H4_DB["数据库写入<br/>upsertReturnWave(波次头)<br/>insertWaveItems(波次明细)"]
-    H4_DB --> H4_BOUND["setState(WAVE_BOUND)<br/>CREATED→BOUND"]
-    H4_BOUND --> H4_RESET["重置状态<br/>enableAllGrids / 清理pendingSkuQuery<br/>清理retryCount / 清理sentEpcs<br/>清空格口记录/计数"]
+    START["启动服务"] --> H6_PRE["① H6 容器绑定（预绑定）<br/>WMS 下发格口→容器映射<br/>无需 orderCode 字段<br/>无波次时允许预绑定(空闲状态)"]
+    H6_PRE --> H6_PRE_VALIDATE["校验: 参数/格口范围"]
+    H6_PRE_VALIDATE --> H6_PRE_WRITE["HTTP 响应立即返回<br/>异步提交线程池写入容器绑定表"]
+    H6_PRE_WRITE --> H4["② H4 波次下发<br/>WMS 推送波次数据<br/>解析线程解析 SKU+格口"]
+    H4 --> H4_PARSE["波次解析完成回调<br/>设置波次数据 + 设置接收集合"]
+    H4_PARSE --> H4_DB["数据库写入<br/>写入/更新波次头数据<br/>写入波次明细数据"]
+    H4_DB --> H4_CREATED["设置状态(已创建)<br/>波次状态: 已创建"]
+    H4_CREATED --> H4_RESET["重置状态<br/>启用全部格口 / 清理待查SKU队列<br/>清理重试计数 / 清理已发送EPC集合<br/>清空格口记录/计数"]
 
     H4_RESET --> PRE_SORT["────── 分拣前阶段（允许取消）──────"]
-    PRE_SORT --> WAIT_MATERIAL["等待现场物料准备<br/>波次处于 BOUND 状态"]
+    PRE_SORT --> H6_BOUND["H6 绑定已就绪<br/>设置状态: 已创建→已绑定"]
+    H6_BOUND --> WAIT_MATERIAL["等待现场物料准备<br/>波次处于 已绑定 状态"]
+    WAIT_MATERIAL --> BTN["★ 用户点击 开始分拣 ★<br/>点击开始分拣回调<br/>──── 分界线 ────"]
+    BTN --> SORTING["开始分拣()<br/>波次状态: 已绑定→分拣中<br/>────── 分拣中阶段（禁止取消）──────"]
 
-    WAIT_MATERIAL --> BTN["★ 用户点击 开始分拣 ★<br/>onStartSortingClicked<br/>──── 分界线 ────"]
-    BTN --> SORTING["startSorting()<br/>波次状态: BOUND→SORTING<br/>────── 分拣中阶段（禁止取消）──────"]
-
-    SORTING --> RFID["③ RFID 小车号推送<br/>RFID 阅读器推送 EPC+小车号<br/>handleRfidCarNumReport"]
-    RFID --> RFID_CACHE_A["setBatchWithCar(EpcCache)<br/>存储 EPC + carNum"]
-    RFID_CACHE_A --> RFID_CHECK_NEED{"需要 SKU 查询？<br/>barcode为空 或<br/>skuBound=false"}
-    RFID_CHECK_NEED -->|"是"| RFID_ENQUEUE["m_pendingSkuQuery 防重入队<br/>queryRfidBinding 异步查询"]
-    RFID_CHECK_NEED -->|"否"| RFID_SKIP_SKU["SKU 已就绪<br/>跳过查询"]
+    SORTING --> RFID["③ RFID 小车号推送<br/>RFID 阅读器推送 EPC+小车号<br/>处理RFID小车号上报"]
+    RFID --> RFID_CACHE_A["批量写入EPC缓存<br/>存储 EPC编码 + 小车号"]
+    RFID_CACHE_A --> RFID_CHECK_NEED{"SKU编码是否已知？<br/>SKU为空 或<br/>SKU未绑定"}
+    RFID_CHECK_NEED -->|"SKU未知<br/>查询RFID获取"| RFID_ENQUEUE["待查SKU队列防重入队<br/>查询RFID绑定(异步)<br/>RFID返回 EPC→SKU编码"]
+    RFID_CHECK_NEED -->|"SKU已知<br/>直接查格口"| RFID_SKIP_SKU["SKU 已绑定<br/>跳过查询"]
     RFID_ENQUEUE --> RFID_TRY_SEND
     RFID_SKIP_SKU --> RFID_TRY_SEND
 
-    RFID_TRY_SEND --> RFID_CHECK_READY{"isReadyForPlc<br/>skuBound && carNum？"}
-    RFID_CHECK_READY -->|"false"| RFID_WAIT_CB["等待 SKU 查询回调<br/>onRfidBindingResult"]
-    RFID_CHECK_READY -->|"true"| RFID_MAP["GridBuffer.get(SKU)<br/>SKU→格口 映射查找"]
-    RFID_MAP --> RFID_MAP_CHECK{"SKU 在<br/>GridBuffer？"}
-    RFID_MAP_CHECK -->|"否"| RFID_EXCEPTION3["写入异常记录表<br/>SKU不在GridBuffer"]
-    RFID_MAP_CHECK -->|"是"| RFID_SEND["sendBatchCodesWithEpcCache<br/>TCP {EPC|格口|小车号}<br/>S7 DB1 数据块写入<br/>→ m_sentEpcs 防重复"]
+    RFID_TRY_SEND --> RFID_CHECK_READY{"是否就绪发送PLC<br/>SKU已绑定 && 小车号非空？"}
+    RFID_CHECK_READY -->|"否"| RFID_WAIT_CB["等待 SKU 查询回调<br/>RFID绑定结果回调"]
+    RFID_CHECK_READY -->|"是"| RFID_MAP["格口缓冲区查找(SKU)<br/>SKU→格口 映射查找"]
+    RFID_MAP --> RFID_MAP_CHECK{"SKU 在<br/>格口缓冲区？"}
+    RFID_MAP_CHECK -->|"否"| RFID_EXCEPTION3["写入异常记录表<br/>SKU不在格口缓冲区"]
+    RFID_MAP_CHECK -->|"是"| RFID_SEND["批量发送EPC码<br/>TCP {EPC\|格口\|小车号}<br/>→ 已发送EPC集合防重复"]
 
-    RFID_WAIT_CB --> RFID_CB["onRfidBindingResult 回调"]
+    RFID_WAIT_CB --> RFID_CB["RFID绑定结果回调"]
     RFID_CB --> RFID_CB_EMPTY{"查询结果<br/>为空？"}
     RFID_CB_EMPTY -->|"是"| RFID_CB_RETRY{"重试次数<br/>≤2？"}
-    RFID_CB_RETRY -->|"是"| RFID_CB_DELAY["scheduleSkuQueryRetry<br/>延迟 3 秒重试"]
+    RFID_CB_RETRY -->|"是"| RFID_CB_DELAY["延迟重试SKU查询<br/>延迟 3 秒重试"]
     RFID_CB_DELAY --> RFID_ENQUEUE
-    RFID_CB_RETRY -->|"否"| RFID_EXCEPTION["写入异常记录表<br/>SKU查询超时"]
-    RFID_CB_EMPTY -->|"否"| RFID_CB_BIND["setSkuBinding(EpcCache)<br/>skuBound=true<br/>清除 m_pendingSkuQuery"]
-    RFID_CB_BIND --> RFID_CB_READY{"isReadyForPlc？"}
-    RFID_CB_READY -->|"true"| RFID_MAP
-    RFID_CB_READY -->|"false"| RFID_CB_NOTREADY["scheduleNotReadyRetry<br/>5秒×3次 等待carNum"]
+    RFID_CB_RETRY -->|"否"| RFID_EXCEPTION["写入异常记录表<br/>SKU查询超时(3次重试耗尽)"]
+    RFID_CB_EMPTY -->|"否"| RFID_CB_BIND["设置SKU绑定(EPC缓存)<br/>SKU已绑定=是<br/>清除待查SKU队列"]
+    RFID_CB_BIND --> RFID_CB_READY{"就绪发送PLC？"}
+    RFID_CB_READY -->|"是"| RFID_MAP
+    RFID_CB_READY -->|"否"| RFID_CB_NOTREADY["延迟重试(等待就绪)<br/>5秒×3次 等待小车号"]
     RFID_CB_NOTREADY --> RFID_CB_NR_RETRY{"重试成功？"}
     RFID_CB_NR_RETRY -->|"是"| RFID_MAP
-    RFID_CB_NR_RETRY -->|"否"| RFID_EXCEPTION2["写入异常记录表<br/>carNum未到"]
+    RFID_CB_NR_RETRY -->|"否"| RFID_EXCEPTION2["写入异常记录表<br/>小车号未到(3次重试耗尽)"]
 
-    RFID_SEND --> PLC_RECV["④ PLC 落格反馈<br/>plcFeedbackBusinessBatch<br/>仅 SORTING 状态接受"]
-    PLC_RECV --> PLC_VALIDATE["parsePlcFeedback 解析<br/>==5→5字段 / ==3→3字段<br/>else→日志异常"]
-    PLC_RECV --> PLC_CHK_CODE{"GridBuffer<br/>有匹配？"}
-    PLC_CHK_CODE -->|"否"| PLC_EXC1["记录异常: no_match"]
+    RFID_SEND --> PLC_RECV["④ PLC 落格反馈<br/>PLC反馈批量处理<br/>仅 分拣中 状态接受"]
+    PLC_RECV --> PLC_VALIDATE["解析PLC反馈<br/>5字段协议 / 3字段协议<br/>其他→格式异常日志"]
+    PLC_RECV --> PLC_CHK_CODE{"格口缓冲区<br/>有匹配？"}
+    PLC_CHK_CODE -->|"否"| PLC_EXC1["记录异常: 无匹配"]
     PLC_CHK_CODE -->|"是"| PLC_CHK_BIND{"格口有<br/>容器绑定？"}
-    PLC_CHK_BIND -->|"否"| PLC_EXC2["记录异常: no_bind"]
-    PLC_CHK_BIND -->|"是"| PLC_CHK_CONFLICT{"同品分类vs<br/>发货冲突？"}
-    PLC_CHK_CONFLICT -->|"是"| PLC_EXC3["记录异常: conflict"]
+    PLC_CHK_BIND -->|"否"| PLC_EXC2["记录异常: 无绑定"]
+    PLC_CHK_BIND -->|"是"| PLC_CHK_CONFLICT{"同一 SKU 分配到<br/>不同类型格口？<br/>分类格口 vs 发货格口"}
+    PLC_CHK_CONFLICT -->|"是"| PLC_EXC3["记录异常: 冲突"]
     PLC_CHK_CONFLICT -->|"否"| PLC_CHK_DEDUP{"EPC 防重<br/>已分拣？"}
     PLC_CHK_DEDUP -->|"是"| PLC_SKIP["跳过(防重)"]
-    PLC_CHK_DEDUP -->|"否"| PLC_OK["markSorted<br/>写分拣记录表<br/>格口计数+1<br/>首件→自动BOUND→SORTING"]
+    PLC_CHK_DEDUP -->|"否"| PLC_OK["标记已分拣<br/>写分拣记录表<br/>格口计数+1<br/>首件→自动已绑定→分拣中"]
     PLC_OK --> RFID
 
-    PLC_OK -->|"PLC S7 DB77<br/>边沿检测上升沿"| LOCK_GRID["⑤ 锁格<br/>pollS7LockStatus<br/>emit gridLocked"]
-    LOCK_GRID --> LOCK_FLOW["gridLocked 回调(3步)"]
-    LOCK_FLOW --> LOCK_STEP1["步骤1: sendGridLockFeedback<br/>锁格回传分拣明细"]
-    LOCK_STEP1 --> LOCK_STEP2["步骤2: sendFullbox<br/>⑥ H7 满箱回传 WMS<br/>来源库位+目标库位+SKU+件数"]
-    LOCK_STEP2 --> LOCK_STEP3["步骤3: disableGrid<br/>格口禁用(禁止落格)"]
+    PLC_OK -->|"PLC 锁格信号"| LOCK_GRID["⑤ 锁格<br/>发出格口锁定信号"]
+    LOCK_GRID --> LOCK_FLOW["格口锁定回调(3步)"]
+    LOCK_FLOW --> LOCK_STEP1["步骤1: 发送锁格回传<br/>锁格回传分拣明细"]
+    LOCK_STEP1 --> LOCK_STEP2["步骤2: 发送满箱回传<br/>⑥ H7 满箱回传 WMS<br/>来源库位+目标库位+SKU+件数"]
+    LOCK_STEP2 --> LOCK_STEP3["步骤3: 禁用格口<br/>格口禁用(禁止落格)"]
     LOCK_STEP3 --> H7_RETRY{"WMS 响应<br/>成功？"}
     H7_RETRY -->|"失败"| H7_RETRY_BOX["出站消息队列重试"]
     H7_RETRY_BOX --> LOCK_STEP2
-    H7_RETRY -->|"成功"| H7_WAIT_H6["等待 WMS 下发 H6 绑定<br/>人工更换容器后触发"]
-    H7_WAIT_H6 --> H6
+    H7_RETRY -->|"成功"| H7_WAIT_H6["等待 WMS 下发 H6 重新绑定<br/>人工更换容器后触发"]
 
-    H7_WAIT_H6 --> CHK_ALL{"用户点击<br/>结束任务？"}
+    H7_WAIT_H6 --> H6_REBIND["★ H6 实时重新绑定<br/>WMS 下发 新容器→格口<br/>异步写入DB + 启用格口 格口恢复"]
+    H6_REBIND --> H6_REBIND_OK["HTTP 响应立即返回<br/>格口恢复可用，继续分拣循环"]
+
+    H6_REBIND_OK --> CHK_ALL{"用户点击<br/>结束任务？"}
     CHK_ALL -->|"否"| RFID
-    CHK_ALL -->|"是"| H8["⑦ H8 完结回传<br/>sendEnd<br/>WCS→WMS 分拣总件数"]
+    CHK_ALL -->|"是"| H8["⑦ H8 完结回传<br/>发送完结回传<br/>WCS→WMS 分拣总件数"]
 
     H8 --> H8_RETRY{"WMS 响应<br/>成功？"}
     H8_RETRY -->|"失败"| H8_RETRY_BOX["出站消息队列重试"]
     H8_RETRY_BOX --> H8
     H8_RETRY -->|"成功"| END_STATE["波次状态: 完结中→已完成"]
-    END_STATE --> END["结束"]
+    END_STATE --> END_CLEANUP["★ 波次完结清理<br/>启用全部格口 / 清理待查SKU队列<br/>清理重试计数 / 清理已发送EPC集合<br/>清空格口记录/计数"]
+    END_CLEANUP --> END["结束"]
 
     PRE_SORT -->|"H5 取消波次<br/>（点击开始分拣前允许）"| CANCEL["⑤ 取消波次<br/>仓库管理系统 取消波次"]
     CANCEL --> CANCEL_OK["清空数据<br/>波次状态: → 已取消 → 空闲"]
@@ -180,10 +181,11 @@ flowchart TD
 sequenceDiagram
     participant WMS as 仓库管理系统
     participant HTTP as HTTP服务器
-    participant Parse as ParseWorker
+    participant Parse as 解析线程
     participant Buf as 格口缓冲区
-    participant Cache as EpcCache
-    participant DB as 数据库
+    participant Cache as EPC缓存
+    participant Pool as 业务线程池
+    participant DB as 数据库（单例）
     participant WM as 波次管理器
     participant Plc as PLC管理器
     participant PLC as PLC控制器
@@ -191,91 +193,94 @@ sequenceDiagram
     participant Client as HTTP客户端
 
     rect rgb(255, 245, 230)
-        Note over WMS,Client: 阶段一：容器绑定 H6
-        WMS->>HTTP: ① H6 容器绑定 handleBindingLatticePort
-        HTTP->>HTTP: 校验: 参数/格口范围/波次状态
-        HTTP->>Buf: 检查格口是否在波次任务中
-        HTTP->>DB: 写入 m_containerBindings
-        opt 格口因满箱被禁用
-            HTTP->>Plc: enableGrid 格口恢复
-        end
+        Note over WMS,Client: 阶段一：容器绑定 H6（预绑定，启动服务后 H4 下发前）
+        WMS->>HTTP: ① H6 容器绑定 处理格口绑定请求（无需orderCode）
+        HTTP->>HTTP: 校验: 参数/格口范围
+        HTTP-->>WMS: HTTP 200 OK（立即返回，不等待DB写入）
+        HTTP->>Pool: ★ 异步提交到业务线程池
+        Note over HTTP,Pool: 线程池异步写入，不阻塞HTTP响应
+        Pool->>DB: 写入容器绑定表（单例DB）
+        Note over HTTP: 无波次时允许预绑定(空闲状态)
     end
 
     rect rgb(230, 245, 255)
         Note over WMS,Client: 阶段二：波次下发 H4
-        WMS->>HTTP: ② H4 波次下发 InsertWaveInfo
-        HTTP->>Parse: ParseWorker 解析 SKU+格口
+        WMS->>HTTP: ② H4 波次下发 插入波次信息
+        HTTP->>Parse: 解析线程解析 SKU+格口
         Parse->>Buf: 构建 SKU→格口 映射
-        Parse-->>HTTP: waveParsed 回调
-        HTTP->>WM: setWaveData + setRecvSet
-        HTTP->>DB: upsertReturnWave + insertWaveItems
-        HTTP->>WM: setState(WAVE_BOUND)
-        HTTP->>HTTP: 重置: enableAllGrids/清理pendingSkuQuery<br/>清理retryCount/清理sentEpcs
+        Parse-->>HTTP: 波次解析完成回调
+        HTTP->>WM: 设置波次数据 + 设置接收集合
+        HTTP->>DB: 写入/更新波次头 + 写入波次明细
+        HTTP->>WM: 设置状态(已创建)
+        HTTP->>HTTP: 重置: 启用全部格口/清理待查SKU队列<br/>清理重试计数/清理已发送EPC集合
+        HTTP->>WM: 设置状态(已绑定)  H6已预绑定
     end
 
     rect rgb(230, 255, 230)
         Note over WMS,Client: 阶段三：RFID 推送 → 发送 PLC
-        RFID->>HTTP: ③ RFID 小车号推送 handleRfidCarNumReport
-        HTTP->>Cache: setBatchWithCar(EPC + carNum)
-        alt 需要 SKU 查询
-            HTTP->>HTTP: m_pendingSkuQuery 防重入队
-            HTTP->>Client: queryRfidBinding 异步查询
-            Note over Client,WMS: ... 异步 HTTP 请求进行中 ...
-            Client-->>HTTP: onRfidBindingResult 回调
+        RFID->>HTTP: ③ RFID 小车号推送 处理RFID小车号上报
+        HTTP->>Cache: 批量写入EPC缓存(EPC编码 + 小车号)
+        alt SKU编码未知，查询RFID获取
+            HTTP->>HTTP: 待查SKU队列防重入队
+            HTTP->>Client: 查询RFID绑定(异步)<br/>EPC → SKU编码
+            Note over Client,WMS: ... 异步 HTTP 请求中 ...
+            Client-->>HTTP: RFID绑定结果回调<br/>返回 EPC→SKU编码 映射
             alt 查询结果为空
                 HTTP->>HTTP: 重试(最多2次/3秒) 或 写异常表
             else 查询成功
-                HTTP->>Cache: setSkuBinding(skuBound=true)
+                HTTP->>Cache: 设置SKU绑定(SKU已绑定=是)
             end
         end
-        HTTP->>HTTP: isReadyForPlc (skuBound && carNum)
-        HTTP->>Buf: GridBuffer.get(SKU) → 格口号
-        alt SKU 不在 GridBuffer
+        HTTP->>HTTP: 是否就绪发送PLC(SKU已绑定 && 小车号非空)
+        HTTP->>Buf: 格口缓冲区查找(SKU) → 格口号
+        alt SKU 不在格口缓冲区
             HTTP->>DB: 写异常记录表
-        else SKU 在 GridBuffer
-            HTTP->>Plc: sendBatchCodesWithEpcCache
-            Plc->>PLC: TCP {EPC|格口|小车号}
-            Plc->>PLC: S7 DB1 数据块写入
-            HTTP->>HTTP: m_sentEpcs 防重复
+        else SKU 在格口缓冲区
+            HTTP->>Plc: 批量发送EPC码
+            Plc->>PLC: TCP {EPC\|格口\|小车号}
+            HTTP->>HTTP: 已发送EPC集合防重复
         end
     end
 
     rect rgb(255, 230, 245)
         Note over WMS,Client: 阶段四：PLC 落格反馈
-        PLC->>Plc: ④ PLC 落格反馈<br/>3字段: {EPC|格口|小车}<br/>5字段: {EPC|格口|首车|尾车|状态}
-        Plc->>Plc: parsePlcFeedback 解析<br/>==5→5字段 / ==3→3字段
-        Plc-->>HTTP: plcFeedbackBusinessBatch
-        HTTP->>HTTP: 仅 SORTING 状态接受
-        HTTP->>Buf: GridBuffer.get(EPC) 验证匹配
+        PLC->>Plc: ④ PLC 落格反馈<br/>3字段: {EPC\|格口\|小车}<br/>5字段: {EPC\|格口\|首车\|尾车\|状态}
+        Plc->>Plc: 解析PLC反馈<br/>5字段协议 / 3字段协议
+        Plc-->>HTTP: PLC反馈批量处理
+        HTTP->>HTTP: 仅 分拣中 状态接受
+        HTTP->>Buf: 格口缓冲区查找(EPC) 验证匹配
         HTTP->>HTTP: 验证: 容器绑定/冲突/防重
-        HTTP->>WM: markSorted
+        HTTP->>WM: 标记已分拣
         HTTP->>DB: 写分拣记录表
         HTTP->>WM: 格口计数+1
     end
 
     rect rgb(245, 245, 230)
         Note over WMS,Client: 阶段五：锁格 → 满箱回传 H7
-        PLC->>Plc: S7 DB77 边沿检测上升沿
-        Plc->>Plc: pollS7LockStatus
-        Plc-->>HTTP: emit gridLocked
-        HTTP->>Client: 步骤1: sendGridLockFeedback
-        HTTP->>Client: 步骤2: sendFullbox (H7 满箱回传)
-        Client->>WMS: ⑤ H7 POST gwisSubProductClassifyOrder
+        PLC->>Plc: 锁格信号
+        Plc-->>HTTP: 发出格口锁定信号
+        HTTP->>Client: 步骤1: 发送锁格回传
+        HTTP->>Client: 步骤2: 发送满箱回传(H7 满箱回传)
+        Client->>WMS: ⑤ H7 满箱回传接口
         WMS-->>Client: 200 OK
-        HTTP->>Plc: 步骤3: disableGrid 格口禁用
+        HTTP->>Plc: 步骤3: 禁用格口 格口禁用
         Note over HTTP,Plc: 格口被禁用，禁止落格
         WMS->>HTTP: H6 容器绑定(人工更换容器后)
-        HTTP->>Plc: enableGrid 格口恢复
+        HTTP-->>WMS: HTTP 200 OK（立即返回）
+        HTTP->>Pool: ★ 异步提交到业务线程池
+        Pool->>DB: 写入容器绑定表（单例DB）
+        HTTP->>Plc: 启用格口 格口恢复
         Note over HTTP,Plc: 格口恢复，继续分拣
     end
 
     rect rgb(230, 230, 255)
         Note over WMS,Client: 阶段六：完结回传 H8
         Note over HTTP: 用户点击结束任务按钮
-        HTTP->>Client: sendEnd (H8 完结回传)
-        Client->>WMS: ⑥ H8 POST gwisSubProductClassifyEndOrder
+        HTTP->>Client: 发送完结回传(H8 完结回传)
+        Client->>WMS: ⑥ H8 完结回传接口
         WMS-->>Client: 200 OK
         HTTP->>WM: 波次状态: 完结中→已完成
+        HTTP->>HTTP: ★ 波次完结清理: 启用全部格口<br/>清理待查SKU队列/重试计数/已发送EPC集合<br/>清空格口记录/计数
     end
     </div></div>
 </div>
@@ -286,15 +291,17 @@ sequenceDiagram
     <div class="card-body"><div class="mermaid">
 stateDiagram-v2
     [*] --> 空闲
-    空闲 --> 已创建: H4 波次下发 ParseWorker解析
-    已创建 --> 已绑定: 数据库落库后 setState(WAVE_BOUND)
+    空闲 --> 已创建: H4 波次下发 解析线程解析
+    已创建 --> 已绑定: 数据库落库后 设置状态(已绑定)
     已绑定 --> 已取消: H5 取消波次（点击开始分拣前允许）
     已取消 --> 空闲: 状态重置，可重新下发
-    已绑定 --> 分拣中: ★ 用户点击开始分拣 startSorting()
-    分拣中 --> 分拣中: 锁格→H7满箱→disableGrid→H6绑定→enableGrid<br/>（波次状态不变化，始终为SORTING）
+    已绑定 --> 分拣中: ★ 用户点击开始分拣 开始分拣()
+    分拣中 --> 分拣中: 锁格→H7满箱→禁用格口→H6绑定→启用格口<br/>（波次状态不变化，始终为分拣中）
     分拣中 --> 完结中: 用户点击结束任务
     完结中 --> 已完成: H8 完结回传成功
     已完成 --> [*]
+
+    note right of 已完成: 完结后自动清理运行时状态<br/>启用全部格口 / 清理待查SKU队列<br/>清理重试计数 / 已发送EPC集合<br/>清空格口记录/计数
 
     note right of 分拣中: ⚠ 此状态下不允许取消波次<br/>锁格/满箱/格口禁用/恢复<br/>均在此状态下进行
     note right of 已绑定: 分拣前阶段，允许取消
@@ -309,10 +316,10 @@ stateDiagram-v2
         <table>
             <thead><tr><th>序号</th><th>路由</th><th>方向</th><th>触发时机</th><th>数据库操作</th></tr></thead>
             <tbody>
-                <tr><td>①</td><td><code>POST /api/.../BindingLatticePort</code></td><td>仓库管理系统 → WCS</td><td>仓库管理系统 扫码绑定</td><td>写入容器绑定表</td></tr>
+                <tr><td>①</td><td><code>POST /api/.../BindingLatticePort</code></td><td>仓库管理系统 → WCS</td><td>仓库管理系统 扫码绑定（无需orderCode）</td><td>异步写入容器绑定表（线程池）</td></tr>
                 <tr><td>②</td><td><code>POST /api/.../InsertWaveInfo</code></td><td>仓库管理系统 → WCS</td><td>仓库管理系统 创建波次</td><td>写入波次头表 + 波次明细表</td></tr>
                 <tr><td>③</td><td><code>POST /api/rfid/carNumReport</code></td><td>RFID → WCS</td><td>RFID 扫描到 EPC+小车号</td><td>无（仅内存缓存）</td></tr>
-                <tr><td>④</td><td>TCP + S7 协议</td><td>PLC → WCS</td><td>PLC 落格/锁格</td><td>写入分拣记录表 + 异常记录表<br/>3字段: {EPC|格口|小车}<br/>5字段: {EPC|格口|首车|尾车|状态}</td></tr>
+                <tr><td>④</td><td>TCP 协议</td><td>PLC → WCS</td><td>PLC 落格/锁格</td><td>写入分拣记录表 + 异常记录表<br/>3字段: {EPC|格口|小车}<br/>5字段: {EPC|格口|首车|尾车|状态}</td></tr>
                 <tr><td>⑤</td><td><code>POST gwisSubProductClassifyOrder</code></td><td>WCS → 仓库管理系统</td><td>格口满箱</td><td>写入满箱回传表 + 更新容器绑定表</td></tr>
                 <tr><td>⑥</td><td><code>POST gwisSubProductClassifyEndOrder</code></td><td>WCS → 仓库管理系统</td><td>用户点击结束任务按钮</td><td>写入完结回传表 + 更新波次头表</td></tr>
                 <tr><td>取消</td><td><code>POST /api/.../InsertWaveIn</code></td><td>仓库管理系统 → WCS</td><td>仓库管理系统 取消波次</td><td>更新波次头表 状态=已取消</td></tr>
@@ -330,7 +337,7 @@ stateDiagram-v2
             <tbody>
                 <tr><td><code>return_wave</code>（波次头表）</td><td>波次基本信息</td><td>H4 下发 / H5 取消 / H8 完结</td><td>跨任务保留</td></tr>
                 <tr><td><code>return_wave_item</code>（波次明细表）</td><td>SKU→格口 分配明细</td><td>H4 下发</td><td>新波次覆盖更新</td></tr>
-                <tr><td><code>grid_box_bind</code>（容器绑定表）</td><td>格口→容器 绑定关系</td><td>H6 绑定 / H7 满箱归档</td><td>历史完整保留</td></tr>
+                <tr><td><code>grid_box_bind</code>（容器绑定表）</td><td>格口→容器 绑定关系</td><td>H6 绑定（异步线程池写入） / H7 满箱归档</td><td>历史完整保留</td></tr>
                 <tr><td><code>sorting_records</code>（分拣记录表）</td><td>每条落格分拣记录</td><td>PLC 落格反馈</td><td>跨任务累积</td></tr>
                 <tr><td><code>exception_record</code>（异常记录表）</td><td>异常事件记录</td><td>分拣异常时</td><td>跨任务累积</td></tr>
                 <tr><td><code>outbox_fullbox</code>（满箱回传表）</td><td>H7 满箱回传消息队列</td><td>格口锁格</td><td>跨任务保留</td></tr>
@@ -347,27 +354,20 @@ stateDiagram-v2
 flowchart LR
     subgraph WCS["WCS HttpServer"]
         PlcMgr["PlcManager"]
-        Send["m_pSendPool 线程池<br/>sendBatchCodesWithEpcCache"]
-        Recv["TCP 接收<br/>parsePlcFeedback"]
-        Poll["S7 轮询<br/>pollS7LockStatus"]
-        CB["plcFeedbackBusinessBatch<br/>落格验证处理"]
+        Send["发送线程池<br/>批量发送EPC码"]
+        Recv["TCP 接收<br/>解析PLC反馈"]
+        CB["PLC反馈批量处理<br/>落格验证处理"]
     end
 
     subgraph PLC["PLC 控制器"]
         TCP_R["TCP 接收"]
-        S7_DB["S7 DB1 分拣指令"]
-        S7_LOCK["S7 DB77 锁格状态<br/>25字节×200位"]
         TCP_S["TCP 发送"]
     end
 
-    Send -->|"TCP {EPC|格口|小车号}"| TCP_R
-    Send -->|"S7 DBWrite DB1"| S7_DB
-    TCP_S -->|"落格反馈<br/>3字段: {EPC|格口|小车}<br/>5字段: {EPC|格口|首车|尾车|状态}"| Recv
-    Recv --> PlcMgr
-    PlcMgr -->|"批量转发"| CB
-    Poll -->|"每1秒轮询"| S7_LOCK
-    S7_LOCK -->|"边沿检测<br/>上升沿=锁格 下降沿=解锁"| Poll
-    Poll -->|"emit gridLocked"| PlcMgr
+    Send -->|"TCP {EPC\|格口\|小车号}"| TCP_R
+    TCP_S -->|"落格反馈<br/>3字段/5字段"| Recv
+    Recv --> CB
+    TCP_S -->|"锁格信号"| Recv
     </div></div>
 </div>
 
