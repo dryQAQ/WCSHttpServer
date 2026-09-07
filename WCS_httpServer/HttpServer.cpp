@@ -3,6 +3,7 @@
 #include "HttpClient.h"
 #include "LogService.h"
 #include "ConfigManager.h"
+#include "WmsGridCode.h"     // ★ 2026-09-07 WMS 格口编码(22+3位) 转换工具
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QUrlQuery>
@@ -1996,9 +1997,9 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
         //   bindGridBox 内部有 QMutexLocker 保护，线程安全
         if (m_pSortingDb && !latticehole.isEmpty() && !boxcode.isEmpty())
         {
-            bool ok = false;
-            int gridNum = latticehole.toInt(&ok);
-            if (ok && gridNum >= 1 && gridNum <= BINDING_SLOT_COUNT)
+            // ★ 2026-09-07 WMS 格口编码兼容：latticehole 可带前缀编码（如 "22005" = 格口号5）
+            int gridNum = parseWmsGridCodeToInt(latticehole);
+            if (gridNum >= 1 && gridNum <= BINDING_SLOT_COUNT)
             {
                 QString normalizedGrid = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
                 // ★ 2026-09-06 绑定关联所属波次（提交时刻快照），供波次切换恢复格口绑定视图
@@ -2134,10 +2135,9 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         return r;
     }
 
-    // ──── 步骤2: 格口号范围校验 ────
-    bool ok = false;
-    int gridNum = latticehole.toInt(&ok);
-    if (!ok || gridNum < 1 || gridNum > BINDING_SLOT_COUNT)
+    // ──── 步骤2: 格口号范围校验（★ 2026-09-07 兼容 WMS 前缀编码 "22005" = 格口号5）────
+    int gridNum = parseWmsGridCodeToInt(latticehole);
+    if (gridNum < 1 || gridNum > BINDING_SLOT_COUNT)
     {
         HTTP_LOG_WARN("BindingLatticePort 格口号越界 latticehole=%s range=1..%d",
             latticehole.toLocal8Bit().data(), BINDING_SLOT_COUNT);
@@ -2481,14 +2481,16 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
         // }
 
         // ★ 格口号越界检测（仅告警，不拒绝波次 — 异常 item 由 ParseWorker 跳过并记录异常表）
+        // ★ 2026-09-07 WMS 格口编码兼容：gridNum 可带前缀编码（如 "22005" = 格口号5），解析为内部号再校验
         {
-            bool ok = false;
-            int gNum = gridNum.toInt(&ok);
-            if (ok && (gNum < 1 || gNum > BINDING_SLOT_COUNT))
+            int gNum = parseWmsGridCodeToInt(gridNum);
+            if (gNum >= 1 && gNum <= BINDING_SLOT_COUNT)
+                gridNum = QString::number(gNum);   // 归一为内部格口号（后续逻辑均用内部号）
+            else
             {
-                HTTP_WARN("InsertWaveInfo 格口号越界 orderCode=%s items[%d] gridNum=%s range=1..%d",
+                HTTP_WARN("InsertWaveInfo 格口号无效或越界 orderCode=%s items[%d] gridNum=%s range=1..%d",
                     orderCode.toLocal8Bit().data(), i, gridNum.toLocal8Bit().data(), BINDING_SLOT_COUNT);
-                emit logMessage(QString("[WMS] 格口号越界 items[%1] gridNum=%2 (有效范围: 1~%3)，已记录异常")
+                emit logMessage(QString("[WMS] 格口号无效或越界 items[%1] gridNum=%2 (有效范围: 1~%3)，已记录异常")
                     .arg(i).arg(gridNum).arg(BINDING_SLOT_COUNT), true);
             }
         }
@@ -2817,7 +2819,8 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
     for (const QString& sku : skuOrder)
     {
         QJsonObject item;
-        item["num"]            = grid;                              // 格口号
+        // ★ 2026-09-07 WMS 格口编码：num = 格口号编码（前缀22+3位，格口5 → "22005"；内部号仅此处瞬时转换）
+        item["num"]            = gridToWmsCode(grid);
         item["targetLocation"] = boxCode.isEmpty() ? cfg.fullboxDefaultTargetLocation : boxCode;  // 目标库位 = 容器号，无容器号时兜底
         item["sku"]            = sku;
         item["qty"]            = QString::number(skuQtyMap.value(sku));

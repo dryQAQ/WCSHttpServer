@@ -92,6 +92,12 @@
 #define FULLBOX_DEFAULT_FROM_LOCATION  "A-01-02"   // 来源库位默认值（H7 fromLocation 兜底值）
 #define FULLBOX_DEFAULT_TARGET_LOCATION "66"   // 目标库位默认值（H7 targetLocation 无容器号时兜底）
 
+// ──── WMS 格口编码（2026-09-07）────
+// 对外（WMS 报文/接口）格口号 = 前缀 + 格口号按宽度补零，如 前缀"22"+3位：格口号 5 → "22005"
+// 内部（PLC 反馈 3 位、绑定 key、DB、UI）仍用原格口号；仅对外边界转换
+#define WMS_GRID_CODE_PREFIX_DEFAULT   "22"    // 格口编码前缀（空 = 关闭转换，回退现网）
+#define WMS_GRID_CODE_WIDTH_DEFAULT    3       // 格口号补零宽度（与 GRID_KEY_PADDING=3 一致）
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 分拣引擎配置
 // ═══════════════════════════════════════════════════════════════════════════

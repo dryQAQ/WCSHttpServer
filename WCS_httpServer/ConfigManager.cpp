@@ -86,6 +86,8 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "h7FromLocationSource")    fullboxFromLocationSource = xml.readElementText();
         else if (name == "h7DefaultFromLocation") fullboxDefaultFromLocation = xml.readElementText();
         else if (name == "h7DefaultTargetLocation") fullboxDefaultTargetLocation = xml.readElementText();
+        else if (name == "gridCodePrefix")      gridCodePrefix = xml.readElementText();
+        else if (name == "gridCodeWidth")       gridCodeWidth = xml.readElementText().toInt();
         // ──── S7 分拣增强配置 ────
         // bool 类型：XML 中写 "true"/"false"，读取时转为小写比较
         else if (name == "sortingEpcDedup")         sortingEpcDedup = (xml.readElementText().trimmed().toLower() == "true");
@@ -216,6 +218,12 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("h7DefaultFromLocation",  fullboxDefaultFromLocation);
     xml.writeComment(" 目标库位默认值（无容器号时兜底） ");
     xml.writeTextElement("h7DefaultTargetLocation", fullboxDefaultTargetLocation);
+
+    // ──── WMS 格口编码配置 ────
+    xml.writeComment(" WMS 格口编码：对外格口号 = 前缀 + 格口号补零（默认 22+3位：格口号5 → 22005）；前缀留空=关闭转换 ");
+    xml.writeTextElement("gridCodePrefix",   gridCodePrefix);
+    xml.writeComment(" 格口号补零宽度（默认 3，与内部/PLC 3位一致） ");
+    xml.writeTextElement("gridCodeWidth",    QString::number(gridCodeWidth));
 
     // ──── S7 分拣增强配置 ────
     xml.writeComment(" EPC 任务内防重（true/false） ");

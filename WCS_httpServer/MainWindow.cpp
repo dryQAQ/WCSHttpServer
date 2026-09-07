@@ -2,6 +2,7 @@
 #include "ConfigManager.h"
 #include "LogService.h"
 #include "SortingDatabase.h"
+#include "WmsGridCode.h"   // ★ 2026-09-07 WMS 格口编码(22+3位)：手动满箱输入归一
 #include "define.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -1933,10 +1934,11 @@ void MainWindow::onResendSelectedH7()
     if (!m_pServer) return;
 
     // ★ 2026-09-07 手动满箱切换：输入框填了格口号 → 读取该格口当前记录+容器号，立即按 H7 上传
+    //   输入兼容 WMS 编码(22005)与内部号(5/005)，统一归一为内部 3 位 key
     if (m_editFullboxGrid && !m_editFullboxGrid->text().trimmed().isEmpty())
     {
-        QString grid = m_editFullboxGrid->text().trimmed();
-        appendLog(QString("[手动满箱] 格口%1 开始满箱切换上传 ...").arg(grid));
+        QString grid = parseWmsGridCodeToStr(m_editFullboxGrid->text());
+        appendLog(QString("[手动满箱] 格口%1 开始满箱切换上传 ...").arg(m_editFullboxGrid->text().trimmed()));
         m_pServer->manualFullbox(grid);
         onRefreshWaveRecords();
         return;

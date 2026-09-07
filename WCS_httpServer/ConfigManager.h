@@ -71,6 +71,12 @@ struct AppConfig
     QString fullboxDefaultFromLocation = FULLBOX_DEFAULT_FROM_LOCATION; // 来源库位默认值（config模式时使用）
     QString fullboxDefaultTargetLocation = FULLBOX_DEFAULT_TARGET_LOCATION; // 目标库位默认值（无容器号时兜底）
 
+    // ──── WMS 格口编码配置（2026-09-07：对外格口号 = gridCodePrefix + gridCodeWidth 位补零，如 5→"22005"）────
+    //   作用域：H7 满箱回传 detailList[].num 出参用该编码；H4 下发 gridNum / H6 绑定 latticehole 入参兼容剥离该前缀。
+    //   前缀留空 = 关闭转换（出参仅补零、入参不剥离），可回退现网行为
+    QString gridCodePrefix   = WMS_GRID_CODE_PREFIX_DEFAULT;   // 格口编码前缀（默认 "22"，例 5→22005）
+    int     gridCodeWidth    = WMS_GRID_CODE_WIDTH_DEFAULT;    // 格口号补零宽度（默认 3，内部/PLC 3 位一致）
+
     // ──── S7 分拣增强配置（修改后需重启服务）────
     bool    sortingEpcDedup     = SORTING_EPC_DEDUP;          // EPC 任务内防重（true/false）
     QString sortingGridCapPolicy = SORTING_GRID_CAP_POLICY;   // 格口上限策略（reject/exception/allow）

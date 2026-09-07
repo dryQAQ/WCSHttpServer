@@ -1,5 +1,6 @@
 #include "ParseWorker.h"
 #include "LogService.h"
+#include "WmsGridCode.h"     // ★ 2026-09-07 WMS 格口编码(22+3位) 入参归一
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -80,7 +81,12 @@ void ParseWorker::run()
         {
             QJsonObject item = val.toObject();
             QString inco     = item["inco"].toString().trimmed();
+            // ★ 2026-09-07 WMS 格口编码兼容：gridNum 可带前缀编码（如 "22005" = 格口号5），
+            //   解析为内部格口号（归一为纯数字，后续存储/映射/校验全部用内部口径）
             QString gridNum  = item["gridNum"].toString().trimmed();
+            int gridNumI     = parseWmsGridCodeToInt(gridNum);
+            if (gridNumI >= 1 && gridNumI <= BINDING_SLOT_COUNT)
+                gridNum = QString::number(gridNumI);   // "22005"/"05"/"5" → "5"
             QString gridType = item["gridType"].toString().trimmed();
             // ★ 2026-09-06 来源库位（对应满箱回传报文 head.fromLocation）：
             //   WMS 下发字段为 sobi（如 "H-01-AB"），旧报文兼容 volu；根节点 sobi 兜底
@@ -104,14 +110,13 @@ void ParseWorker::run()
                 continue;
             }
 
-            // ★ 格口号越界检测（不阻塞波次，记录异常后跳过，便于核查和重传）
+            // ★ 格口号无效/越界检测（不阻塞波次，记录异常后跳过，便于核查和重传）
             {
-                bool ok = false;
-                int gNum = gridNum.toInt(&ok);
-                if (ok && (gNum < 1 || gNum > BINDING_SLOT_COUNT))
+                int gNum = gridNumI;   // 已在上方归一解析（无效时为 -1）
+                if (gNum < 1 || gNum > BINDING_SLOT_COUNT)
                 {
-                    QString reason = QString("格口号越界 gridNum=%1 有效范围1~%2").arg(gNum).arg(BINDING_SLOT_COUNT);
-                    WCS_WARN("[Parse] 格口号越界 跳过 item inco=%s gridNum=%s orderCode=%s",
+                    QString reason = QString("格口号无效或越界 gridNum=%1 有效范围1~%2").arg(gridNum).arg(BINDING_SLOT_COUNT);
+                    WCS_WARN("[Parse] 格口号无效或越界 跳过 item inco=%s gridNum=%s orderCode=%s",
                         inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(),
                         orderCode.toLocal8Bit().data());
                     emit parseException(orderCode, inco, gridNum, reason);
