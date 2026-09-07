@@ -6,6 +6,17 @@
 #include <QDir>
 #include <QCoreApplication>
 #include <QTimer>
+#include <QCryptographicHash>
+
+// ★ 2026-09-07 配置文件内容哈希（外部修改检测）
+static QByteArray configFileHash(const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return QByteArray();
+    QByteArray data = f.readAll();
+    f.close();
+    return QCryptographicHash::hash(data, QCryptographicHash::Sha1).toHex();
+}
 
 ConfigManager* ConfigManager::instance()
 {
@@ -40,6 +51,8 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "feedbackTestUrl")    feedbackTestUrl = xml.readElementText();
         else if (name == "feedbackEndUrl")     feedbackEndUrl = xml.readElementText();     // ★ H8 完结回传 URL
         else if (name == "feedbackEndTestUrl") feedbackEndTestUrl = xml.readElementText(); // ★ H8 完结回传测试 URL
+        else if (name == "feedbackMethod")    feedbackMethod = xml.readElementText();     // ★ 2026-09-06 满箱/锁格/波次完成回传 method
+        else if (name == "feedbackEndMethod") feedbackEndMethod = xml.readElementText();  // ★ 2026-09-06 完结回传(H8) method
         else if (name == "appkey")             appkey = xml.readElementText();
         else if (name == "appkeyTest")         appkeyTest = xml.readElementText();
         else if (name == "useTestEnv")         useTestEnv = xml.readElementText().toInt();
@@ -130,7 +143,11 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("feedbackEndUrl",   feedbackEndUrl);
     xml.writeComment(" 测试环境完结回传 URL（H8） ");
     xml.writeTextElement("feedbackEndTestUrl", feedbackEndTestUrl);
-    xml.writeComment(" 正式环境 AppKey（HTTP Header 鉴权） ");
+    xml.writeComment(" ★ 满箱/锁格/波次完成回传 method（URL 参数 method，WMS 网关接口标识） ");
+    xml.writeTextElement("feedbackMethod",    feedbackMethod);
+    xml.writeComment(" ★ 完结回传(H8) method（URL 参数 method，WMS 网关接口标识） ");
+    xml.writeTextElement("feedbackEndMethod", feedbackEndMethod);
+    xml.writeComment(" 正式环境 AppKey（HTTP Header + URL 参数 appkey） ");
     xml.writeTextElement("appkey",           appkey);
     xml.writeComment(" 测试环境 AppKey ");
     xml.writeTextElement("appkeyTest",       appkeyTest);
@@ -193,7 +210,7 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("logRetainDays",    QString::number(logRetainDays));
 
     // ──── 满箱回传配置 ────
-    xml.writeComment(" fromLocation 取值来源（config=使用固定值, volu=使用波次明细中的 volu 字段） ");
+    xml.writeComment(" fromLocation 取值来源（config=使用固定值, sobi=使用波次明细 sobi 来源库位） ");
     xml.writeTextElement("h7FromLocationSource",   fullboxFromLocationSource);
     xml.writeComment(" 来源库位默认值（config 模式时使用） ");
     xml.writeTextElement("h7DefaultFromLocation",  fullboxDefaultFromLocation);
@@ -261,10 +278,12 @@ bool ConfigManager::load()
         LOG_WARN("[配置] 配置文件不存在: %s（将按默认值自动创建）", configPath.toLocal8Bit().constData());
         m_config.saveToFile(configPath);
         LOG_INFO("[配置] 默认配置文件已创建: %s", configPath.toLocal8Bit().constData());
+        m_seenHash = configFileHash(configPath);   // ★ 记录自写后哈希
         return true;
     }
 
     bool ok = m_config.loadFromFile(configPath);
+    m_seenHash = configFileHash(configPath);       // ★ 记录本次加载所见文件内容
     LOG_INFO("[配置] 配置文件已加载: %s（%s）", configPath.toLocal8Bit().constData(), ok ? "成功" : "失败");
     return ok;
 }
@@ -286,5 +305,25 @@ bool ConfigManager::saveNow()
     m_saveDirty = false;
     m_saveTimer->stop();
     QString exePath = QCoreApplication::applicationDirPath();
-    return m_config.saveToFile(exePath + "/" CONFIG_FILE);
+    QString configPath = exePath + "/" CONFIG_FILE;
+
+    // ★ 2026-09-07 防"手改配置被自动保存覆盖"：
+    //   保存前比对磁盘文件哈希——若文件被外部（手工/编辑工具/其它实例）改动过，
+    //   说明本程序内存里是旧值，直接整写会用旧值覆盖手改（如测试满箱回传地址被还原）。
+    //   处理：先重新加载（保留外部改动到内存）再写盘；解析失败则放弃本次保存并告警。
+    QByteArray diskHash = configFileHash(configPath);
+    if (!diskHash.isEmpty() && m_seenHash != diskHash)
+    {
+        LOG_WARN("[配置] 检测到配置文件已被外部修改（非本程序写入）——先重新加载再保存，避免覆盖手改内容");
+        if (!m_config.loadFromFile(configPath))
+        {
+            LOG_ERROR("[配置] 外部修改的配置文件解析失败，本次自动保存已取消（保留文件现状，请人工检查XML）");
+            return false;
+        }
+    }
+
+    bool ok = m_config.saveToFile(configPath);
+    if (ok)
+        m_seenHash = configFileHash(configPath);   // ★ 记录自写后哈希
+    return ok;
 }

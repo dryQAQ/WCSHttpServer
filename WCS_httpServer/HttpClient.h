@@ -25,9 +25,12 @@ public:
     ~HttpClient();
 
     // ──── 配置 ────
-    void setUrl(const QString& url)  { m_url = url; }        // WMS满箱回传接口地址（H7）
-    void setEndUrl(const QString& url) { m_endUrl = url; }   // WMS完结回传接口地址（H8）
-    void setAppkey(const QString& k) { m_appkey = k; }        // WMS认证AppKey（HTTP Header）
+    void setUrl(const QString& url)  { m_url = url; }        // WMS满箱回传接口 base URL（H7，不含参数）
+    void setEndUrl(const QString& url) { m_endUrl = url; }   // WMS完结回传接口 base URL（H8，不含参数）
+    void setAppkey(const QString& k) { m_appkey = k; }        // WMS认证AppKey（HTTP Header + URL 参数 appkey）
+    // ★ 2026-09-06：WMS 网关 method 参数（发送时拼到 URL: ?appkey=xxx&method=yyy）
+    void setFeedbackMethod(const QString& m)    { m_feedbackMethod = m; }    // 满箱/锁格/波次完成回传 method
+    void setEndFeedbackMethod(const QString& m) { m_endFeedbackMethod = m; } // 完结回传(H8) method
     void setTimeout(int ms)          { m_timeoutMs = ms; }    // 回传超时(ms)，默认HTTP_TIMEOUT_MS=3000
     void setRfidQueryUrl(const QString& url) { m_rfidQueryUrl = url; }  // ★ RFID SKU-EPC 绑定查询 URL
     void setRfidAppkey(const QString& k)     { m_rfidAppkey = k; }      // ★ 2026-09-05 RFID 查询鉴权 key（空=不发送）
@@ -66,14 +69,20 @@ private slots:
     void onRfidBindingReplyFinished();  // ★ RFID 绑定查询 QNetworkReply::finished 回调
 
 private:
+    // ★ 2026-09-06：组装带网关参数的完整回传 URL（base + 自动补 appkey/method；
+    //   若 URL 已自带 appkey/method 则不重复追加，以 URL 内为准）
+    QUrl buildFeedbackUrl(const QString& baseUrl, const QString& method) const;
+
     // ★ 必须为成员变量：QNetworkAccessManager 作为 parent 管理 QNetworkReply 和 QTimer，
     //    避免函数返回后子对象被提前析构导致信号触发时崩溃
     QNetworkAccessManager* m_pNetworkMgr;
 
     // ──── 配置成员 ────
-    QString m_url;              // WMS满箱回传目标URL（H7）
-    QString m_endUrl;           // WMS完结回传目标URL（H8）
-    QString m_appkey;           // WMS认证AppKey（放入HTTP Header: AppKey=xxx）
+    QString m_url;              // WMS满箱回传目标 base URL（H7，不含 appkey/method 参数）
+    QString m_endUrl;           // WMS完结回传目标 base URL（H8）
+    QString m_appkey;           // WMS认证AppKey（HTTP Header + URL 参数 appkey）
+    QString m_feedbackMethod    = WMS_METHOD_FULLBOX;    // ★ 满箱/锁格/波次完成回传 method（URL 参数）
+    QString m_endFeedbackMethod = WMS_METHOD_END;        // ★ 完结回传(H8) method（URL 参数）
     int     m_timeoutMs = HTTP_TIMEOUT_MS;  // 超时时间(ms)，默认3000
     QString m_rfidQueryUrl;     // ★ RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
     QString m_rfidAppkey;       // ★ 2026-09-05 RFID 查询鉴权 key（HTTP Header: Authorization: APP_KEYS <key>；空=不发送）

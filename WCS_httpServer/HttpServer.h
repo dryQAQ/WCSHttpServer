@@ -34,13 +34,15 @@ class HttpClient;  // 前向声明（避免循环依赖）
 
 class ParseWorker;
 
-// ★ 格口分拣记录（锁格时回传 WMS 用）
+// ★ 格口分拣记录（锁格/满箱时回传 WMS 用）
 struct GridSortRecord
 {
-    QString inco;          // SKU编码（客户确认 2026-08-14，H4 下发 inco 字段为 SKU 编码）
-    QString car;           // 小车号（TODO: 应由RFID提供，客户尚未提供 2026-08-04）
+    QString inco;          // 运行时为主键码（EPC；链路以 EPC 为流水主键，字段名为历史遗留）
+    QString sku;           // ★ 2026-09-06 SKU 编码（EPC→SKU 绑定查询结果，落格时固化；
+                           //   WMS 报文中 sku 字段必须是它——不能是 EPC 或占位串）
+    QString car;           // 小车号
     int     gridCount = 0; // 配货件数
-    QString volu;          // 来源库位
+    QString volu;          // 来源库位（=WMS下发 items[].sobi；满箱回传报文 head.fromLocation 来源）
     qint64  timeMs   = 0;  // 分拣时间
 };
 
@@ -61,9 +63,16 @@ public:
     explicit HttpServer(QObject* parent = nullptr);
     ~HttpServer();
 
-    bool start(int port = 8191);
-    void stop();
-    bool isRunning() const { return m_pServer && m_pServer->HasStarted(); }
+    // ★ 2026-09-06 设备连接与任务接收解耦：
+    //   设备层（PLC/RFID）随程序启动常驻；接收层（WMS HTTP 推送）由按钮控制
+    bool startDevices();          // 设备层：ParseWorker+PLC(TCP/S7)+RFID 客户端（程序启动调用一次；失败仅提示不阻断）
+    bool startReceive(int port);  // 接收层：HTTP 8191 开始接收 WMS 推送（按钮"开始接收任务"）
+    void stopReceive();           // 接收层：停止接收（设备保持连接；按钮"结束任务"收尾后调用）
+    void stopDevices();           // 设备层：PLC/S7/RFID/ParseWorker 全停（程序退出时调用）
+    bool isReceiving() const { return m_receiving.load(); }   // 当前是否在接收任务
+    bool isRunning() const { return m_pServer && m_pServer->HasStarted(); }   // 兼容：=接收中
+
+    RfidPushClient* rfidPush() { return m_pRfidPush; }   // ★ 2026-09-06 设备状态查询（UI 用）
 
     TaskQueue*   taskQueue()   { return m_pQueue; }
     GridBuffer*  gridBuffer()  { return m_pBuffer; }
@@ -143,6 +152,26 @@ public:
     // ★ 构建波次明细记录（从 GridBuffer 读取全量 SKU→格口映射，供落库复用）
     QVector<ReturnWaveItemRecord> buildWaveItems(const QString& orderCode);
 
+    // ★ 2026-09-06 波次记录/重传面板（★ 2026-09-06 升级为「波次数据记录」：全部已传输波次）────
+    QVector<WaveRecordProgress> getAllWaves();                       // ★ 全部波次（含已完成/已取消）+ 进度
+    QVector<ReturnWaveRecord> getUnfinishedWaves();                  // 所有未完成波次（旧面板兼容）
+    QVector<OutboxRecord> getWaveFullboxOutbox(const QString& orderCode); // 某波次 H7 出站消息（含状态）
+    QVector<OutboxRecord> getWaveEndOutbox(const QString& orderCode);     // 某波次 H8 出站消息（含状态）
+    // ★ 2026-09-07 清空格口容器绑定（人工重置）：内存清空 + DB 归档留史 + 恢复禁用格口
+    void clearAllGridBinds();
+    void resendOutbox(const QString& orderCode, bool resendH7, bool resendH8); // 手动重传选中波次的 H7/H8
+    void onOutboxResendReply(const QString& msgId, bool isH7, bool success);   // 手动重传结果（轻量，不动波次状态/绑定）
+    // ★ 2026-09-07 手动满箱切换：UI 输入格口号 → 读取该格口当前记录+容器号，按 H7 满箱回传上传
+    bool manualFullbox(const QString& grid);
+
+    // ──── 上一波次任务恢复 ────
+    // 选中波次的恢复摘要（orderCode/status/orderQty/sorted/exception/H7H8状态/更新时间）
+    QJsonObject getUnfinishedWaveSummary(const QString& orderCode);
+    // 恢复选中波次到内存（重建 GridBuffer + WaveManager 状态/进度），继续上次任务
+    bool resumeUnfinishedWave(const QString& orderCode);
+    // ★ 2026-09-06 新任务：当前波次进度/数据保留于 DB（可切换回来），内存清空回到空闲等待接收
+    bool startNewWaveTask();
+
 signals:
     void serverStarted(int port);
     void serverStopped();
@@ -157,6 +186,14 @@ signals:
     // ★ 2026-09-04 P0修复：波次明细异步落库完成（业务线程池执行完发回主线程，推进 BOUND）
     //   ok=true 推进 BOUND；ok=false 保持 CREATED（落库重试已耗尽，写异常表+UI告警）
     void wavePersistenceFinished(const QString& orderCode, bool ok, int skuCount);
+
+    // ──── 未完成波次手动重传面板信号 ────
+    // outboxResendReady: 请求发送一条历史出站报文（kind: "fullbox"|"end"），由 MainWindow 中继到 HttpClient
+    void outboxResendReady(const QString& kind, const QJsonObject& payload, const QString& msgId);
+    // outboxResendResult: 手动重传结果回执（供面板刷新状态）
+    void outboxResendResult(const QString& orderCode, const QString& kind, const QString& msgId, bool success);
+    // waveResumed: 上一波次恢复完成（UI 刷新波次面板）
+    void waveResumed(const QString& orderCode, int status);
 
 protected:
     // CHttpServerListener 回调
@@ -190,6 +227,11 @@ private:
     void sendFullbox(const QString& grid);                // ★ 满箱触发入口（T-S5-01）
     void sendFullboxToWms(const QString& msgId, const QJsonObject& payload); // ★ 发送满箱回传到 WMS（H7 满箱同步到WMS，T-S5-04）
     void pollOutboxFullbox();                              // ★ Outbox 重试调度（T-S5-04）
+    // ──── 完结前兜底补发（2026-09-07）：H8 前把未满箱格口数据补发 H7 ────
+    QString lookupGridBoxCode(const QString& grid);        // 格口当前容器号（内存→DB 兜底，sendFullbox/补发共用）
+    int     flushUnreportedFullboxes(const QString& orderCode); // 补发内存中未满箱格口的 H7，返回补发格口数
+    bool    sendFullboxForGrid(const QString& orderCode, const QString& grid,
+                               QVector<GridSortRecord> records); // 单格口 H7 补发（完结前补发/手动满箱共用）
     void sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
                           const QJsonObject& json, USHORT status = 200);
     QJsonObject okResponse(const QString& msg = "");
@@ -241,12 +283,23 @@ private:
     //   点击"结束任务"后启动，到期无论回传是否完成都强制结束会话（onEndSessionTimeout），
     //   保证 endReportFinished 必然发出 → MainWindow 停止服务（不卡死、不退出程序）
     QTimer*                 m_endSessionTimer = nullptr;
+    QString                 m_endSessionOrderCode;          // ★ 2026-09-06 H8 会话归属波次（切出后超时兜底只处理该波次）
     void                    onEndSessionTimeout();          // ★ H8 会话超时兜底（内部方法，定时器回调）
+    void                    switchAwayCurrentWave();        // ★ 2026-09-06 挂起切出当前波次（清内存；状态/进度保留 DB）
+
+    // ──── ★ 2026-09-07 波次待执行队列（当前波次执行中收到的新 H4 排队，结束后自动执行）────
+    struct PendingWave { QString orderCode; QByteArray rawBody; QString fullUrl; qint64 recvTime = 0; };
+    QVector<PendingWave>    m_pendingWaveQueue;             // FIFO（仅主线程读写）
+    std::atomic<bool>       m_replayingPending{false};      // 队列重放标志（放行接收闸门）
+    void                    maybeStartPendingWave();        // 空闲时取队首重放（由 ParseWorker 重新解析注册）
+    void                    restoreBindsIfEmpty(const QString& orderCode);  // ★ 2026-09-07 无 active 绑定则沿用最近绑定
 
     // ★ 2026-09-02 防崩溃（停止与在途请求竞态）：服务停止标志
     //   stop() 最先置位；processRequest/sendJsonResponse 检测到后立即返回，
     //   防止线程池任务在 m_pServer.Reset() 后继续调用 HP-Socket SendResponse（空指针崩溃）
     std::atomic<bool>       m_stopping{false};
+    // ★ 2026-09-06 设备/接收解耦：任务接收标志（HTTP 接收中=true；设备连接与其无关）
+    std::atomic<bool>       m_receiving{false};
 
     // ──── PLC发送失败日志限流 ────
     QSet<QString>           m_warnedPlcFailCodes;
@@ -261,7 +314,7 @@ private:
     QMap<QString, QVector<GridSortRecord>> m_gridSortRecords;  // 格口号 → 分拣明细列表
     std::mutex m_gridRecordMutex;                               // 保护 m_gridSortRecords
 
-    // ──── S7 格口分拣计数（T-S7-06 格口上限检查）────
+    // ──── S7 格口分拣计数（T-S7-06：只记录落格已分拣件数，不做上限限制）────
     QMap<QString, int>      m_gridSortedCount;   // 格口号 → 已分拣件数
     std::mutex              m_gridCountMutex;     // 保护 m_gridSortedCount
 

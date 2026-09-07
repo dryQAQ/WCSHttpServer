@@ -94,11 +94,80 @@ HttpServer::HttpServer(QObject* parent)
     connect(this, &HttpServer::wavePersistenceFinished, this,
         &HttpServer::onWavePersistenceFinished);
 
+    // ★ 波次状态变化 → 同步 return_wave.status 到数据库（异步）
+    //   未完成波次面板/重启检测/恢复 依赖 DB 状态准确；此前仅取消时落库，其余状态变更未持久化
+    connect(m_pWaveMgr, &WaveManager::waveStatusChanged, this,
+        [this](int newStatus) {
+            QString orderCode = m_pWaveMgr->orderCode();
+            if (orderCode.isEmpty() || !m_pSortingDb || !m_pSortingDb->isOpen())
+                return;
+            if (m_pBusinessPool)
+                m_pBusinessPool->commitNoWait([this, orderCode, newStatus]() {
+                    m_pSortingDb->updateWaveStatus(orderCode, newStatus);
+                });
+            else
+                m_pSortingDb->updateWaveStatus(orderCode, newStatus);
+
+            // ★ 2026-09-07 波次到达终态（已完结/已取消）且有待执行波次 → 自动开始下一波次
+            //   （H8 成功/失败耗尽/会话超时兜底、H5 取消 全部经由此处触发，主线程串行安全）
+            if (newStatus == WAVE_FINISHED || newStatus == WAVE_CANCELLED)
+                maybeStartPendingWave();
+        });
+
     // 显式指定 Qt::QueuedConnection：ParseWorker::run() 在独立线程中运行，
     // 使用 AutoConnection 时因 sender/receiver 的 thread() 都在主线程，
     // 但 emit 发生在工作线程，导致信号跨线程传递异常。
     connect(m_pWorker, &ParseWorker::waveParsed, this,
-        [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet) {
+        [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet,
+               const QByteArray& rawBody) {
+            // ★ 2026-09-06 接收闸门：停止接收后到达的队列残余任务不注册波次，仅记录
+            //   ★ 2026-09-07 待执行队列重放（自动开始下一波次）放行
+            if (!m_receiving.load() && !m_replayingPending.load())
+            {
+                HTTP_LOG_WARN("未接收任务，跳过波次注册 orderCode=%s（停止接收后到达的残留任务）",
+                    orderCode.toLocal8Bit().data());
+                return;
+            }
+            m_replayingPending.store(false);   // ★ 重放任务已到达注册点，清除放行标志
+
+            // ── ★ 2026-09-07 波次执行中收到新波次 → 排队，不覆盖当前任务 ──
+            {
+                WaveManager* wm = m_pWaveMgr;
+                QString curOrder = wm ? wm->orderCode() : QString();
+                int curSt        = wm ? wm->status() : -1;
+                bool busy = !curOrder.isEmpty() && curOrder != orderCode
+                    && (curSt == WAVE_CREATED || curSt == WAVE_BOUND || curSt == WAVE_SORTING
+                        || curSt == WAVE_FULLBOX_SYNC || curSt == WAVE_HELD
+                        || curSt == WAVE_CANCEL_PENDING || curSt == WAVE_ENDING);
+                if (busy)
+                {
+                    // 防重复排队：队列中已有同单 → 忽略本次
+                    for (const PendingWave& p : m_pendingWaveQueue)
+                    {
+                        if (p.orderCode == orderCode)
+                        {
+                            HTTP_LOG_WARN("波次已在待执行队列，忽略重复 orderCode=%s", orderCode.toLocal8Bit().data());
+                            emit logMessage(QString("[波次] %1 已在待执行队列，忽略重复下发").arg(orderCode), true);
+                            return;
+                        }
+                    }
+                    PendingWave pw;
+                    pw.orderCode = orderCode;
+                    pw.rawBody   = rawBody;
+                    pw.recvTime  = QDateTime::currentMSecsSinceEpoch();
+                    m_pendingWaveQueue.append(pw);
+                    // ★ 落波次头（波次记录列表可见，状态=已下发/待执行）；明细待执行时随格口映射一起落库
+                    if (m_pSortingDb)
+                        m_pSortingDb->upsertReturnWave(orderCode, orderQty, WAVE_CREATED);
+                    HTTP_LOG_INFO("新波次排队 orderCode=%s qty=%d 当前波次=%s 队列=%d",
+                        orderCode.toLocal8Bit().data(), orderQty, curOrder.toLocal8Bit().data(),
+                        m_pendingWaveQueue.size());
+                    emit logMessage(QString("[波次] 新波次 %1 已排队（待执行 %2 个）——当前波次 %3 结束后自动开始")
+                        .arg(orderCode).arg(m_pendingWaveQueue.size()).arg(curOrder));
+                    return;
+                }
+            }
+
             m_pWaveMgr->setWaveData(orderCode, orderQty, skuCount);
             m_pWaveMgr->setRecvSet(recvSet);
 
@@ -193,37 +262,17 @@ HttpServer::HttpServer(QObject* parent)
             }
         }, Qt::QueuedConnection);
 
-    // ★ 波次完成 → 异步入池构建 33.md JSON（避免主线程遍历大量数据卡 UI）
+    // ★ 波次分拣完成 → 仅提示，不自动发送「波次完成回传」（2026-09-07 客户确认）：
+    //   满箱切换(H7) 仅由人工 PLC 锁格触发；分拣完成但未锁格的格口数据保留在内存，
+    //   点「结束任务」时由完结前兜底补发（flushUnreportedFullboxes）统一按 H7 上传，随后发 H8。
+    //   旧「波次完成回传」（buildReportFromRecords / waveCompleteReportReady）已停用——
+    //   其原先会清空 m_gridSortRecords，导致完结前无数据可补发（现场实测"直接结束不上传剩余框数据"）。
     connect(m_pWaveMgr, &WaveManager::waveReadyToReport, this,
         [this](const QString& orderCode) {
-            // 1. 快速拷贝格口记录（主线程，加锁 ≤1ms）
-            QMap<QString, QVector<GridSortRecord>> recordsCopy;
-            {
-                std::lock_guard<std::mutex> lock(m_gridRecordMutex);
-                recordsCopy = m_gridSortRecords;
-                m_gridSortRecords.clear();  // 立即清空，避免双写
-            }
-
-            if (recordsCopy.isEmpty())
-            {
-                HTTP_LOG_WARN("波次完成回传: 无分拣记录 order=%s", orderCode.toLocal8Bit().data());
-                emit logMessage(QString("[波次] 无分拣记录，跳过回传 order=%1").arg(orderCode));
-                return;
-            }
-
-            // 2. 异步入池构建 JSON + 发出信号（业务线程池，不卡主线程）
-            if (m_pBusinessPool)
-            {
-                m_pBusinessPool->commitNoWait([this, orderCode, recordsCopy]() {
-                    QJsonObject report = buildReportFromRecords(orderCode, recordsCopy);
-                    emit waveCompleteReportReady(report);
-                });
-            }
-            else
-            {
-                QJsonObject report = buildReportFromRecords(orderCode, recordsCopy);
-                emit waveCompleteReportReady(report);
-            }
+            HTTP_LOG_INFO("波次分拣完成 order=%s（未锁格的格口数据将在点「结束任务」时自动补发 H7）",
+                orderCode.toLocal8Bit().data());
+            emit logMessage(QString("[波次] 分拣完成 order=%1——未满箱格口将在点「结束任务」时自动补发 H7")
+                .arg(orderCode));
         }, Qt::QueuedConnection);
 
     // ──── PLC反馈批次 → 分拣标记 + 按格口记录 ────
@@ -248,9 +297,11 @@ HttpServer::HttpServer(QObject* parent)
 
                     for (const PlcFeedbackEntry& e : entries)
                     {
-                        // ──── 仅 SORTING 接受投线 ────
-                        // 非 SORTING 状态拒绝处理（BOUND 等待手动开始分拣，落格反馈暂不处理）
-                        if (waveStatus != WAVE_SORTING)
+                        // ──── 仅 SORTING / FULLBOX_SYNC 接受投线 ────
+                        // 非上述状态拒绝处理（BOUND 等待手动开始分拣，落格反馈暂不处理）。
+                        // ★ 2026-09-07 修复：满箱同步期间（H7 网络往返窗口）其他格口的落格反馈照常计数，
+                        //   此前一律拒绝导致满箱瞬间的反馈丢失、已分拣数小于实投数（mock 实测）
+                        if (waveStatus != WAVE_SORTING && waveStatus != WAVE_FULLBOX_SYNC)
                         {
                             HTTP_LOG_WARN("PLC反馈被拒绝 非SORTING状态 orderCode=%s code=%s status=%d",
                                 m_pWaveMgr->orderCode().toLocal8Bit().data(),
@@ -416,62 +467,34 @@ HttpServer::HttpServer(QObject* parent)
                         }
 
                         // ──── 正常落格处理 ────
-                        // ──── 格口达计划上限策略────
-                        // 检查格口是否已达计划上限，按配置选择拒收/异常口/允许超收
-                        if (!cfg.sortingAllowOverrecv)
-                        {
-                            int currentSorted = 0;
-                            {
-                                std::lock_guard<std::mutex> lock(m_gridCountMutex);
-                                currentSorted = m_gridSortedCount.value(e.grid, 0);
-                            }
-                            int planQty = entry.gridCount; // 该格口在当前SKU下的计划数
-                            if (currentSorted >= planQty && planQty > 0)
-                            {
-                                if (cfg.sortingGridCapPolicy == "reject")
-                                {
-                                    HTTP_LOG_WARN("格口达计划上限 拒收 code=%s grid=%s sorted=%d plan=%d",
-                                        e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(),
-                                        currentSorted, planQty);
-                                    continue;
-                                }
-                                // exception 策略：入异常口
-                                HTTP_LOG_WARN("格口达计划上限 入异常口 code=%s grid=%s sorted=%d plan=%d",
-                                    e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(),
-                                    currentSorted, planQty);
-                                m_pWaveMgr->markException(e.code);
-                                if (m_pSortingDb)
-                                {
-                                    ExceptionRecord exRec;
-                                    exRec.type      = "grid_cap";
-                                    exRec.orderCode = m_pWaveMgr->orderCode();
-                                    exRec.epc       = e.code;
-                                    exRec.sku       = "";
-                                    exRec.reason    = QString("格口%1已达计划上限(sorted=%2, plan=%3)")
-                                        .arg(e.grid).arg(currentSorted).arg(planQty);
-                                    exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-                                    m_pSortingDb->insertException(exRec);
-                                }
-                                continue;
-                            }
-                        }
+                        // ★ 2026-09-07 客户确认：不做格口计划上限限制，只如实记录落格已分拣数量。
+                        //   原「格口达计划上限 拒收/入异常口」策略已移除——多SKU共格时按SKU计划数误拒
+                        //   （mock 实测 6/12），且职责上只需记录已分拣数量，超不超由 WMS 计划侧把握。
 
                         m_pWaveMgr->markSorted(e.code);
 
-                        // ★ S7 格口分拣计数递增（T-S7-06）
+                        // ★ 记录该格口已分拣件数（只计数，不做上限拦截）
                         {
+                            bool ok = false;
+                            int gn = e.grid.toInt(&ok);
+                            QString gridKey = ok ? QString::number(gn) : e.grid;
                             std::lock_guard<std::mutex> lock(m_gridCountMutex);
-                            m_gridSortedCount[e.grid]++;
+                            m_gridSortedCount[gridKey]++;
                         }
 
-                        // 按格口记录分拣明细（锁格时回传 WMS 用）
+                        // 按格口记录分拣明细（锁格/满箱时回传 WMS 用）
                         {
                             std::lock_guard<std::mutex> lock(m_gridRecordMutex);
                             GridSortRecord rec;
-                            rec.inco   = e.code;
+                            rec.inco   = e.code;                                  // EPC（链路主键）
+                            rec.sku    = m_pEpcCache ? m_pEpcCache->get(e.code) : QString();  // ★ SKU（EPC→SKU 映射，落格时固化，供 WMS 报文 sku 字段）
                             rec.car    = e.car;
                             rec.timeMs = e.timestampMs;
-                            rec.gridCount = entry.gridCount;
+                            // ★ 2026-09-06 件数口径修复：一物一码，每条落格记录 = 1 件。
+                            //   原值 entry.gridCount（该SKU计划件数）被灌进单条记录，导致
+                            //   DB 明细"件数"列与报文 qty 按计划数虚高（例: 计划12实分3 → 3行×12=36）。
+                            //   计划数仅用于格口上限策略(m_gridSortedCount)与波次计划(planQty)。
+                            rec.gridCount = 1;
                             rec.volu      = entry.volu.isEmpty() ? QString("--") : entry.volu;
 
                             m_gridSortRecords[e.grid].append(rec);
@@ -485,7 +508,8 @@ HttpServer::HttpServer(QObject* parent)
                                     m_pWaveMgr->orderCode(),
                                     e.code, sku, e.grid, e.car,
                                     e.firstCar, e.lastCar,
-                                    entry.gridCount, entry.volu);
+                                    1 /* ★ 2026-09-07 每条落格记录=1件（与 rec.gridCount 口径一致，不再写 SKU 计划数）*/,
+                                    entry.volu);
                             }
                         }
                     }
@@ -529,13 +553,12 @@ HttpServer::HttpServer(QObject* parent)
             emit logMessage(QString("[锁格→满箱] 格口%1 order=%2 box=%3 gridRecords=%4 waveStatus=%5")
                 .arg(grid).arg(orderCode).arg(boxCode).arg(gridRecordCount).arg(waveStatus), true);
 
-            // 步骤1: 锁格回传分拣明细（原有逻辑）
-            HTTP_LOG_INFO("[锁格→满箱] 步骤1 锁格回传 grid=%s", grid.toLocal8Bit().data());
-            sendGridLockFeedback(grid);
-
-            // 步骤2: 满箱回传（H7 满箱同步到WMS，G2 新增）
-            // PLC 锁格 = 满箱信号，触发满箱回传报文组装（H7）+ Outbox 可靠投递
-            HTTP_LOG_INFO("[锁格→满箱] 步骤2 满箱回传（H7） grid=%s box=%s", grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data());
+            // ★ 2026-09-06 客户确认：PLC 锁格 = 满箱事件，只发 H7 满箱回传报文
+            //   （WMS 网关 method=gwisSubProductClassifyOrder，报文 num=格口号/targetLocation=容器号/sku映射）。
+            //   原「步骤1 锁格明细回传」（lockGrid 旧报文 num=容器号/targetLocation=格口号）已停用：
+            //   ① 其字段语义与 WMS 网关 Order 接口不符（曾返回 UNKNOWN_OPERATE_ERROR）；
+            //   ② 它在发送后立即清空该格分拣记录，导致紧随其后的 H7 满箱报文永远取不到明细。
+            HTTP_LOG_INFO("[锁格→满箱] 满箱回传（H7） grid=%s box=%s", grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data());
             sendFullbox(grid);
 
             // ★ 步骤3: 满箱回传后禁用格口（纠正5）
@@ -610,12 +633,12 @@ HttpServer::~HttpServer()
     // 析构清理说明：
     //   m_pBuffer(GridBuffer)/m_pQueue(TaskQueue) 为构造器 new 的无 QObject parent 成员，本析构函数末尾 delete 释放
     //   m_pWorker/m_pWaveMgr/m_pPlcMgr 均有 QObject parent=this，由 Qt 对象树自动释放，无需处理
-    stop();
-    LOG_INFO("[析构] step1 stop() 完成");
-    m_pWorker->stop();
-    m_pWorker->wait(WORKER_WAIT_MS);
-    LOG_INFO("[析构] step2 ParseWorker 已停止");
-    // ★ 关闭分拣记录数据库（单例，仅关闭不删除）
+    // ★ 2026-09-06：实例常驻（程序启动建一次，退出才析构）——析构=全停（接收+设备）
+    stopReceive();
+    LOG_INFO("[析构] step1 停止接收 完成");
+    stopDevices();
+    LOG_INFO("[析构] step2 设备已停止(PLC/RFID/Worker)");
+    // ★ 关闭分拣记录数据库（单例；仅进程退出前析构时调用一次，无并发竞态）
     if (m_pSortingDb) {
         m_pSortingDb->close();
         m_pSortingDb = nullptr;
@@ -646,46 +669,28 @@ HttpServer::~HttpServer()
     LOG_INFO("[析构] step8 GridBuffer 已删除，Qt子对象将自动释放");
 }
 
-bool HttpServer::start(int port)
+// ============================================================================
+// ★ 2026-09-06 设备连接与任务接收解耦：
+//   startDevices() —— 设备层：程序启动即自动连接 PLC/RFID（常驻，与按钮无关）
+//   startReceive()/stopReceive() —— 接收层：按钮控制是否接收 WMS 任务下发
+// ============================================================================
+
+bool HttpServer::startDevices()
 {
-    m_stopping.store(false);  // ★ 2026-09-02：复位停止标志（允许再次启动）
-    m_pWorker->start();
+    m_stopping.store(false);
 
-    // ★ 启动时从数据库恢复未完成波次（软件重启后继续处理同一批次数据）
-    restoreWaveFromDB();
+    // ParseWorker 解析线程：常驻（仅首次启动；QThread 不可重复 start）
+    if (m_pWorker && !m_pWorker->isRunning())
+        m_pWorker->start();
 
-    // ──── HP-Socket 性能调优（参考WCSApp线程池架构）────
-    {
-        // 设置I/O工作线程数（默认2×CPU核心=32，减到8减少上下文切换）
-        m_pServer->SetWorkerThreadCount(HP_WORKER_THREADS);
-        // 设置最大连接数，防止连接池耗尽
-        m_pServer->SetMaxConnectionCount(HP_MAX_CONNECTIONS);
-        // 设置KeepAlive探活时间，检测死连接
-        m_pServer->SetKeepAliveTime(HP_KEEPALIVE_TIME_MS);
+    AppConfig& cfg = ConfigManager::instance()->config();
 
-        HTTP_INFO("HP-Socket配置: workerThreads=%d maxConn=%d keepAlive=%dms",
-            HP_WORKER_THREADS, HP_MAX_CONNECTIONS, HP_KEEPALIVE_TIME_MS);
-    }
-
-    // HP-Socket 模式 + Demo验证: Start(LPCTSTR, port)
-    if (!m_pServer->Start(_T("0.0.0.0"), port))
-    {
-        LogCenter::Instance()->wcs_run_log_warn(false,
-            QString("[Http] 启动失败 port=%1 err=%2").arg(port).arg((int)::GetLastError()));
-        return false;
-    }
-
-    LogCenter::Instance()->wcs_run_log_warn(true,
-        QString("[Http] 服务已启动 port=%1")
-            .arg(port));
-
-    // ★ 同时启动PLC监听服务
+    // ── PLC：TCP 监听（PLC 主动连入收发分拣指令）+ S7 连接（DB77 锁格检测，断线自动重连）──
     if (m_pPlcMgr)
     {
-        AppConfig& cfg = ConfigManager::instance()->config();
         if (m_pPlcMgr->start("0.0.0.0", cfg.plcListenPort))
         {
-            HTTP_LOG_INFO("PLC监听服务已启动 port=%d", cfg.plcListenPort);
+            HTTP_LOG_INFO("PLC监听服务已启动 port=%d（等待PLC连接）", cfg.plcListenPort);
             emit logMessage(QString("[PLC] 监听服务已启动 port=%1").arg(cfg.plcListenPort));
         }
         else
@@ -693,36 +698,176 @@ bool HttpServer::start(int port)
             HTTP_LOG_ERROR("PLC监听服务启动失败 port=%d", cfg.plcListenPort);
             emit logMessage(QString("[PLC] 监听服务启动失败 port=%1").arg(cfg.plcListenPort), true);
         }
+        // S7 锁格通道（首次失败由心跳线程自动重连，不阻断设备层）
+        QByteArray s7ip = cfg.plcS7Ip.toLocal8Bit();
+        m_pPlcMgr->connectS7(s7ip.constData());
     }
 
-    // ★ 2026-09-04：启动 RFID 推送 TCP 客户端（WCS 主动连接 RFID 服务端，断线自动重连）
+    // ── RFID：TCP 客户端主动连接 RFID 服务端（断线自动重连 + 应用层心跳）──
     if (m_pRfidPush)
     {
-        AppConfig& cfg = ConfigManager::instance()->config();
-        m_pRfidPush->setHeartbeatEnabled(cfg.rfidHeartbeatEnable != 0);   // ★ 2026-09-05 心跳开关（XML rfidHeartbeatEnable）
-        m_pRfidPush->setHeartbeatIntervalMs(cfg.rfidHeartbeatIntervalMs); // ★ 2026-09-05 心跳间隔（XML rfidHeartbeatIntervalMs）
+        m_pRfidPush->setHeartbeatEnabled(cfg.rfidHeartbeatEnable != 0);
+        m_pRfidPush->setHeartbeatIntervalMs(cfg.rfidHeartbeatIntervalMs);
         if (m_pRfidPush->start(cfg.rfidPushServerIp, cfg.rfidPushServerPort))
         {
-            HTTP_LOG_INFO("RFID推送客户端发起连接 ip=%s port=%d", cfg.rfidPushServerIp.toLocal8Bit().constData(), cfg.rfidPushServerPort);
-            emit logMessage(QString("[RFID] 推送客户端已发起连接 %1:%2").arg(cfg.rfidPushServerIp).arg(cfg.rfidPushServerPort));
+            HTTP_LOG_INFO("RFID推送客户端发起连接 ip=%s port=%d",
+                cfg.rfidPushServerIp.toLocal8Bit().constData(), cfg.rfidPushServerPort);
+            emit logMessage(QString("[RFID] 推送客户端已发起连接 %1:%2")
+                .arg(cfg.rfidPushServerIp).arg(cfg.rfidPushServerPort));
         }
         else
         {
-            HTTP_LOG_ERROR("RFID推送客户端启动失败 ip=%s port=%d", cfg.rfidPushServerIp.toLocal8Bit().constData(), cfg.rfidPushServerPort);
-            emit logMessage(QString("[RFID] 推送客户端启动失败 %1:%2").arg(cfg.rfidPushServerIp).arg(cfg.rfidPushServerPort), true);
+            HTTP_LOG_ERROR("RFID推送客户端启动失败 ip=%s port=%d",
+                cfg.rfidPushServerIp.toLocal8Bit().constData(), cfg.rfidPushServerPort);
+            emit logMessage(QString("[RFID] 推送客户端启动失败 %1:%2")
+                .arg(cfg.rfidPushServerIp).arg(cfg.rfidPushServerPort), true);
         }
     }
+
+    HTTP_LOG_INFO("设备层启动完成（PLC/RFID 常驻；WMS 任务接收由\"开始接收任务\"控制）");
+    return true;
+}
+
+bool HttpServer::startReceive(int port)
+{
+    m_stopping.store(false);
+
+    // ★ 2026-09-06 接收/设备解耦：同一常驻实例可多轮「开始/结束接收」——
+    //   stopReceive() 中 m_pServer.Reset() 已销毁旧 HP 对象（CHPObjectPtr 不会自动重建），
+    //   本轮开始接收前必须重建，否则 operator-> 空指针崩溃
+    if (!m_pServer.IsValid())
+        m_pServer = HP_Create_HttpServer(this);
+
+    m_receiving.store(true);   // ★ 先置接收标志（HTTP Start 成功后即收 WMS 推送）
+
+    // ──── HP-Socket 性能调优（参考WCSApp线程池架构）────
+    {
+        m_pServer->SetWorkerThreadCount(HP_WORKER_THREADS);
+        m_pServer->SetMaxConnectionCount(HP_MAX_CONNECTIONS);
+        m_pServer->SetKeepAliveTime(HP_KEEPALIVE_TIME_MS);
+        HTTP_INFO("HP-Socket配置: workerThreads=%d maxConn=%d keepAlive=%dms",
+            HP_WORKER_THREADS, HP_MAX_CONNECTIONS, HP_KEEPALIVE_TIME_MS);
+    }
+
+    if (!m_pServer->Start(_T("0.0.0.0"), port))
+    {
+        m_receiving.store(false);
+        LogCenter::Instance()->wcs_run_log_warn(false,
+            QString("[Http] 启动失败 port=%1 err=%2").arg(port).arg((int)::GetLastError()));
+        return false;
+    }
+
+    LogCenter::Instance()->wcs_run_log_warn(true,
+        QString("[Http] 服务已启动 port=%1（开始接收任务）")
+            .arg(port));
+
+    // 开始接收时提示数据库中未完成波次（不恢复，人工确认）
+    restoreWaveFromDB();
+
+    // ★ 2026-09-07 若存在"执行中排队"的待执行波次，开启接收后自动执行
+    if (!m_pendingWaveQueue.isEmpty())
+        maybeStartPendingWave();
 
     emit serverStarted(port);
     return true;
 }
 
-// ★ 启动时检查数据库中的未完成波次（仅日志提示，不恢复到当前任务流）
-//   上一波次未完成不会影响本次任务，用户可重新下发新波次
+void HttpServer::stopReceive()
+{
+    // ★ 防崩溃：置位停止标志——线程池任务（processRequest）与 sendJsonResponse
+    //   检测到 m_stopping 后立即返回，不再触碰 HP-Socket 对象（防 Reset 后空指针）
+    m_stopping.store(true);
+
+    // ★ 停止兜底：波次明细异步落库未完成时同步补落库（数据不丢；幂等，重复调用安全）
+    if (m_wavePersistPending.load() && m_pSortingDb && m_pWaveMgr)
+    {
+        QString orderCode = m_pWaveMgr->orderCode();
+        if (!orderCode.isEmpty() && m_pWaveMgr->status() == WAVE_CREATED)
+        {
+            HTTP_WARN("停止接收时波次明细落库未完成，同步补落库 orderCode=%s",
+                orderCode.toLocal8Bit().data());
+            m_pSortingDb->upsertReturnWave(orderCode, m_pWaveMgr->orderQty(), m_pWaveMgr->status());
+            QVector<ReturnWaveItemRecord> items = buildWaveItems(orderCode);
+            bool bOk = false;
+            for (int attempt = 0; attempt <= WAVE_PERSIST_RETRY_MAX; ++attempt)
+            {
+                bOk = m_pSortingDb->insertWaveItems(orderCode, items);
+                if (bOk) break;
+                QThread::msleep(WAVE_PERSIST_RETRY_INTERVAL_MS);
+            }
+            HTTP_INFO("停止兜底落库 %s orderCode=%s items=%d",
+                bOk ? "成功" : "失败", orderCode.toLocal8Bit().data(), items.size());
+            m_wavePersistPending.store(false);
+        }
+    }
+
+    // HTTP 停止（WMS 推送入口关闭）——设备（PLC/RFID）与 Outbox 补传定时器保持
+    if (m_pServer && m_pServer->HasStarted())
+        m_pServer->Stop();
+    m_pServer.Reset();
+    m_receiving.store(false);
+    emit serverStopped();
+}
+
+void HttpServer::stopDevices()
+{
+    // ★ 2026-09-07 防析构竞态：先断开设备 → 本对象的所有信号连接，
+    //   避免 stop() 期间设备 emit（plcFeedbackBusinessBatch/plcConnected 等）打到正在析构的本对象 lambda
+    if (m_pPlcMgr)   m_pPlcMgr->disconnect(this);
+    if (m_pRfidPush) m_pRfidPush->disconnect(this);
+
+    // 停止 Outbox/H8 会话定时器（进程退出时；接收停止不调用本方法）
+    if (m_outboxEndTimer)     m_outboxEndTimer->stop();
+    if (m_outboxFullboxTimer) m_outboxFullboxTimer->stop();
+    if (m_endSessionTimer)    m_endSessionTimer->stop();
+    LOG_INFO("[析构] step2a 出站定时器已停止");
+
+    if (m_pPlcMgr)
+    {
+        m_pPlcMgr->disconnectS7();   // 断开 S7 + 停心跳线程/锁格轮询
+        LOG_INFO("[析构] step2b S7已断开");
+        m_pPlcMgr->stop();           // 停 PLC TCP 监听
+        LOG_INFO("[析构] step2c PLC TCP已停止");
+    }
+    if (m_pRfidPush)
+    {
+        m_pRfidPush->stop();         // 停 RFID 客户端（含重连/心跳定时器）
+        LOG_INFO("[析构] step2d RFID已停止");
+    }
+
+    if (m_pWorker && m_pWorker->isRunning())
+    {
+        m_pWorker->stop();
+        m_pWorker->wait(WORKER_WAIT_MS);
+        LOG_INFO("[析构] step2e Worker已停止 running=%d",
+            m_pWorker->isRunning() ? 1 : 0);
+    }
+}
+
+// ★ 启动时：① 从数据库加载活跃容器绑定到内存/UI（重启后绑定不丢）；
+//          ② 检查数据库中的未完成波次（仅日志提示，不恢复到当前任务流，
+//             由"未完成波次手动重传"面板查看/重传）
 void HttpServer::restoreWaveFromDB()
 {
     if (!m_pSortingDb || !m_pSortingDb->isOpen()) return;
 
+    // ① 加载活跃绑定
+    QVector<GridBoxBindRecord> activeBinds = m_pSortingDb->getAllActiveBinds();
+    if (!activeBinds.isEmpty())
+    {
+        QMap<QString, QString> binds;
+        for (const GridBoxBindRecord& b : activeBinds)
+        {
+            if (!b.gridNum.isEmpty() && !b.boxcode.isEmpty())
+                binds.insert(b.gridNum, b.boxcode);
+        }
+        loadContainerBindings(binds);
+        emit bindingUpdated();
+        HTTP_LOG_INFO("启动时从数据库恢复容器绑定 count=%d", (int)binds.size());
+        emit logMessage(QString("[容器绑定] 启动时已从数据库恢复 %1 个格口绑定").arg(binds.size()));
+    }
+
+    // ② 未完成波次提示
     ReturnWaveRecord wave = m_pSortingDb->getLatestUnfinishedWave();
     if (wave.orderCode.isEmpty()) return;
 
@@ -732,11 +877,624 @@ void HttpServer::restoreWaveFromDB()
     HTTP_LOG_INFO("检测到上一波次未完成 orderCode=%s status=%d items=%d updatedAt=%s（不恢复到当前任务流）",
         wave.orderCode.toLocal8Bit().data(), wave.status, items.size(),
         wave.updatedAt.toLocal8Bit().data());
-    emit logMessage(QString::fromUtf8("[提示] 检测到上一波次未完成: orderCode=%1 状态=%2 明细数=%3 更新时间=%4（已跳过，不恢复）")
+    emit logMessage(QString::fromUtf8("[提示] 检测到上一波次未完成: orderCode=%1 状态=%2 明细数=%3 更新时间=%4（可在\"未完成波次\"面板查看/重传）")
         .arg(wave.orderCode)
         .arg(WaveSnapshot::statusToString(wave.status))
         .arg(items.size())
         .arg(wave.updatedAt));
+}
+
+// ============================================================================
+// 未完成波次手动重传面板支撑接口（补充手段，不影响主流程）
+// ============================================================================
+
+QVector<ReturnWaveRecord> HttpServer::getUnfinishedWaves()
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen()) return QVector<ReturnWaveRecord>();
+    return m_pSortingDb->getAllUnfinishedWaves();
+}
+
+// ★ 2026-09-06 UI「波次数据记录」：全部已传输波次（含已完成/已取消）+ 进度
+QVector<WaveRecordProgress> HttpServer::getAllWaves()
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen()) return QVector<WaveRecordProgress>();
+    return m_pSortingDb->getAllWaves();
+}
+
+QVector<OutboxRecord> HttpServer::getWaveFullboxOutbox(const QString& orderCode)
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen()) return QVector<OutboxRecord>();
+    return m_pSortingDb->getOutboxFullboxByOrder(orderCode);
+}
+
+QVector<OutboxRecord> HttpServer::getWaveEndOutbox(const QString& orderCode)
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen()) return QVector<OutboxRecord>();
+    return m_pSortingDb->getOutboxEndByOrder(orderCode);
+}
+
+// ============================================================================
+// ★ 2026-09-07 清空格口容器绑定（人工重置按钮触发）：
+//   ① 内存绑定清空；② DB 全部归档（active=0，历史行保留=记录在库，可追溯/可沿用）；
+//   ③ 恢复满箱锁格禁用的格口（回到初始可分配状态）；④ 提示 + 日志
+// ============================================================================
+void HttpServer::clearAllGridBinds()
+{
+    int cleared = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        cleared = m_containerBindings.size();
+        m_containerBindings.clear();
+    }
+    if (m_pSortingDb && m_pSortingDb->isOpen())
+        m_pSortingDb->archiveAllBinds();   // ★ DB 归档留史（行保留），不做物理删除
+    if (m_pPlcMgr)
+        m_pPlcMgr->enableAllGrids();       // 恢复禁用格口（满箱锁格后）
+
+    HTTP_LOG_INFO("人工清空格口容器绑定 cleared=%d（DB 已归档留史，历史可追溯）", cleared);
+    emit logMessage(QString("[绑定] 已清空格口容器绑定（%1 个）——格口恢复初始状态；历史记录已归档保留于数据库")
+        .arg(cleared));
+    emit bindingUpdated();
+}
+
+void HttpServer::resendOutbox(const QString& orderCode, bool resendH7, bool resendH8)
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen() || orderCode.isEmpty()) return;
+
+    int h7Sent = 0, h8Sent = 0;
+
+    if (resendH7)
+    {
+        QVector<OutboxRecord> fullbox = m_pSortingDb->getOutboxFullboxByOrder(orderCode);
+        for (const OutboxRecord& rec : fullbox)
+        {
+            if (rec.status == "success") continue;  // 已成功的不重发
+            QJsonDocument doc = QJsonDocument::fromJson(rec.payload.toUtf8());
+            if (doc.isNull() || !doc.isObject())
+            {
+                HTTP_LOG_WARN("未完成波次面板 H7 重传 payload 解析失败 order=%s msgId=%s",
+                    orderCode.toLocal8Bit().data(), rec.msgId.toLocal8Bit().data());
+                continue;
+            }
+            emit outboxResendReady("fullbox", doc.object(), rec.msgId);
+            ++h7Sent;
+        }
+    }
+
+    if (resendH8)
+    {
+        QVector<OutboxRecord> end = m_pSortingDb->getOutboxEndByOrder(orderCode);
+        for (const OutboxRecord& rec : end)
+        {
+            if (rec.status == "success") continue;  // 已成功的不重发
+            QJsonDocument doc = QJsonDocument::fromJson(rec.payload.toUtf8());
+            if (doc.isNull() || !doc.isObject())
+            {
+                HTTP_LOG_WARN("未完成波次面板 H8 重传 payload 解析失败 order=%s msgId=%s",
+                    orderCode.toLocal8Bit().data(), rec.msgId.toLocal8Bit().data());
+                continue;
+            }
+            emit outboxResendReady("end", doc.object(), rec.msgId);
+            ++h8Sent;
+        }
+    }
+
+    HTTP_LOG_INFO("未完成波次面板 手动重传 order=%s H7=%d H8=%d",
+        orderCode.toLocal8Bit().data(), h7Sent, h8Sent);
+    emit logMessage(QString("[未完成波次] 手动重传 order=%1 H7=%2 H8=%3")
+        .arg(orderCode).arg(h7Sent).arg(h8Sent));
+}
+
+void HttpServer::onOutboxResendReply(const QString& msgId, bool isH7, bool success)
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen()) return;
+
+    QString orderCode;
+    if (isH7)
+    {
+        if (success)
+            m_pSortingDb->markOutboxFullboxSuccess(msgId);
+        OutboxRecord rec = m_pSortingDb->getOutboxFullboxByMsgId(msgId);
+        orderCode = rec.orderCode;
+    }
+    else
+    {
+        if (success)
+            m_pSortingDb->markOutboxEndSuccess(msgId);
+        OutboxRecord rec = m_pSortingDb->getOutboxEndByMsgId(msgId);
+        orderCode = rec.orderCode;
+    }
+
+    HTTP_LOG_INFO("未完成波次面板 重传结果 kind=%s msgId=%s success=%d",
+        isH7 ? "H7" : "H8", msgId.toLocal8Bit().data(), success ? 1 : 0);
+    emit outboxResendResult(orderCode, isH7 ? "fullbox" : "end", msgId, success);
+}
+
+// ============================================================================
+// 上一波次任务恢复
+// ============================================================================
+
+QJsonObject HttpServer::getUnfinishedWaveSummary(const QString& orderCode)
+{
+    QJsonObject summary;
+    if (!m_pSortingDb || !m_pSortingDb->isOpen() || orderCode.isEmpty())
+        return summary;
+
+    ReturnWaveRecord wave = m_pSortingDb->getReturnWave(orderCode);
+    if (wave.orderCode.isEmpty())
+        return summary;
+
+    QSet<QString> sortedEpcs    = m_pSortingDb->getSortedEpcsByOrder(orderCode);
+    QSet<QString> exceptionEpcs = m_pSortingDb->getExceptionEpcsByOrder(orderCode);
+
+    QString h7Text = QString::fromUtf8("无");
+    {
+        QVector<OutboxRecord> fb = m_pSortingDb->getOutboxFullboxByOrder(orderCode);
+        if (!fb.isEmpty())
+        {
+            int pend = 0, succ = 0, fail = 0;
+            for (const OutboxRecord& r : fb)
+            {
+                if (r.status == "success") ++succ;
+                else if (r.status == "failed") ++fail;
+                else ++pend;
+            }
+            h7Text = QString("成功%1/待发%2/失败%3").arg(succ).arg(pend).arg(fail);
+        }
+    }
+    QString h8Text = QString::fromUtf8("无");
+    {
+        QVector<OutboxRecord> eb = m_pSortingDb->getOutboxEndByOrder(orderCode);
+        if (!eb.isEmpty())
+        {
+            int pend = 0, succ = 0, fail = 0;
+            for (const OutboxRecord& r : eb)
+            {
+                if (r.status == "success") ++succ;
+                else if (r.status == "failed") ++fail;
+                else ++pend;
+            }
+            h8Text = QString("成功%1/待发%2/失败%3").arg(succ).arg(pend).arg(fail);
+        }
+    }
+
+    summary["orderCode"]       = wave.orderCode;
+    summary["status"]          = wave.status;
+    summary["statusText"]      = WaveSnapshot::statusToString(wave.status);
+    summary["orderQty"]        = wave.orderQty;
+    summary["sortedCount"]     = (int)sortedEpcs.size();
+    summary["exceptionCount"]  = (int)exceptionEpcs.size();
+    summary["h7"]              = h7Text;
+    summary["h8"]              = h8Text;
+    summary["updatedAt"]       = wave.updatedAt;
+    return summary;
+}
+
+bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
+{
+    if (orderCode.isEmpty())
+    {
+        emit logMessage("[恢复] 请先选中一条波次", true);
+        return false;
+    }
+
+    if (!m_pWaveMgr)
+    {
+        HTTP_LOG_WARN("恢复拒绝 WaveManager未初始化");
+        return false;
+    }
+
+    int curStatus = m_pWaveMgr->status();
+
+    // ── 同波次快路径：选中的就是当前内存中的波次（同一次运行内挂起，未重启）──
+    //   内存数据（GridBuffer/进度集合）齐全，仅需按映射调整状态（如 异常挂起→已绑定 人工闭环），无需重建
+    {
+        QString curOrder = m_pWaveMgr->orderCode();
+        if (!curOrder.isEmpty() && curOrder == orderCode)
+        {
+            // ★ 2026-09-06 列表全量后常见操作：选中的就是当前内存波次且已终态（已完成/已取消）——
+            //   面板/查询区即其数据，无需恢复，不报错
+            if (curStatus == WAVE_FINISHED || curStatus == WAVE_CANCELLED)
+            {
+                HTTP_LOG_INFO("恢复(同会话) 波次已终态无需恢复 order=%s status=%d(%s)",
+                    orderCode.toLocal8Bit().data(), curStatus,
+                    WaveSnapshot::statusToString(curStatus).toLocal8Bit().data());
+                emit logMessage(QString("[恢复] 波次 %1 已完成（%2），当前面板即其数据；如需补发 H7/H8 请用「重传」按钮")
+                    .arg(orderCode).arg(WaveSnapshot::statusToString(curStatus)));
+                emit waveResumed(orderCode, curStatus);
+                return true;
+            }
+            int target;
+            switch (curStatus)
+            {
+            case WAVE_CREATED:        target = WAVE_BOUND;   break;
+            case WAVE_BOUND:          target = WAVE_BOUND;   break;
+            case WAVE_SORTING:        target = WAVE_SORTING; break;
+            case WAVE_FULLBOX_SYNC:   target = WAVE_SORTING; break;
+            case WAVE_ENDING:         target = WAVE_ENDING;  break;
+            case WAVE_HELD:
+            case WAVE_CANCEL_PENDING: target = WAVE_BOUND;   break;  // 人工闭环：重新开工→结束（新H8）
+            default: target = -1; break;
+            }
+            if (target < 0)
+            {
+                emit logMessage(QString("[恢复] 该波次状态(%1)不支持恢复").arg(WaveSnapshot::statusToString(curStatus)), true);
+                return false;
+            }
+            if (curStatus == target)
+            {
+                HTTP_LOG_INFO("恢复(同会话) 已处于目标状态 order=%s status=%d(%s)",
+                    orderCode.toLocal8Bit().data(), target, WaveSnapshot::statusToString(target).toLocal8Bit().data());
+                emit logMessage(QString("[恢复] 波次 %1 已处于 %2 状态，无需恢复")
+                    .arg(orderCode).arg(WaveSnapshot::statusToString(target)));
+                emit waveResumed(orderCode, target);
+                return true;
+            }
+            if (!m_pWaveMgr->setState(target))
+            {
+                HTTP_LOG_ERROR("恢复(同会话) 状态调整失败 order=%s %d(%s)→%d(%s)",
+                    orderCode.toLocal8Bit().data(), curStatus,
+                    WaveSnapshot::statusToString(curStatus).toLocal8Bit().data(),
+                    target, WaveSnapshot::statusToString(target).toLocal8Bit().data());
+                emit logMessage(QString("[恢复] 状态调整失败 order=%1 %2→%3")
+                    .arg(orderCode).arg(WaveSnapshot::statusToString(curStatus))
+                    .arg(WaveSnapshot::statusToString(target)), true);
+                return false;
+            }
+            HTTP_LOG_INFO("恢复(同会话) 成功 order=%s %d(%s)→%d(%s)",
+                orderCode.toLocal8Bit().data(), curStatus,
+                WaveSnapshot::statusToString(curStatus).toLocal8Bit().data(),
+                target, WaveSnapshot::statusToString(target).toLocal8Bit().data());
+            emit logMessage(QString("[恢复] 状态已调整 order=%1 %2 → %3（数据在内存中完整，直接继续）")
+                .arg(orderCode).arg(WaveSnapshot::statusToString(curStatus))
+                .arg(WaveSnapshot::statusToString(target)));
+            emit waveResumed(orderCode, target);
+            return true;
+        }
+    }
+
+    // 校验1：★ 2026-09-06 波次状态隔离——任意状态都允许切出（当前波次状态/进度均已落 DB，
+    //   切出后列表可见、切回时按 DB 状态恢复）。不再因"当前有进行中任务"拒绝切换。
+    if (curStatus != WAVE_IDLE)
+    {
+        HTTP_LOG_INFO("切换前保存并切出当前波次 order=%s status=%d(%s)",
+            m_pWaveMgr->orderCode().toLocal8Bit().data(), curStatus,
+            WaveSnapshot::statusToString(curStatus).toLocal8Bit().data());
+        emit logMessage(QString("[切换] 已保存并切出波次 %1（%2）——进度与数据保留，可随时切回")
+            .arg(m_pWaveMgr->orderCode()).arg(WaveSnapshot::statusToString(curStatus)));
+        switchAwayCurrentWave();
+    }
+
+    if (!m_pSortingDb || !m_pSortingDb->isOpen())
+    {
+        HTTP_LOG_WARN("恢复拒绝 数据库不可用");
+        emit logMessage("[恢复] 数据库不可用，恢复失败", true);
+        return false;
+    }
+
+    // 校验2：波次存在且可恢复；仅 CANCELLED/FINISHED 终态不提供恢复
+    ReturnWaveRecord wave = m_pSortingDb->getReturnWave(orderCode);
+    if (wave.orderCode.isEmpty())
+    {
+        emit logMessage(QString("[恢复] 波次不存在 order=%1").arg(orderCode), true);
+        return false;
+    }
+    int targetStatus;
+    switch (wave.status)
+    {
+    // ★ 已下发直接恢复到「已绑定」：波次已落库=默认已绑定（与 onWavePersistenceFinished 口径一致），
+    //   恢复后即可人工点「开始分拣」（BOUND 才能激活按钮），避免卡在 CREATED 无法开工
+    case WAVE_CREATED:      targetStatus = WAVE_BOUND;   break;
+    case WAVE_BOUND:        targetStatus = WAVE_BOUND;   break;
+    case WAVE_SORTING:      targetStatus = WAVE_SORTING; break;
+    case WAVE_FULLBOX_SYNC: targetStatus = WAVE_SORTING; break;  // 满箱中断：回 SORTING，pending H7 由定时器重试
+    case WAVE_ENDING:       targetStatus = WAVE_ENDING;  break;  // pending H8 由定时器重试
+    // ★ 异常挂起/取消处理中：恢复到「已绑定」，人工闭环——
+    //   点「开始分拣」→「结束任务」会生成新的 H8 完结回传，成功后 FINISHED（HELD 不允许直接完结）
+    case WAVE_HELD:
+    case WAVE_CANCEL_PENDING:
+        targetStatus = WAVE_BOUND;
+        break;
+    // ★ 2026-09-06 已完结/已取消（历史波次）：「载入查看」——重建数据供面板/查询/重传查看，
+    //   不参与分拣回传（m_bReported=true 由 restoreWave 处理）；如需重新执行请让 WMS 重新下发
+    case WAVE_FINISHED:     targetStatus = WAVE_FINISHED;  break;
+    case WAVE_CANCELLED:    targetStatus = WAVE_CANCELLED; break;
+    default:
+        HTTP_LOG_WARN("恢复拒绝 该状态不支持恢复 order=%s status=%d(%s)",
+            orderCode.toLocal8Bit().data(), wave.status,
+            WaveSnapshot::statusToString(wave.status).toLocal8Bit().data());
+        emit logMessage(QString("[恢复] 该波次状态(%1)不支持恢复，缺的 H7/H8 请用「重传」按钮补发")
+            .arg(WaveSnapshot::statusToString(wave.status)), true);
+        return false;
+    }
+
+    // 步骤3：重建 SKU→格口映射（GridBuffer）
+    QVector<ReturnWaveItemRecord> items = m_pSortingDb->getWaveItems(orderCode);
+    // ★ 2026-09-06 降级恢复：完结中(ENDING)/终态等波次的明细可能为空（下发时落库失败/历史数据缺失），
+    //   此时仍应允许切换——按 DB 恢复进度与状态，GridBuffer 置空，仅支持「补发 H7/H8 + 查看」，
+    //   无法继续分拣（无格口映射）。否则仍拒绝。
+    bool allowEmptyItems = (wave.status == WAVE_ENDING || wave.status == WAVE_FINISHED ||
+                            wave.status == WAVE_CANCELLED || wave.status == WAVE_HELD ||
+                            wave.status == WAVE_CANCEL_PENDING);
+    if (items.isEmpty() && !allowEmptyItems)
+    {
+        HTTP_LOG_WARN("恢复拒绝 波次明细为空 order=%s status=%d",
+            orderCode.toLocal8Bit().data(), wave.status);
+        emit logMessage(QString("[恢复] 波次明细为空，无法恢复 order=%1（分拣明细缺失，无法继续分拣）")
+            .arg(orderCode), true);
+        return false;
+    }
+
+    auto* newMap = new QMap<QString, GridEntry>();
+    QSet<QString> recvSet;
+    for (const ReturnWaveItemRecord& it : items)
+    {
+        recvSet.insert(it.inco);
+        if (newMap->contains(it.inco))
+        {
+            GridEntry& e = (*newMap)[it.inco];
+            QStringList grids = e.gridNum.split(',', Qt::SkipEmptyParts);
+            if (!grids.contains(it.gridNum))
+                e.gridNum = e.gridNum.isEmpty() ? it.gridNum : e.gridNum + "," + it.gridNum;
+        }
+        else
+        {
+            GridEntry entry;
+            entry.gridNum   = it.gridNum;
+            entry.gridType  = it.gridType.isEmpty() ? "0" : it.gridType;
+            entry.gridCount = it.planQty;
+            entry.volu      = it.volu;
+            entry.obxCode   = it.obxCode;
+            entry.orderCode = orderCode;
+            entry.orderQty  = wave.orderQty;
+            entry.skuCount  = 0;
+            newMap->insert(it.inco, entry);
+        }
+    }
+    if (items.isEmpty())
+    {
+        // 降级：明细缺失，仍替换为空映射（防残留上个波次映射），并提示不可继续分拣
+        HTTP_LOG_WARN("切换降级恢复 order=%s 明细为空，仅支持补发H7/H8与查看，不可继续分拣", orderCode.toLocal8Bit().data());
+        emit logMessage(QString("[切换] 波次 %1 明细缺失——已降级载入（仅支持补发H7/H8与查看，无法继续分拣）")
+            .arg(orderCode), true);
+    }
+    int skuCount = newMap->size();
+    for (auto it = newMap->begin(); it != newMap->end(); ++it)
+        it.value().skuCount = skuCount;
+
+    // ★ 恢复时 ParseWorker 空闲（无排队任务），主线程 prepareSwap 安全
+    m_pBuffer->prepareSwap(newMap);
+
+    // 步骤4：重建进度集合
+    QSet<QString> sortedEpcs    = m_pSortingDb->getSortedEpcsByOrder(orderCode);
+    QSet<QString> exceptionEpcs = m_pSortingDb->getExceptionEpcsByOrder(orderCode);
+    bool hasFullbox = m_pSortingDb->hasSuccessFullbox(orderCode);
+
+    // 步骤5：恢复 WaveManager
+    if (!m_pWaveMgr->restoreWave(orderCode, wave.orderQty, skuCount, targetStatus,
+                                 recvSet, sortedEpcs, exceptionEpcs, hasFullbox))
+    {
+        HTTP_LOG_ERROR("恢复失败 restoreWave 返回false order=%s", orderCode.toLocal8Bit().data());
+        emit logMessage(QString("[恢复] 恢复失败 order=%1").arg(orderCode), true);
+        return false;
+    }
+
+    // 步骤6：★ 2026-09-07 绑定不与波次死绑——切换不改写内存绑定（面板恒显示物理当前绑定/沿用结果）；
+    //   本波次的历史绑定记录在 DB（grid_box_bind.order_code）供追溯，此处仅提示数量
+    {
+        QMap<QString, QString> binds;
+        if (m_pSortingDb)
+            binds = m_pSortingDb->getBindsByOrder(orderCode);
+        {
+            std::lock_guard<std::mutex> lock(m_containerMutex);
+            HTTP_LOG_INFO("切换波次 order=%s：历史绑定记录 %d 个（物理当前绑定 %d 个保持不变，DB 历史可追溯）",
+                orderCode.toLocal8Bit().data(), binds.size(), m_containerBindings.size());
+        }
+        if (binds.isEmpty())
+        {
+            emit logMessage(QString("[切换] 波次 %1 无历史绑定记录（当时未绑定/旧数据），当前沿用物理绑定显示")
+                .arg(orderCode));
+        }
+        else
+        {
+            emit logMessage(QString("[切换] 波次 %1 历史绑定 %2 个（保留于数据库）；当前面板显示物理绑定，未做覆盖")
+                .arg(orderCode).arg(binds.size()));
+        }
+    }
+    emit bindingUpdated();
+
+    HTTP_LOG_INFO("恢复波次成功 order=%s target=%d(%s) qty=%d SKU=%d sorted=%d exc=%d fullbox=%d",
+        orderCode.toLocal8Bit().data(), targetStatus,
+        WaveSnapshot::statusToString(targetStatus).toLocal8Bit().data(),
+        wave.orderQty, skuCount, (int)sortedEpcs.size(), (int)exceptionEpcs.size(), hasFullbox ? 1 : 0);
+    if (targetStatus == WAVE_FINISHED || targetStatus == WAVE_CANCELLED)
+    {
+        emit logMessage(QString("[恢复] 已载入历史波次（查看模式） order=%1 状态=%2 已分拣=%3 异常=%4\n"
+                                "不参与分拣/回传；补发请用「重传H7/H8」，重新执行请让 WMS 重新下发覆盖")
+            .arg(orderCode).arg(WaveSnapshot::statusToString(targetStatus))
+            .arg(sortedEpcs.size()).arg(exceptionEpcs.size()));
+    }
+    else
+    {
+        emit logMessage(QString("[恢复] 已进入上次任务 order=%1 状态=%2 已分拣=%3 异常=%4")
+            .arg(orderCode).arg(WaveSnapshot::statusToString(targetStatus))
+            .arg(sortedEpcs.size()).arg(exceptionEpcs.size()));
+    }
+
+    // ★ 2026-09-06 切回波次自动补发：把该波次未成功的 H7/H8（pending/failed/cancelled）补发一轮，
+    //   恢复到切出前的回传进度（查看模式终态波次不自动补发，避免重复打扰）
+    if (targetStatus != WAVE_FINISHED && targetStatus != WAVE_CANCELLED)
+    {
+        resendOutbox(orderCode, true, true);
+    }
+
+    // ★ 2026-09-07 人工切换到待执行队列中的波次 → 从队列移除，防止自动重复执行
+    for (int i = 0; i < m_pendingWaveQueue.size(); ++i)
+    {
+        if (m_pendingWaveQueue[i].orderCode == orderCode)
+        {
+            HTTP_LOG_INFO("人工切换已接管待执行波次 orderCode=%s（从队列移除）", orderCode.toLocal8Bit().data());
+            m_pendingWaveQueue.removeAt(i);
+            break;
+        }
+    }
+
+    emit waveResumed(orderCode, targetStatus);
+    return true;
+}
+
+// ============================================================================
+// ★ 2026-09-06 挂起切出当前波次（供「切换波次」与「新任务」共用）：
+//   清空内存（WaveManager/格口映射/格口运行数据），状态与进度保留于 DB；
+//   未成功的 H7/H8 报文保留 outbox（切回该波次时自动补发 / 可手动重传）
+// ============================================================================
+void HttpServer::switchAwayCurrentWave()
+{
+    if (!m_pWaveMgr) return;
+
+    // 1. 清空 WaveManager（集合/计数/m_bReported/状态→IDLE；DB 状态保留原值，列表可见可切回）
+    m_pWaveMgr->clearWave();
+
+    // 2. 清空 SKU→格口映射（新波次下发/切换回来时会重新构建）
+    auto* emptyMap = new QMap<QString, GridEntry>();
+    m_pBuffer->prepareSwap(emptyMap);
+
+    // 3. 清空按格口运行数据（分拣记录/计数），防残留影响其它波次
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        m_gridSortRecords.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_gridCountMutex);
+        m_gridSortedCount.clear();
+    }
+    m_pendingSkuQuery.clear();
+    m_skuQueryRetryCount.clear();
+    m_notReadyRetryCount.clear();
+    m_sentEpcs.clear();
+    // ★ 满箱锁格禁用的格口保持禁用（物理状态未变），该波次重新落库/恢复时统一处理
+}
+
+// ============================================================================
+// ★ 2026-09-06 新任务：当前波次进度/数据保留于 DB（可切换回来继续），
+//   内存清空回到空闲（IDLE + 空 SKU 映射），等待 WMS 下发新波次。
+//   说明：不落库状态（DB 保留切出前状态=列表显示）；H7/H8 后台补发定时器保持运行
+//   （pollOutbox* 只重试当前内存波次的消息，切出波次的未成功报文在切换回时自动补发/可手动重传）
+// ============================================================================
+bool HttpServer::startNewWaveTask()
+{
+    if (!m_pWaveMgr)
+    {
+        HTTP_LOG_WARN("新任务失败 WaveManager未初始化");
+        emit logMessage("[新任务] 失败: WaveManager未初始化", true);
+        return false;
+    }
+
+    QString oldOrder = m_pWaveMgr->orderCode();
+    int oldStatus    = m_pWaveMgr->status();
+    if (oldOrder.isEmpty() && oldStatus == WAVE_IDLE)
+    {
+        HTTP_LOG_INFO("新任务：当前本就空闲（无波次）");
+    }
+    else
+    {
+        if (oldStatus == WAVE_ENDING || oldStatus == WAVE_FULLBOX_SYNC)
+        {
+            HTTP_LOG_INFO("新任务：当前波次处于 %s，仍将安全切出（未成功 H7/H8 保留，切换回时自动补发）",
+                WaveSnapshot::statusToString(oldStatus).toLocal8Bit().data());
+        }
+        switchAwayCurrentWave();
+        HTTP_LOG_INFO("新任务执行完成 old=%s status=%d(%s) -> 空闲（数据已保留于DB，可切换回）",
+            oldOrder.toLocal8Bit().data(), oldStatus,
+            WaveSnapshot::statusToString(oldStatus).toLocal8Bit().data());
+        emit logMessage(QString("[新任务] 已保存并切出波次 %1（%2）——数据保留，可从「波次数据记录」切换回来")
+            .arg(oldOrder).arg(WaveSnapshot::statusToString(oldStatus)));
+    }
+
+    // ★ 2026-09-07 新任务：绑定保持（内存/DB 均不清）——下一波次无新 H6 时默认沿用；
+    //   恢复满箱禁用格口（物理已处理或 WMS 将重新绑定）、刷新绑定面板
+    if (m_pPlcMgr)
+        m_pPlcMgr->enableAllGrids();
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        HTTP_LOG_INFO("新任务 格口已恢复，容器绑定保留 %d 个（供下一波次沿用，WMS 新 H6 会覆盖）",
+            m_containerBindings.size());
+    }
+    emit bindingUpdated();
+
+    // ★ 2026-09-07 若有待执行波次（执行中接收到的 H4），自动开始执行
+    if (!m_pendingWaveQueue.isEmpty())
+    {
+        emit logMessage(QString("[波次] 检测到 %1 个待执行波次，自动开始执行...").arg(m_pendingWaveQueue.size()));
+        maybeStartPendingWave();
+    }
+    else
+    {
+        emit logMessage("[新任务] 已回到空闲：等待 WMS 下发新波次；旧波次可随时从「波次数据记录」切换回来");
+    }
+
+    emit waveResumed(QString(), WAVE_IDLE);
+    return true;
+}
+
+// ============================================================================
+// ★ 2026-09-07 自动开始下一波次：从待执行队列取队首重放给 ParseWorker 解析注册。
+//   仅当内存空闲（IDLE/终态）时执行；解析完成回到 waveParsed（重放标志放行接收闸门）。
+// ============================================================================
+void HttpServer::maybeStartPendingWave()
+{
+    if (m_pendingWaveQueue.isEmpty()) return;
+    if (!m_pWaveMgr || !m_pQueue) return;
+
+    int st = m_pWaveMgr->status();
+    if (!(st == WAVE_IDLE || st == WAVE_CANCELLED || st == WAVE_FINISHED))
+        return;   // 当前波次仍进行中，不插队
+
+    // 队首重放（push 成功才出队；水位满则下次触发再试）
+    const PendingWave& pw = m_pendingWaveQueue.first();
+    WaveTask task;
+    task.rawBody  = pw.rawBody;
+    task.fullUrl  = pw.fullUrl.isEmpty() ? QString("queue://replay") : pw.fullUrl;
+    task.recvTime = pw.recvTime;
+    if (!m_pQueue->push(task))
+    {
+        HTTP_LOG_WARN("待执行波次入队失败(队列满) orderCode=%s，稍后自动重试", pw.orderCode.toLocal8Bit().data());
+        return;
+    }
+    m_replayingPending.store(true);
+    m_pendingWaveQueue.removeFirst();
+    HTTP_LOG_INFO("自动开始待执行波次 orderCode=%s 队列剩余=%d", pw.orderCode.toLocal8Bit().data(),
+        m_pendingWaveQueue.size());
+    emit logMessage(QString("[波次] 自动开始下一波次 %1（待执行剩 %2 个）——解析完成后自动进入该任务")
+        .arg(pw.orderCode).arg(m_pendingWaveQueue.size()));
+}
+
+// ============================================================================
+// ★ 2026-09-07 绑定沿用：新波次注册后，若当前无任何 active 绑定（如上一波次完结已归档清空），
+//   自动从 DB 取每格最近一次绑定恢复为 active（即"沿用上一波次的绑定"），
+//   WMS 下发新 H6 时对应用户正常覆盖。
+// ============================================================================
+void HttpServer::restoreBindsIfEmpty(const QString& orderCode)
+{
+    if (!m_pSortingDb || !m_pSortingDb->isOpen() || orderCode.isEmpty()) return;
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        if (!m_containerBindings.isEmpty()) return;   // 已有绑定（含沿用/新 H6）则不动
+    }
+    QMap<QString, QString> last = m_pSortingDb->getLastKnownBinds();
+    if (last.isEmpty()) return;   // 从未绑定过（首次使用），保持空由 WMS 新 H6 绑定
+
+    for (auto it = last.constBegin(); it != last.constEnd(); ++it)
+        m_pSortingDb->bindGridBox(it.key(), it.value(), orderCode);   // 恢复 active（历史行保留）
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        m_containerBindings = last;
+    }
+    emit bindingUpdated();
+    HTTP_LOG_INFO("沿用最近绑定 orderCode=%s binds=%d（WMS 未下发新 H6，默认沿用上一波次绑定）",
+        orderCode.toLocal8Bit().data(), last.size());
+    emit logMessage(QString("[绑定] 波次 %1 无新绑定下发——已沿用最近绑定 %2 个；WMS 下发新 H6 时自动覆盖")
+        .arg(orderCode).arg(last.size()));
 }
 
 // ★ 构建波次明细记录（从 GridBuffer 读取全量 SKU→格口映射，供落库复用）
@@ -791,6 +1549,9 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
             HTTP_LOG_INFO("波次自动推进 CREATED→BOUND orderCode=%s (数据库已落库，默认已绑定，等待手动开始分拣)",
                 orderCode.toLocal8Bit().data());
             emit logMessage(QString("[波次] 自动推进: 已下发→已绑定 orderCode=%1 (等待手动开始分拣)").arg(orderCode));
+
+            // ★ 2026-09-07 绑定沿用：无任何 active 绑定（如上一波次完结已归档）时，恢复最近绑定
+            restoreBindsIfEmpty(orderCode);
         }
     }
     else
@@ -824,55 +1585,6 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
     m_skuQueryRetryCount.clear();
     m_notReadyRetryCount.clear();
     m_sentEpcs.clear();
-}
-
-void HttpServer::stop()
-{
-    // ★ 2026-09-02 防崩溃：最先置位停止标志——业务线程池任务（processRequest）与
-    //   sendJsonResponse 检测到 m_stopping 后立即返回，不再触碰 HP-Socket 对象，
-    //   防止 Stop/Reset 与在途请求竞态导致空指针 SendResponse 崩溃
-    m_stopping.store(true);
-
-    // ★ 2026-09-04 P0修复：停止兜底——波次明细异步落库未完成时同步补落库，保证数据不丢
-    //   罕见路径：波次刚下发就点停止（异步任务还在业务线程池排队/执行）。
-    //   本地 SQLite 落库是数据唯一持久化点（WMS H4 一次成功不重发），
-    //   此处确保停止/重启后明细不丢；insertWaveItems 先 DELETE 再 INSERT 幂等，重复调用安全
-    if (m_wavePersistPending.load() && m_pSortingDb && m_pWaveMgr)
-    {
-        QString orderCode = m_pWaveMgr->orderCode();
-        if (!orderCode.isEmpty() && m_pWaveMgr->status() == WAVE_CREATED)
-        {
-            HTTP_WARN("停止时波次明细落库未完成，同步补落库 orderCode=%s",
-                orderCode.toLocal8Bit().data());
-            m_pSortingDb->upsertReturnWave(orderCode, m_pWaveMgr->orderQty(), m_pWaveMgr->status());
-            QVector<ReturnWaveItemRecord> items = buildWaveItems(orderCode);
-            bool bOk = false;
-            for (int attempt = 0; attempt <= WAVE_PERSIST_RETRY_MAX; ++attempt)
-            {
-                bOk = m_pSortingDb->insertWaveItems(orderCode, items);
-                if (bOk) break;
-                QThread::msleep(WAVE_PERSIST_RETRY_INTERVAL_MS);
-            }
-            HTTP_INFO("停止兜底落库 %s orderCode=%s items=%d",
-                bOk ? "成功" : "失败", orderCode.toLocal8Bit().data(), items.size());
-            m_wavePersistPending.store(false);
-        }
-    }
-
-    // ★ 停止 Outbox 重试定时器，防止服务停止后继续重试
-    if (m_outboxEndTimer)     m_outboxEndTimer->stop();
-    if (m_outboxFullboxTimer) m_outboxFullboxTimer->stop();
-    // ★ 2026-09-02：停止 H8 会话兜底定时器（服务已停止，会话自然结束）
-    if (m_endSessionTimer)    m_endSessionTimer->stop();
-
-    if (m_pPlcMgr) m_pPlcMgr->stop();  // ★ 先停PLC
-    if (m_pRfidPush) m_pRfidPush->stop();  // ★ 2026-09-04 停 RFID 推送 TCP 服务器
-    if (m_pServer && m_pServer->HasStarted())
-    {
-        m_pServer->Stop();
-    }
-    m_pServer.Reset();
-    emit serverStopped();
 }
 
 // ============================================================================
@@ -1036,6 +1748,18 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
     //   防止在 m_pServer.Reset() 后继续使用 pSender（悬垂指针）
     if (m_stopping.load())
         return;
+
+    // ★ 2026-09-06 接收闸门：未"开始接收任务"时拒绝所有请求（按钮控制任务下发）
+    if (!m_receiving.load())
+    {
+        QJsonObject err;
+        err["code"] = "500";
+        err["message"] = "未开始接收任务，请先在界面点击\"开始接收任务\"";
+        err["sentTime"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.000");
+        sendJsonResponse(pSender, dwConnID, err, 500);
+        HTTP_LOG_WARN("未接收任务，拒绝请求 path=%s method=%s", st.path.toLocal8Bit().data(), st.method.toLocal8Bit().data());
+        return;
+    }
 
     // ★ 服务未运行时拒绝所有 WMS 请求（防御性检查）
     if (!isRunning())
@@ -1212,6 +1936,18 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
             task.recvTime = QDateTime::currentMSecsSinceEpoch();
             m_pQueue->push(task);
 
+            // ★ 需求7增强：H4 原始报文单独落库（wave_raw 表，异步写，不影响响应）
+            if (m_pSortingDb && !orderCode.isEmpty())
+            {
+                QByteArray rawBody = st.body;  // 拷贝，连接状态可能被后续请求复用
+                if (m_pBusinessPool)
+                    m_pBusinessPool->commitNoWait([this, orderCode, rawBody]() {
+                        m_pSortingDb->saveWaveRawPayload(orderCode, rawBody);
+                    });
+                else
+                    m_pSortingDb->saveWaveRawPayload(orderCode, rawBody);
+            }
+
             QJsonObject resp;
             resp["code"]      = "200";
             resp["message"]   = "successed.";
@@ -1265,13 +2001,18 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
             if (ok && gridNum >= 1 && gridNum <= BINDING_SLOT_COUNT)
             {
                 QString normalizedGrid = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
-                HTTP_LOG_INFO("BindingLatticePort 提交数据库写入 grid=%s box=%s", normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data());
+                // ★ 2026-09-06 绑定关联所属波次（提交时刻快照），供波次切换恢复格口绑定视图
+                QString bindOrderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+                HTTP_LOG_INFO("BindingLatticePort 提交数据库写入 grid=%s box=%s order=%s",
+                    normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
+                    bindOrderCode.toLocal8Bit().data());
 
                 if (m_pBusinessPool)
                 {
-                    m_pBusinessPool->commitNoWait([this, normalizedGrid, boxcode]() {
-                        HTTP_LOG_INFO("BindingLatticePort 数据库写入开始 grid=%s box=%s", normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data());
-                        bool ok = m_pSortingDb->bindGridBox(normalizedGrid, boxcode);
+                    m_pBusinessPool->commitNoWait([this, normalizedGrid, boxcode, bindOrderCode]() {
+                        HTTP_LOG_INFO("BindingLatticePort 数据库写入开始 grid=%s box=%s order=%s",
+                            normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data(), bindOrderCode.toLocal8Bit().data());
+                        bool ok = m_pSortingDb->bindGridBox(normalizedGrid, boxcode, bindOrderCode);
                         if (ok)
                             HTTP_LOG_INFO("BindingLatticePort 数据库写入成功 grid=%s box=%s", normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data());
                         else
@@ -1282,7 +2023,7 @@ void HttpServer::processRequest(IHttpServer* pSender, CONNID dwConnID, ConnState
                 {
                     // 降级：线程池未就绪时同步写入（此时已在业务线程池中，不阻塞 HP-Socket I/O 线程）
                     HTTP_LOG_WARN("BindingLatticePort 线程池未就绪，降级同步写入 grid=%s box=%s", normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data());
-                    bool ok = m_pSortingDb->bindGridBox(normalizedGrid, boxcode);
+                    bool ok = m_pSortingDb->bindGridBox(normalizedGrid, boxcode, bindOrderCode);
                     if (ok)
                         HTTP_LOG_INFO("BindingLatticePort 同步写入成功 grid=%s box=%s", normalizedGrid.toLocal8Bit().data(), boxcode.toLocal8Bit().data());
                     else
@@ -1607,16 +2348,19 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
 
     // ──── 步骤5: 取消后清理（T-S3-02）────
     // tryCancelWave() 已原子完成状态迁移，此处执行清理操作
-    // 清理容器绑定、分拣记录、GridBuffer、WaveManager，使系统可接收新波次
+    // 清理容器绑定（内存清空 + DB 归档留史，历史行保留可追溯/可沿用）、分拣记录、GridBuffer、WaveManager
 
-    // 清理容器绑定
+    // 清理容器绑定（内存 + 数据库归档：★ 2026-09-07 清空当前绑定但历史记录保留在 DB）
     {
         std::lock_guard<std::mutex> lock(m_containerMutex);
         int count = m_containerBindings.size();
         m_containerBindings.clear();
-        HTTP_LOG_INFO("CancelWave 已清理容器绑定 count=%d orderCode=%s",
+        HTTP_LOG_INFO("CancelWave 已清空容器绑定(内存) count=%d orderCode=%s（DB历史已归档留档）",
             count, orderCode.toLocal8Bit().data());
     }
+    if (m_pSortingDb)
+        m_pSortingDb->archiveAllBinds();
+    emit bindingUpdated();
 
     // 清理格口分拣记录
     {
@@ -1843,6 +2587,9 @@ void HttpServer::logHealthStatus()
 }
 
 // ============================================================================
+// ★ 2026-09-06 已停用：锁格时刻统一改发 H7 满箱回传报文（sendFullbox），
+//   本函数（lockGrid 旧报文：num=容器号/targetLocation=格口号/sku原码）不再被调用，
+//   仅保留备用（若 WMS 要求恢复旧报文可在此恢复调用）。
 // sendGridLockFeedback — 锁格时构建分拣明细，发送 WMS 回传
 // 报文格式: 33.md "gwisSubProductClassifyOrder"
 // ============================================================================
@@ -1905,7 +2652,8 @@ void HttpServer::sendGridLockFeedback(const QString& grid)
         item["lineNum"]        = QString::number(lineNum++);
         item["num"]            = boxCode.isEmpty() ? rec.car : boxCode;  // 框号优先容器号
         item["targetLocation"] = grid;
-        item["sku"]            = rec.inco;
+        // ★ 2026-09-06：本函数已停用。若恢复，sku 必须取 rec.sku（SKU编码），不可用 rec.inco（EPC码）
+        item["sku"]            = rec.sku.isEmpty() ? getSkuByEpc(rec.inco) : rec.sku;
         item["qty"]            = QString::number(rec.gridCount);
         item["batchCode"]      = orderCode;
         item["gwf1-20"]        = "";
@@ -1968,7 +2716,15 @@ QJsonObject HttpServer::buildReportFromRecords(const QString& orderCode,
             item["lineNum"]        = QString::number(lineNum++);
             item["num"]            = rec.car;
             item["targetLocation"] = grid;
-            item["sku"]            = rec.inco;
+            // ★ 2026-09-06 客户确认：sku 必须是 SKU 编码（rec.sku 落格时固化；兜底查缓存），
+            //   不能把 rec.inco（EPC 码）当 sku 发送
+            {
+                QString sku = rec.sku.isEmpty() ? getSkuByEpc(rec.inco) : rec.sku;
+                if (sku.isEmpty())
+                    HTTP_WARN("波次完成回传: EPC未映射到SKU epc=%s grid=%s（sku留空，WMS可能拒绝）",
+                        rec.inco.toLocal8Bit().data(), grid.toLocal8Bit().data());
+                item["sku"]            = sku;
+            }
             item["qty"]            = QString::number(rec.gridCount);
             item["batchCode"]      = orderCode;
             item["gwf1-20"]        = "";
@@ -2001,22 +2757,22 @@ QJsonObject HttpServer::buildReportFromRecords(const QString& orderCode,
 //     orderType      = 固定 "02"（WMS_ORDER_TYPE）
 //     warehouseCode  = 配置项（默认 "A"）
 //     goodsOwner     = 配置项（默认 "BXH_ZS"）
-//     fromLocation   = 任务下发时的 volu 字段值
+//     fromLocation   = 任务下发时的 sobi 字段值（H4 items[].sobi，如 "H-01-AB"）
 //     createDate     = 当前时间
 //     createUserCode = 固定 "admin"
 //     createUserName = 固定 "管理员"
-//   detailList:
+//   detailList（★ 2026-09-06 按 SKU 聚合，一行一 SKU）:
 //     num            = 格口号
 //     targetLocation = 目标库位编码（格口绑定的容器号）
-//     sku            = SKU 编码（通过 RFID EPC→SKU 映射获取，无映射时回退 EPC）
-//     qty            = 该容器内实分数量
+//     sku            = SKU 编码（EPC→SKU 绑定查询结果，落格时固化；不能是 EPC 码/占位串）
+//     qty            = 该容器(格口)落入该 SKU 的实际件数（Σqty=该格实分件数）
 // ============================================================================
 QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QString& grid,
                                               const QString& boxCode, const QVector<GridSortRecord>& records)
 {
     AppConfig& cfg = ConfigManager::instance()->config();
 
-    // ── fromLocation 取值：使用任务下发时的 volu 字段值 ──
+    // ── fromLocation 取值：WMS 下发 items[].sobi（来源库位，旧协议 volu 兼容已由解析层统一）──
     QString fromLocation;
     for (const GridSortRecord& rec : records)
     {
@@ -2041,22 +2797,42 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
     // head["remark"]         = "";
     // head["gwf1"]           = "";  // 备用字段
 
+    // ── detailList 构建 ──
+    // ★ 2026-09-06 客户确认口径：qty = 该容器(格口)落入该 SKU 的实际件数
+    //   → 同一格口内按 SKU 聚合（每条落格记录=1件），不再逐 EPC 行塞计划数
     QJsonArray detailList;
+    QMap<QString, int> skuQtyMap;      // sku → 该格实分件数
+    QStringList skuOrder;              // 保持出现顺序
     for (const GridSortRecord& rec : records)
     {
+        // ★ 2026-09-06 客户确认：sku 字段必须是 SKU 编码（EPC→SKU 绑定查询结果，落格时已固化 rec.sku），
+        //   不能是 EPC 码、也不能发"未找到sku"占位串；缺 SKU 的情形已在 sendFullbox 前置整单拦截
+        QString sku = rec.sku.isEmpty() ? getSkuByEpc(rec.inco) : rec.sku;
+        if (sku.isEmpty())
+            continue;   // 防御：前置已整单拦截，正常不会走到
+        if (!skuQtyMap.contains(sku))
+            skuOrder.append(sku);
+        skuQtyMap[sku] += rec.gridCount;   // 每条落格记录=1件
+    }
+    for (const QString& sku : skuOrder)
+    {
         QJsonObject item;
-        // item["lineNum"]        = QString::number(lineNum++);
         item["num"]            = grid;                              // 格口号
         item["targetLocation"] = boxCode.isEmpty() ? cfg.fullboxDefaultTargetLocation : boxCode;  // 目标库位 = 容器号，无容器号时兜底
-
-        // ★ SKU 取值：通过 RFID EPC→SKU 映射获取，无映射时回退到 EPC 编码
-        QString sku = getSkuByEpc(rec.inco);
-        item["sku"]            = sku.isEmpty() ? QString::fromUtf8("未找到sku") : sku;
-        item["qty"]            = QString::number(rec.gridCount);
-        // item["batchCode"]      = orderCode;
+        item["sku"]            = sku;
+        item["qty"]            = QString::number(skuQtyMap.value(sku));
         detailList.append(item);
     }
     head["detailList"] = detailList;
+
+    // ★ 2026-09-06：满箱总件数日志（Σqty 应=该格实分件数，供对账）
+    {
+        int totalQty = 0;
+        for (auto it = skuQtyMap.constBegin(); it != skuQtyMap.constEnd(); ++it)
+            totalQty += it.value();
+        HTTP_LOG_INFO("满箱回传报文（H7） Σqty=%d 聚合sku行=%d 原始落格记录=%d grid=%s",
+            totalQty, skuQtyMap.size(), records.size(), grid.toLocal8Bit().data());
+    }
 
     QJsonObject report;
     report["head"] = head;
@@ -2103,19 +2879,8 @@ void HttpServer::sendFullbox(const QString& grid)
         return;
     }
 
-    // ── 步骤3: 获取容器绑定 ──
-    QString boxCode;
-    {
-        std::lock_guard<std::mutex> lock(m_containerMutex);
-        boxCode = m_containerBindings.value(grid);
-        if (boxCode.isEmpty())
-        {
-            bool ok = false;
-            int g = grid.toInt(&ok);
-            if (ok && g >= 1)
-                boxCode = m_containerBindings.value(QString("%1").arg(g, GRID_KEY_PADDING, 10, QChar('0')));
-        }
-    }
+    // ── 步骤3: 获取容器绑定（内存快速路径 → 数据库现查兜底）──
+    QString boxCode = lookupGridBoxCode(grid);
 
     if (boxCode.isEmpty())
     {
@@ -2143,6 +2908,45 @@ void HttpServer::sendFullbox(const QString& grid)
         return;
     }
 
+    // ★ 2026-09-06 客户确认：报文 sku 字段必须是 SKU 编码——不能是 EPC 码，也不能发"未找到sku"占位串。
+    //   SKU 在落格时已固化（rec.sku = EPC→SKU 绑定查询结果），此处兜底再查一次 EpcCache；
+    //   仍有缺失 → 拒绝整单发送（WMS 会因非法 sku 拒绝整个报文），保留该格记录，
+    //   回退分拣状态并写异常表，待 RFID 绑定恢复后人工重锁格重发
+    {
+        QStringList missingSkuEpcs;
+        for (auto it = records.begin(); it != records.end(); ++it)
+        {
+            if (it->sku.isEmpty())
+                it->sku = getSkuByEpc(it->inco);   // 兜底：缓存中可能刚写入
+            if (it->sku.isEmpty())
+                missingSkuEpcs << it->inco;
+        }
+        if (!missingSkuEpcs.isEmpty())
+        {
+            HTTP_LOG_ERROR("满箱回传（H7）中止: %d 条EPC未映射到SKU grid=%s box=%s 保留记录待重试 epc=[%s]",
+                missingSkuEpcs.size(), grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data(),
+                missingSkuEpcs.join(",").left(400).toLocal8Bit().data());
+            emit logMessage(QString("[满箱回传] 中止: 格口%1 有 %2 条未查到 SKU（不发报文，已保留记录；"
+                                    "请核查 RFID 绑定查询后重锁该格重发）")
+                .arg(grid).arg(missingSkuEpcs.size()), true);
+            if (m_pSortingDb && m_pSortingDb->isOpen())
+            {
+                ExceptionRecord ex;
+                ex.type      = QString::fromUtf8("满箱SKU缺失");
+                ex.orderCode = orderCode;
+                ex.epc       = missingSkuEpcs.first();
+                ex.sku       = "";
+                ex.reason    = QString("格口%1 满箱时 %2 条EPC未查到SKU: [%3]（RFID绑定查询缺失）")
+                                   .arg(grid).arg(missingSkuEpcs.size())
+                                   .arg(missingSkuEpcs.join(",").left(400));
+                ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                m_pSortingDb->insertException(ex);
+            }
+            m_pWaveMgr->resumeSorting();  // 回退 FULLBOX_SYNC → SORTING
+            return;
+        }
+    }
+
     qint64 t1 = funcTimer.elapsed();  // ★ 耗时：前置校验
 
     // ── 步骤4: 构建满箱回传报文（H7）──
@@ -2166,11 +2970,28 @@ void HttpServer::sendFullbox(const QString& grid)
     outMsg.nextRetry  = nextRetry;
     outMsg.createdAt  = nowStr;
 
+    bool outboxOk = false;
     if (m_pSortingDb)
     {
-        m_pSortingDb->insertOutboxFullbox(outMsg);
+        outboxOk = m_pSortingDb->insertOutboxFullbox(outMsg);
     }
     qint64 t3 = funcTimer.elapsed();  // ★ 耗时：Outbox写入
+
+    // ★ 2026-09-06：满箱报文已入 Outbox（后续成功确认/失败重试均走 Outbox 里的 payload，
+    //   不再依赖内存记录），此时移除该格内存分拣记录——原由已停用的旧 lockGrid 回传承担清理，
+    //   防止同一格重复触发满箱时记录叠加/重复发送
+    if (outboxOk)
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        m_gridSortRecords.remove(grid);
+        HTTP_LOG_INFO("满箱回传（H7） 已清理该格内存分拣记录 grid=%s items=%d",
+            grid.toLocal8Bit().data(), records.size());
+    }
+    else
+    {
+        HTTP_LOG_ERROR("满箱回传（H7） Outbox写入失败，保留内存记录待重试 grid=%s items=%d",
+            grid.toLocal8Bit().data(), records.size());
+    }
 
     // ★ 耗时统计：记录发送时间戳（用于 onFullboxReplyFinished 计算网络往返耗时）
     {
@@ -2184,9 +3005,9 @@ void HttpServer::sendFullbox(const QString& grid)
     emit logMessage(QString("[满箱回传] 消息入Outbox grid=%1 box=%2 items=%3")
         .arg(grid).arg(boxCode).arg(records.size()));
 
-    // ★ 原始报文：满箱回传（H7）写入 run.log
+    // ★ 原始报文：满箱回传（H7）写入 run.log（QString 必须转 UTF-8，constData() 是 QChar* 会被 %s 截断）
     LOG_INFO("[原始报文] [满箱回传] body=%s(%d字节)",
-        outMsg.payload.constData(), outMsg.payload.size());
+        outMsg.payload.toUtf8().data(), outMsg.payload.size());
 
     // ── 步骤7: 发送到 WMS ──
     sendFullboxToWms(msgId, payload);
@@ -2198,6 +3019,214 @@ void HttpServer::sendFullbox(const QString& grid)
         t1, t2 - t1, t3 - t2, t4 - t3, t4);
     HTTP_LOG_INFO("满箱回传耗时（H7） grid=%s 前置校验=%lldms payload构建=%lldms Outbox=%lldms 信号发送=%lldms 总计=%lldms",
         grid.toLocal8Bit().data(), t1, t2 - t1, t3 - t2, t4 - t3, t4);
+}
+
+// ============================================================================
+// lookupGridBoxCode — 取格口当前容器号（内存快速路径 → 数据库现查兜底）
+// 满箱回传（H7）与「完结前补发」共用；返回空表示该格口当前无绑定
+// ============================================================================
+QString HttpServer::lookupGridBoxCode(const QString& grid)
+{
+    QString boxCode;
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        boxCode = m_containerBindings.value(grid);
+        if (boxCode.isEmpty())
+        {
+            bool ok = false;
+            int g = grid.toInt(&ok);
+            if (ok && g >= 1)
+                boxCode = m_containerBindings.value(QString("%1").arg(g, GRID_KEY_PADDING, 10, QChar('0')));
+        }
+    }
+    // ★ 内存未命中时从数据库现查当前格口绑定（程序重启后内存为空，仍能取到容器号）
+    if (boxCode.isEmpty() && m_pSortingDb && m_pSortingDb->isOpen())
+    {
+        bool ok = false;
+        int g = grid.toInt(&ok);
+        QString normalizedGrid = ok ? QString("%1").arg(g, GRID_KEY_PADDING, 10, QChar('0')) : grid;
+        GridBoxBindRecord bind = m_pSortingDb->getActiveBind(normalizedGrid);
+        boxCode = bind.boxcode;
+        if (!boxCode.isEmpty())
+            HTTP_LOG_INFO("容器号取自数据库 grid=%s box=%s",
+                normalizedGrid.toLocal8Bit().data(), boxCode.toLocal8Bit().data());
+    }
+    return boxCode;
+}
+
+// ============================================================================
+// sendFullboxForGrid — 单格口 H7 满箱补发（「完结前兜底补发」与「手动满箱切换」共用）
+// 不动波次状态机、不禁用格口；无容器号/缺SKU/Outbox失败 时返回 false（记录保留内存）
+// ============================================================================
+bool HttpServer::sendFullboxForGrid(const QString& orderCode, const QString& grid,
+                                    QVector<GridSortRecord> records)
+{
+    if (records.isEmpty()) return false;
+
+    // 1. 容器号
+    QString boxCode = lookupGridBoxCode(grid);
+    if (boxCode.isEmpty())
+    {
+        HTTP_LOG_WARN("满箱补发 格口 %s 无容器绑定，跳过（记录保留内存，可人工核对）",
+            grid.toLocal8Bit().data());
+        emit logMessage(QString("[满箱补发] 格口%1 无容器绑定，跳过（记录保留内存，可人工核对）").arg(grid), true);
+        return false;
+    }
+
+    // 2. SKU 校验（兜底补查 EpcCache；仍缺则跳过并写异常）
+    {
+        QStringList missingSkuEpcs;
+        for (auto rit = records.begin(); rit != records.end(); ++rit)
+        {
+            if (rit->sku.isEmpty())
+                rit->sku = getSkuByEpc(rit->inco);
+            if (rit->sku.isEmpty())
+                missingSkuEpcs << rit->inco;
+        }
+        if (!missingSkuEpcs.isEmpty())
+        {
+            HTTP_LOG_ERROR("满箱补发 格口 %s 有 %d 条EPC未映射SKU，跳过 epc=[%s]",
+                grid.toLocal8Bit().data(), missingSkuEpcs.size(),
+                missingSkuEpcs.join(",").left(400).toLocal8Bit().data());
+            emit logMessage(QString("[满箱补发] 格口%1 有 %2 条未查到SKU，跳过（记录保留内存，可人工核对）")
+                .arg(grid).arg(missingSkuEpcs.size()), true);
+            if (m_pSortingDb && m_pSortingDb->isOpen())
+            {
+                ExceptionRecord ex;
+                ex.type      = QString::fromUtf8("满箱补发SKU缺失");
+                ex.orderCode = orderCode;
+                ex.epc       = missingSkuEpcs.first();
+                ex.sku       = "";
+                ex.reason    = QString("格口%1 满箱补发时 %2 条EPC未查到SKU: [%3]")
+                                   .arg(grid).arg(missingSkuEpcs.size())
+                                   .arg(missingSkuEpcs.join(",").left(400));
+                ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                m_pSortingDb->insertException(ex);
+            }
+            return false;
+        }
+    }
+
+    // 3. 构建 H7 报文 + 入 Outbox + 清理该格记录 + 发送
+    QJsonObject payload = buildFullboxPayload(orderCode, grid, boxCode, records);
+    QString msgId = QString::fromUtf8(QUuid::createUuid().toByteArray().toHex());
+    QString nowStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    QString nextRetry = QDateTime::currentDateTime().addSecs(OUTBOX_RETRY_INTERVAL_SEC)
+                            .toString("yyyy-MM-dd HH:mm:ss");
+
+    OutboxRecord outMsg;
+    outMsg.msgId      = msgId;
+    outMsg.orderCode  = orderCode;
+    outMsg.boxcode    = boxCode;
+    outMsg.payload    = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    outMsg.status     = "pending";
+    outMsg.retryCount = 0;
+    outMsg.nextRetry  = nextRetry;
+    outMsg.createdAt  = nowStr;
+
+    bool outboxOk = false;
+    if (m_pSortingDb)
+        outboxOk = m_pSortingDb->insertOutboxFullbox(outMsg);
+
+    if (outboxOk)
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        m_gridSortRecords.remove(grid);
+    }
+    else
+    {
+        HTTP_LOG_ERROR("满箱补发 Outbox写入失败 grid=%s（保留内存记录）",
+            grid.toLocal8Bit().data());
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_msgTimeMutex);
+        m_msgSendTime[msgId] = QDateTime::currentMSecsSinceEpoch();
+    }
+
+    HTTP_LOG_INFO("满箱补发（H7） grid=%s box=%s items=%d msgId=%s",
+        grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data(), records.size(),
+        msgId.toLocal8Bit().data());
+    emit logMessage(QString("[满箱补发] 满箱回传(H7) grid=%1 box=%2 items=%3")
+        .arg(grid).arg(boxCode).arg(records.size()));
+    LOG_INFO("[原始报文] [满箱回传-补发] body=%s(%d字节)",
+        outMsg.payload.toUtf8().data(), outMsg.payload.size());
+
+    sendFullboxToWms(msgId, payload);
+    return true;
+}
+
+// ============================================================================
+// flushUnreportedFullboxes — 完结回传前兜底补发（2026-09-07）
+// 把内存中尚未满箱回传的格口分拣数据按 H7 满箱回传发给 WMS，再发 H8 完结回传。
+// 不动波次状态机、不禁用格口；无容器号/缺SKU 的格口跳过并告警（不阻塞完结）。
+// 返回实际补发的格口数。
+// ============================================================================
+int HttpServer::flushUnreportedFullboxes(const QString& orderCode)
+{
+    QMap<QString, QVector<GridSortRecord>> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        pending = m_gridSortRecords;
+    }
+
+    int flushed = 0;
+    for (auto it = pending.constBegin(); it != pending.constEnd(); ++it)
+    {
+        if (it.value().isEmpty()) continue;
+        if (sendFullboxForGrid(orderCode, it.key(), it.value()))
+            ++flushed;
+    }
+
+    HTTP_LOG_INFO("完结前满箱补发完成 order=%s flushed=%d",
+        orderCode.toLocal8Bit().data(), flushed);
+    return flushed;
+}
+
+// ============================================================================
+// manualFullbox — 手动满箱切换（2026-09-07）
+// UI 在「重传满箱切换」旁输入格口号后点击：读取该格口当前分拣记录与容器号，
+// 立即按 H7 满箱回传上传（替代人工 PLC 锁格的补传手段，不动波次状态机）
+// ============================================================================
+bool HttpServer::manualFullbox(const QString& grid)
+{
+    if (!m_pWaveMgr)
+    {
+        emit logMessage("[手动满箱] 服务未就绪", true);
+        return false;
+    }
+    if (grid.isEmpty())
+    {
+        emit logMessage("[手动满箱] 请先输入格口号", true);
+        return false;
+    }
+
+    QString orderCode = m_pWaveMgr->orderCode();
+    if (orderCode.isEmpty())
+    {
+        emit logMessage("[手动满箱] 当前无运行波次，无法执行手动满箱", true);
+        return false;
+    }
+
+    QVector<GridSortRecord> records;
+    {
+        std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+        auto it = m_gridSortRecords.find(grid);
+        if (it != m_gridSortRecords.end())
+            records = it.value();
+    }
+    if (records.isEmpty())
+    {
+        HTTP_LOG_WARN("手动满箱 格口 %s 无分拣记录（可能已满箱回传或未落格）", grid.toLocal8Bit().data());
+        emit logMessage(QString("[手动满箱] 格口%1 无待上传的分拣记录（可能已满箱或未落格）").arg(grid), true);
+        return false;
+    }
+
+    bool ok = sendFullboxForGrid(orderCode, grid, records);
+    if (ok)
+        emit logMessage(QString("[手动满箱] 格口%1 已按 H7 满箱回传上传（order=%2）").arg(grid).arg(orderCode));
+    return ok;
 }
 
 // ============================================================================
@@ -2257,8 +3286,20 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
         emit logMessage(QString("[满箱回传] 回传成功 order=%1 box=%2")
             .arg(orderCode).arg(boxCode));
 
-        // 3. 归档容器绑定（允许新容器绑定（H6））
+        // ★ 2026-09-06 归属防护：H7 报文可能属于"已切出/新任务"的旧波次（在途请求补发）。
+        //   DB 归档（上方标记）与日志照常；容器归档与状态迁移只作用于当前内存波次，防污染
+        bool bIsCurrent = m_pWaveMgr && m_pWaveMgr->orderCode() == orderCode;
+        if (!bIsCurrent)
+        {
+            HTTP_LOG_INFO("满箱回传（H7） 成功但该波次已非当前内存波次 order=%s（仅更新数据库，跳过状态/容器处理）",
+                orderCode.toLocal8Bit().data());
+            emit logMessage(QString("[满箱回传] order=%1 已成功（该波次已切出，仅记录；切回时将自动补发/同步）")
+                .arg(orderCode));
+        }
+
+        // 3. 归档容器绑定（允许新容器绑定（H6））—— 仅当前波次
         // 找到绑定该 boxcode 的格口，归档旧绑定
+        if (bIsCurrent)
         {
             std::lock_guard<std::mutex> lock(m_containerMutex);
             for (auto it = m_containerBindings.begin(); it != m_containerBindings.end(); ++it)
@@ -2277,8 +3318,8 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
             }
         }
 
-        // 4. 状态恢复：FULLBOX_SYNC → SORTING（T-S5-05）
-        if (m_pWaveMgr)
+        // 4. 状态恢复：FULLBOX_SYNC → SORTING（T-S5-05）—— 仅当前波次
+        if (bIsCurrent && m_pWaveMgr)
         {
             m_pWaveMgr->resumeSorting();
         }
@@ -2294,7 +3335,7 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
 
         if (outMsg.retryCount >= OUTBOX_RETRY_MAX_H7)
         {
-            // 重试耗尽：标记 failed，记录异常，状态→IDLE（不阻塞新波次）
+            // 重试耗尽：标记 failed，记录异常，状态回 SORTING（满箱失败不阻塞分拣，failed 报文可面板补发）
             m_pSortingDb->updateOutboxFullboxStatus(msgId, "failed",
                 QDateTime::currentDateTime().addSecs(OUTBOX_RETRY_INTERVAL_SEC)
                     .toString("yyyy-MM-dd HH:mm:ss"));
@@ -2302,7 +3343,7 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
             HTTP_LOG_ERROR("满箱回传失败（H7） 重试耗尽 order=%s retry=%d body=%s",
                 outMsg.orderCode.toLocal8Bit().data(),
                 outMsg.retryCount, body.left(200).toLocal8Bit().data());
-            emit logMessage(QString("[满箱回传] 重试耗尽 order=%1 retry=%2")
+            emit logMessage(QString("[满箱回传] 重试耗尽 order=%1 retry=%2（失败报文可在面板重传，分拣继续）")
                 .arg(outMsg.orderCode).arg(outMsg.retryCount), true);
 
             // ★ 记录异常到 exception_record 表
@@ -2319,18 +3360,25 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
                 m_pSortingDb->insertException(ex);
             }
 
-            // ★ 状态→IDLE，不阻塞新波次下发
-            if (m_pWaveMgr)
+            // ★ 状态回 SORTING（FULLBOX_SYNC→SORTING 合法迁移），满箱失败不阻塞分拣
+            //   （原 setState(WAVE_IDLE) 被状态机白名单拒绝，属无效调用）
+            // ★ 2026-09-06 归属防护：该波次已非当前内存波次时不动状态（切回时按 DB 状态恢复）
+            bool bIsCurrent = m_pWaveMgr && m_pWaveMgr->orderCode() == outMsg.orderCode;
+            if (bIsCurrent && m_pWaveMgr)
             {
-                m_pWaveMgr->setState(WAVE_IDLE);
-                HTTP_LOG_INFO("满箱回传失败（H7） 状态已重置为IDLE order=%s 可接收新波次",
-                    outMsg.orderCode.toLocal8Bit().data());
+                if (m_pWaveMgr->setState(WAVE_SORTING))
+                    HTTP_LOG_INFO("满箱回传失败（H7） 状态回SORTING order=%s 分拣继续（failed报文可重传补发）",
+                        outMsg.orderCode.toLocal8Bit().data());
+                else
+                    HTTP_LOG_WARN("满箱回传失败（H7） 状态回SORTING被拒绝 order=%s current=%d",
+                        outMsg.orderCode.toLocal8Bit().data(), m_pWaveMgr->status());
             }
 
-            // ★ 重试耗尽后停止 H7 满箱回传定时器（已标记 failed，不再需要轮询）
-            if (m_outboxFullboxTimer) m_outboxFullboxTimer->stop();
-            HTTP_LOG_INFO("满箱回传失败（H7） Outbox重试定时器(H7)已停止 order=%s",
-                outMsg.orderCode.toLocal8Bit().data());
+            // ★ 重试耗尽后停止 H7 满箱回传定时器（已标记 failed，不再需要轮询；仅当前波次停止全局轮询）
+            //   非当前波次的失败报文保留为 failed，切回该波次时自动补发（resendOutbox）
+            if (bIsCurrent && m_outboxFullboxTimer) m_outboxFullboxTimer->stop();
+            HTTP_LOG_INFO("满箱回传失败（H7） retry耗尽 order=%s 当前内存=%d（failed报文可手动重传补发）",
+                outMsg.orderCode.toLocal8Bit().data(), bIsCurrent ? 1 : 0);
         }
         else
         {
@@ -2459,7 +3507,6 @@ bool HttpServer::sendEnd()
     QElapsedTimer funcTimer;
     funcTimer.start();
     qint64 epochMs = QDateTime::currentMSecsSinceEpoch();
-
     if (!m_pWaveMgr)
     {
         HTTP_LOG_WARN("完结回传触发失败（H8） WaveManager未初始化");
@@ -2477,6 +3524,16 @@ bool HttpServer::sendEnd()
         emit logMessage(QString("[完结回传] 波次状态异常，拒绝完结 order=%1 status=%2")
             .arg(m_pWaveMgr->orderCode()).arg(WaveSnapshot::statusToString(status)), true);
         return false;
+    }
+
+    // ★ 2026-09-07 完结前兜底补发：把尚未满箱回传的格口数据先按 H7 发给 WMS，再发 H8 完结回传
+    {
+        int flushedGrids = flushUnreportedFullboxes(m_pWaveMgr->orderCode());
+        if (flushedGrids > 0)
+        {
+            emit logMessage(QString("[完结前补发] 共补发 %1 个格口的满箱回传（H7），随后发送完结回传（H8）")
+                .arg(flushedGrids));
+        }
     }
 
     // ── 步骤1-2: 校验可完结条件 + 状态迁移 ──
@@ -2566,18 +3623,15 @@ bool HttpServer::sendEnd()
     emit logMessage(QString("[完结回传] 消息入Outbox order=%1 sumLocation=%2")
         .arg(orderCode).arg(sumLocation));
 
-    // ★ 原始报文：完结回传（H8）写入 run.log
+    // ★ 原始报文：完结回传（H8）写入 run.log（QString 必须转 UTF-8，constData() 是 QChar* 会被 %s 截断）
     LOG_INFO("[原始报文] [完结回传] body=%s(%d字节)",
-        outMsg.payload.constData(), outMsg.payload.size());
+        outMsg.payload.toUtf8().data(), outMsg.payload.size());
 
     // ── 步骤6: 发送到 WMS ──
     sendEndToWms(msgId, payload);
     qint64 t3 = funcTimer.elapsed();  // ★ 耗时：信号发送
-
-    // ★ 耗时汇总日志（不包含网络往返，仅本地处理）
-    LOG_INFO("[耗时] [完结回传] order=%s payload构建=%lldms Outbox写入=%lldms 信号发送=%lldms 本地总计=%lldms",
-        orderCode.toLocal8Bit().data(),
-        t1, t2 - t1, t3 - t2, t3);
+    HTTP_LOG_INFO("[耗时] [完结回传] order=%s payload构建=%lldms Outbox写入=%lldms 信号发送=%lldms 本地总计=%lldms",
+        orderCode.toLocal8Bit().data(), t1, t2 - t1, t3 - t2, t3);
     HTTP_LOG_INFO("完结回传耗时（H8） order=%s payload构建=%lldms Outbox=%lldms 信号发送=%lldms 总计=%lldms",
         orderCode.toLocal8Bit().data(), t1, t2 - t1, t3 - t2, t3);
 
@@ -2585,6 +3639,8 @@ bool HttpServer::sendEnd()
     //   任何网络异常（无响应/丢包/回调丢失）下，END_WAIT_TIMEOUT_MS 后 onEndSessionTimeout
     //   会强制结束会话并 emit endReportFinished → MainWindow 停止服务（不卡死、不退出程序）。
     //   未确认的 H8 消息保留在 outbox_end，下次启动由 pollOutboxEnd 补传/归档。
+    // ★ 2026-09-06 会话归属波次：切出/切换后超时兜底只处理本波次，不污染其它波次
+    m_endSessionOrderCode = orderCode;
     if (m_endSessionTimer)
     {
         m_endSessionTimer->start(END_WAIT_TIMEOUT_MS);
@@ -2599,39 +3655,70 @@ bool HttpServer::sendEnd()
 // onEndSessionTimeout — H8 完结回传会话超时兜底（2026-09-02 新增）
 // 触发条件：点击"结束任务"后 END_WAIT_TIMEOUT_MS 内未收到任何回传结果
 //  （网络完全无响应 / 回调丢失等极端场景）；正常失败重试会在耗尽后自行结束会话。
-// 行为：记录异常 → 状态挂起（HELD）→ 发出 endReportFinished，保证等待必然结束。
+// 行为：记录异常 → 波次终结（FINISHED，不再异常挂起阻塞工作流）→ 发出 endReportFinished，
+//   H8 未确认报文保留在 outbox_end，由定时器继续重试/面板手动补发。
 // ============================================================================
 void HttpServer::onEndSessionTimeout()
 {
+    // ★ 2026-09-06 会话归属波次：超时兜底只处理发起会话的波次（切出后内存可能是别的波次/空闲）
+    QString orderCode = m_endSessionOrderCode;
+    m_endSessionOrderCode.clear();
+    if (m_endSessionTimer) m_endSessionTimer->stop();
+    if (orderCode.isEmpty())
+        orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+
     HTTP_LOG_ERROR("完结回传（H8） 会话超时兜底触发 timeout=%dms order=%s",
-        END_WAIT_TIMEOUT_MS,
-        m_pWaveMgr ? m_pWaveMgr->orderCode().toLocal8Bit().data() : "(null)");
-    emit logMessage(QString("[完结回传] 等待超时(%1s)，强制结束回传会话（未确认消息将在下次启动补传）")
+        END_WAIT_TIMEOUT_MS, orderCode.toLocal8Bit().data());
+    emit logMessage(QString("[完结回传] 等待超时(%1s)，强制结束回传会话（未确认报文保留在outbox继续重试/可面板补发）")
         .arg(END_WAIT_TIMEOUT_MS / 1000), true);
 
     // 记录异常（可追溯：H8 超时未确认）
-    if (m_pSortingDb && m_pWaveMgr && !m_pWaveMgr->orderCode().isEmpty())
+    if (m_pSortingDb && !orderCode.isEmpty())
     {
         ExceptionRecord ex;
         ex.type      = QString::fromUtf8("完结回传超时");
-        ex.orderCode = m_pWaveMgr->orderCode();
+        ex.orderCode = orderCode;
         ex.epc       = "";
         ex.sku       = "";
-        ex.reason    = QString("完结回传（H8）等待%1s无结果，会话超时强制结束（未确认消息保留待补传）")
+        ex.reason    = QString("完结回传（H8）等待%1s无结果，会话超时强制结束（未确认报文保留在outbox待补发）")
                           .arg(END_WAIT_TIMEOUT_MS / 1000);
         ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
         m_pSortingDb->insertException(ex);
     }
 
-    // 状态挂起（ENDING→HELD 合法迁移），避免波次卡在 ENDING
+    // ★ 波次终结：完结流程结束即 FINISHED（不再进入异常挂起，避免阻塞工作流）
+    //   未确认的 H8 保留在 outbox_end（status=pending），outboxEndTimer 继续自动重试
+    // ★ 2026-09-06 防护：若内存波次已不在 ENDING（等待期间执行了「新任务/切换」），
+    //   只归档 DB，不动新波次的内存数据
     if (m_pWaveMgr && m_pWaveMgr->status() == WAVE_ENDING)
     {
-        m_pWaveMgr->setState(WAVE_HELD);
-        HTTP_LOG_INFO("完结回传（H8） 会话超时 波次状态 ENDING→HELD order=%s",
-            m_pWaveMgr->orderCode().toLocal8Bit().data());
+        m_pWaveMgr->setState(WAVE_FINISHED);
+        HTTP_LOG_INFO("完结回传（H8） 会话超时 波次终结 ENDING→FINISHED order=%s（H8保留outbox继续重试）",
+            orderCode.toLocal8Bit().data());
+
+        // 收尾：存档 + 清空运行时状态（★ 2026-09-07 客户确认：完结不清空容器绑定，
+        //   绑定信息保留在数据库，供后续追溯/切回查看；下一波次由 H6 按格口覆盖）
+        if (m_pSortingDb && !orderCode.isEmpty())
+            m_pSortingDb->archiveWave(orderCode);
+        {
+            std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+            m_gridSortRecords.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_gridCountMutex);
+            m_gridSortedCount.clear();
+        }
+    }
+    else
+    {
+        HTTP_LOG_WARN("完结回传（H8） 会话超时但内存波次已不在完结等待（可能已切出/新任务），跳过状态收尾 order=%s current=%d",
+            orderCode.toLocal8Bit().data(),
+            m_pWaveMgr ? m_pWaveMgr->status() : -1);
+        if (m_pSortingDb && !orderCode.isEmpty())
+            m_pSortingDb->updateWaveStatus(orderCode, WAVE_FINISHED);
     }
 
-    // ★ 保证等待必然结束：通知 MainWindow 执行收尾（幂等，重复触发无副作用）
+    // ★ 保证等待必然结束：通知 MainWindow 执行收尾（幂等，重复触发无副作用；非停止等待时 UI 忽略）
     emit endReportFinished();
 }
 
@@ -2678,6 +3765,13 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
 
         OutboxRecord outMsg = m_pSortingDb->getOutboxEndByMsgId(msgId); // ★ S6 按 msgId 查询
 
+        // ★ 2026-09-06 会话归属：该 msgId 所属会话若在兜底等待中，收到结果即结束兜底
+        if (m_endSessionOrderCode == outMsg.orderCode)
+        {
+            m_endSessionOrderCode.clear();
+            if (m_endSessionTimer) m_endSessionTimer->stop();
+        }
+
         HTTP_LOG_INFO("完结回传成功（H8） order=%s 网络往返=%lldms",
             outMsg.orderCode.toLocal8Bit().data(), roundTripMs);
         LOG_INFO("[耗时] [完结回传] 网络往返=%lldms order=%s success=1",
@@ -2685,19 +3779,34 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
         emit logMessage(QString("[完结回传] 回传成功 order=%1")
             .arg(outMsg.orderCode));
 
-        // 状态：ENDING → FINISHED（已完成，终态）
-        // ★ 纠正：回传成功后状态变为已完成，后续可接收新波次（FINISHED→IDLE）
-        if (m_pWaveMgr)
+        // ★ 2026-09-06 归属防护：H8 可能属于已切出的旧波次（在途/手动补发）。
+        //   DB 标记与历史存档照常；状态推进/内存清理/通知 UI 仅当该波次是当前内存波次
+        bool bIsCurrent = m_pWaveMgr && m_pWaveMgr->orderCode() == outMsg.orderCode;
+        if (!bIsCurrent)
+        {
+            HTTP_LOG_INFO("完结回传成功（H8） 但该波次已非当前内存波次 order=%s（仅更新数据库，终态化）",
+                outMsg.orderCode.toLocal8Bit().data());
+            emit logMessage(QString("[完结回传] order=%1 完结已成功（该波次已切出，仅记录）")
+                .arg(outMsg.orderCode));
+            m_pSortingDb->updateWaveStatus(outMsg.orderCode, WAVE_FINISHED);
+        }
+
+        // 状态：ENDING → FINISHED（已完成，终态）—— 仅当前波次
+        if (bIsCurrent && m_pWaveMgr)
         {
             m_pWaveMgr->setState(WAVE_FINISHED);
         }
 
-        // ★ 波次完结后存档到历史数据库（方便追溯查找）
+        // ★ 波次完结后存档到历史数据库（方便追溯查找）—— 无条件（DB 事实归档）
         if (m_pSortingDb)
         {
             m_pSortingDb->archiveWave(outMsg.orderCode);
             HTTP_LOG_INFO("完结回传（H8） 波次历史已存档 order=%s", outMsg.orderCode.toLocal8Bit().data());
         }
+
+        // 以下（定时器/内存清理/通知）仅当前波次
+        if (!bIsCurrent)
+            return;
 
         // ★ 2026-09-02：H8 已收到成功结果，停止会话兜底定时器
         if (m_endSessionTimer) m_endSessionTimer->stop();
@@ -2722,7 +3831,9 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
         m_skuQueryRetryCount.clear();
         m_notReadyRetryCount.clear();
         m_sentEpcs.clear();
-        HTTP_LOG_INFO("波次完结清理完成 order=%s（格口记录/计数/待查SKU/重试/已发送EPC 已清空）",
+        // ★ 2026-09-07 客户确认：完结后不清空容器绑定——绑定信息保留在内存/数据库，
+        //   供追溯与切回查看；下一波次由 H6 按格口重新绑定覆盖
+        HTTP_LOG_INFO("波次完结清理完成 order=%s（格口记录/计数/待查SKU/重试/已发送EPC 清空；容器绑定保留）",
             outMsg.orderCode.toLocal8Bit().data());
 
         // ★ 通知 MainWindow：完结回传处理完毕，可以停止服务
@@ -2737,6 +3848,13 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
         OutboxRecord outMsg = m_pSortingDb->getOutboxEndByMsgId(msgId); // ★ S6 按 msgId 查询
         int retryCount = outMsg.retryCount;
         QString orderCode = outMsg.orderCode;
+
+        // ★ 2026-09-06 会话归属：该 msgId 所属会话若在兜底等待中，收到结果即结束兜底
+        if (m_endSessionOrderCode == orderCode)
+        {
+            m_endSessionOrderCode.clear();
+            if (m_endSessionTimer) m_endSessionTimer->stop();
+        }
 
         if (retryCount >= OUTBOX_RETRY_MAX_DEFAULT)
         {
@@ -2769,18 +3887,44 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
                 m_pSortingDb->insertException(ex);
             }
 
-            // ★ 状态→HELD（异常挂起，人工可见），不再尝试非法迁移 IDLE
+            // ★ 2026-09-06 归属防护：该波次已非当前内存波次时，仅 DB 终态化，不动内存/定时器/不通知 UI
+            bool bIsCurrent = m_pWaveMgr && m_pWaveMgr->orderCode() == orderCode;
+            if (!bIsCurrent)
+            {
+                HTTP_LOG_INFO("完结回传失败耗尽（H8） 但该波次已非当前内存波次 order=%s（仅更新数据库，终态化）",
+                    orderCode.toLocal8Bit().data());
+                emit logMessage(QString("[完结回传] order=%1 补发失败已归档（该波次已切出，切回后可再次重传）")
+                    .arg(orderCode), true);
+                m_pSortingDb->updateWaveStatus(orderCode, WAVE_FINISHED);
+                m_pSortingDb->archiveWave(orderCode);
+                return;
+            }
+
+            // ★ 波次终结：完结流程结束即 FINISHED（不再异常挂起阻塞工作流）
+            //   failed 的 H8 报文保留在 outbox_end，由「重传任务完结(H8)」按钮手动补发
             if (m_pWaveMgr)
             {
-                m_pWaveMgr->setState(WAVE_HELD);
-                HTTP_LOG_INFO("完结回传失败（H8） 状态已置HELD order=%s（服务停止后新实例从IDLE接收新波次）",
+                m_pWaveMgr->setState(WAVE_FINISHED);
+                HTTP_LOG_INFO("完结回传失败（H8） 波次终结 ENDING→FINISHED order=%s（failed报文可手动重传补发）",
                     orderCode.toLocal8Bit().data());
+            }
+
+            // 收尾：存档 + 清空运行时状态（★ 2026-09-07 完结不清空容器绑定，绑定保留于数据库）
+            if (m_pSortingDb)
+                m_pSortingDb->archiveWave(orderCode);
+            {
+                std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+                m_gridSortRecords.clear();
+            }
+            {
+                std::lock_guard<std::mutex> lock(m_gridCountMutex);
+                m_gridSortedCount.clear();
             }
 
             // ★ 2026-09-02：H8 会话已结束，停止兜底定时器
             if (m_endSessionTimer) m_endSessionTimer->stop();
 
-            // ★ 重试耗尽后停止 H8 完结回传定时器（已标记 failed，不再需要轮询）
+            // ★ 重试耗尽后停止 H8 完结回传定时器（已标记 failed，不再需要轮询；手动补发走面板）
             if (m_outboxEndTimer) m_outboxEndTimer->stop();
             HTTP_LOG_INFO("完结回传失败（H8） Outbox重试定时器(H8)已停止 order=%s",
                 orderCode.toLocal8Bit().data());

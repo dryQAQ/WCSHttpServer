@@ -13,7 +13,7 @@
 //   ① 主动连接 RFID 服务端（IP/端口由配置 rfidPushServerIp/rfidPushServerPort 提供）
 //   ② 断线自动重连（QTimer 每 3s 检测，未连接则重新 Start）
 //   ③ 处理 TCP 粘包/分包，逐条解析出完整 ASCII 帧 {流水号|小车号|epc}0D
-//   ④ 原始报文无条件落日志（./log/RFID/rfid.log，无论波次状态、无论格式对错）
+//   ④ 原始报文无条件落日志（★ 2026-09-06 起并入 run.log 统一查看，无论波次状态、无论格式对错）
 //   ⑤ 经 rfidPushReceived 信号（QueuedConnection 回主线程）交 HttpServer 处理，
 //      复用 handleRfidCarNumReport()（存 EpcCache + SKU 查询 + 发 PLC）
 // ============================================================================

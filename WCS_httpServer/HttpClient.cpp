@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QDateTime>
 #include <QNetworkRequest>
+#include <QUrlQuery>
 
 HttpClient::HttpClient(QObject* parent)
     : QObject(parent)
@@ -33,6 +34,46 @@ HttpClient::~HttpClient()
     }
     m_pending.clear();
     HTTP_LOG_INFO("[析构] HttpClient 销毁完成");
+}
+
+// ──── 出站报文归档辅助 ────
+// ★ 2026-09-06：统一写入 ./log/Run/run.log（不再单独建 send.log 文件，现场反馈独立文件无法写入/不便查看）
+// body 去除换行后整行记录，便于单行检索；检索 "[原始报文]" 即可同时定位 发送/响应
+static void archiveSend(const char* kind, const QString& url, const QString& appkey,
+                        const QString& context, const QByteArray& body)
+{
+    QString text = QString::fromUtf8(body);
+    text.replace('\r', ' ').replace('\n', ' ');
+    LOG_INFO("[原始报文] [WMS出站发送] 类型=%s context=%s url=%s header=AppKey:%s len=%d body=%s",
+             kind, context.toLocal8Bit().constData(), url.toLocal8Bit().constData(),
+             appkey.toLocal8Bit().constData(), body.size(), text.toLocal8Bit().constData());
+}
+
+// ★ 2026-09-06：组装带 WMS 网关参数的完整回传 URL
+//   base（XML 配置，不含参数） + 追加 appkey/method 查询参数
+//   ★ 2026-09-07：若 URL 已自带 appkey/method（某些网关要求整串 URL），
+//   则不重复追加（以 URL 内为准）；未带时用配置项补上。
+//   （appkey=xxx 来自 <appkey>/<appkeyTest>，method=xxx 来自 <feedbackMethod>/<feedbackEndMethod>）
+QUrl HttpClient::buildFeedbackUrl(const QString& baseUrl, const QString& method) const
+{
+    QUrl url(baseUrl);
+    QUrlQuery q(url);
+    if (!q.hasQueryItem("appkey") && !m_appkey.isEmpty())
+        q.addQueryItem("appkey", m_appkey);
+    if (!q.hasQueryItem("method") && !method.isEmpty())
+        q.addQueryItem("method", method);
+    url.setQuery(q);
+    return url;
+}
+
+static void archiveResp(const QString& url, const QString& context,
+                        int status, bool success, const QByteArray& body)
+{
+    QString text = QString::fromUtf8(body);
+    text.replace('\r', ' ').replace('\n', ' ');
+    LOG_INFO("[原始报文] [WMS出站响应] context=%s url=%s status=%d success=%d len=%d body=%s",
+             context.toLocal8Bit().constData(), url.toLocal8Bit().constData(),
+             status, success ? 1 : 0, body.size(), text.toLocal8Bit().constData());
 }
 
 void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
@@ -64,7 +105,9 @@ void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
     req["head"] = head;
     QByteArray postData = QJsonDocument(req).toJson(QJsonDocument::Compact);
 
-    QUrl url(m_url);
+    // ★ 2026-09-06：完整 URL = base + ?appkey=..&method=..（网关要求）
+    const QUrl url = buildFeedbackUrl(m_url, m_feedbackMethod);
+    const QString finalUrl = url.toString();
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
     request.setRawHeader("AppKey", m_appkey.toUtf8());  // WMS鉴权Header
@@ -81,7 +124,8 @@ void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
     pr.timer       = timer;
     pr.orderCode   = orderCode;
     pr.sumLocation = sumLocation;
-    pr.url         = m_url;   // ★ 2026-09-04：记录目标URL（失败/超时日志提示用）
+    pr.url         = finalUrl;   // ★ 2026-09-04：记录目标URL（失败/超时日志提示用）
+    archiveSend("波次完成回传", finalUrl, m_appkey, orderCode, postData);   // ★ 2026-09-06 发送报文归档
     m_pending.insert(reply, pr);
 
     // 连接信号（异步，不阻塞主线程）
@@ -117,12 +161,18 @@ void HttpClient::onReplyFinished()
         LogCenter::Instance()->wcs_run_log_warn(false,
             QString("[回传] 网络失败（请检查回传地址是否可达） url=%1 orderCode=%2 error=%3")
                 .arg(pr.url).arg(pr.orderCode).arg(errText));
+        SEND_ERROR("[响应] 网络层失败(未收到HTTP响应) context=%s url=%s error=%d desc=%s",
+            pr.orderCode.toLocal8Bit().constData(), pr.url.toLocal8Bit().constData(),
+            (int)reply->error(), errText.toLocal8Bit().constData());
     }
 
     reply->deleteLater();
 
     QJsonDocument doc = QJsonDocument::fromJson(respBody);
     bool success = doc.object()["success"].toBool(false);
+
+    // ★ 2026-09-06：响应归档（完整 body，统一写入 run.log，见 archiveResp）
+    archiveResp(pr.url, pr.orderCode, statusCode, success, respBody);
 
     HTTP_LOG_INFO("回传完成 orderCode=%s status=%d success=%d",
         pr.orderCode.toLocal8Bit().data(), statusCode, success);
@@ -153,6 +203,8 @@ void HttpClient::onReplyTimeout()
             LogCenter::Instance()->wcs_run_log_warn(false,
                 QString("[回传] 超时（可能地址不通或响应过慢） url=%1 orderCode=%2 timeout=%3ms")
                     .arg(pr.url).arg(pr.orderCode).arg(m_timeoutMs));
+            SEND_WARN("[响应] 超时(无响应) context=%s url=%s timeout=%dms",
+                pr.orderCode.toLocal8Bit().constData(), pr.url.toLocal8Bit().constData(), m_timeoutMs);
 
             // ★ 关键修复：先断开 finished 信号再 abort
             //   防止 onReplyFinished 在 abort 时同步触发导致双重 erase
@@ -182,7 +234,9 @@ void HttpClient::sendGenericFeedback(const QJsonObject& json, const QString& con
 
     QByteArray postData = QJsonDocument(json).toJson(QJsonDocument::Compact);
 
-    QUrl url(m_url);
+    // ★ 2026-09-06：完整 URL = base + ?appkey=..&method=..（method=满箱/锁格/波次完成类）
+    const QUrl url = buildFeedbackUrl(m_url, m_feedbackMethod);
+    const QString finalUrl = url.toString();
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
     request.setRawHeader("AppKey", m_appkey.toUtf8());
@@ -198,14 +252,24 @@ void HttpClient::sendGenericFeedback(const QJsonObject& json, const QString& con
     pr.timer       = timer;
     pr.orderCode   = context.isEmpty() ? "lockGrid" : context;
     pr.sumLocation = 0;
-    pr.url         = m_url;   // ★ 2026-09-04：记录目标URL
+    pr.url         = finalUrl;   // ★ 2026-09-04：记录目标URL
     m_pending.insert(reply, pr);
 
     connect(reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);
     connect(timer, &QTimer::timeout, this, &HttpClient::onReplyTimeout);
     timer->start();
 
-    HTTP_LOG_INFO("锁格回传发送 context=%s len=%d", context.toLocal8Bit().data(), postData.size());
+    // ★ 2026-09-06：发送报文归档（完整 body，统一写入 run.log，见 archiveSend）
+    //   类型文案按 context 区分，方便检索：fullbox_*=满箱回传(H7)、lockGrid_*=锁格、其它=波次完成
+    QByteArray kindStr;
+    if (context.startsWith("fullbox_") || context.startsWith("resendFullbox_"))
+        kindStr = QByteArray("满箱回传(H7)");
+    else if (context.startsWith("lockGrid_"))
+        kindStr = QByteArray("锁格回传");
+    else
+        kindStr = QByteArray("波次完成回传");
+    archiveSend(kindStr.constData(), finalUrl, m_appkey, context, postData);
+    HTTP_LOG_INFO("回传发送 kind=%s context=%s len=%d", kindStr.constData(), context.toLocal8Bit().data(), postData.size());
 }
 
 // ============================================================================
@@ -225,14 +289,18 @@ void HttpClient::sendEndFeedback(const QJsonObject& json, const QString& context
     QByteArray postData = QJsonDocument(json).toJson(QJsonDocument::Compact);
     QString payloadPreview = QString::fromUtf8(postData).left(RESP_BODY_LOG_TRUNCATE);
 
-    // ── 步骤3: 打印请求参数（URL、AppKey、Payload、超时） ──
+    // ── 步骤3: 打印请求参数（完整URL、AppKey、Payload、超时） ──
+    // ★ 2026-09-06：完整 URL = base + ?appkey=..&method=..（method=完结回传类）
+    const QUrl url = buildFeedbackUrl(m_endUrl, m_endFeedbackMethod);
+    const QString finalUrl = url.toString();
     HTTP_LOG_INFO("完结回传（H8）请求参数: URL=%s AppKey=%s timeout=%dms",
-        m_endUrl.toLocal8Bit().data(), m_appkey.toLocal8Bit().data(), m_timeoutMs);
+        finalUrl.toLocal8Bit().data(), m_appkey.toLocal8Bit().data(), m_timeoutMs);
     HTTP_LOG_INFO("完结回传（H8）请求体 context=%s len=%d payload=%s",
         context.toLocal8Bit().data(), postData.size(), payloadPreview.toLocal8Bit().data());
+    // ★ 2026-09-06：发送报文归档（完整 body，统一写入 run.log，见 archiveSend）
+    archiveSend("完结回传(H8)", finalUrl, m_appkey, context, postData);
 
     // ── 步骤4: 构建 HTTP 请求 ──
-    QUrl url(m_endUrl);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=UTF-8");
     request.setRawHeader("AppKey", m_appkey.toUtf8());
@@ -249,7 +317,7 @@ void HttpClient::sendEndFeedback(const QJsonObject& json, const QString& context
     pr.timer       = timer;
     pr.orderCode   = context.isEmpty() ? "end" : context;
     pr.sumLocation = 0;
-    pr.url         = m_endUrl;   // ★ 2026-09-04：记录 H8 完结回传目标URL
+    pr.url         = finalUrl;   // ★ 2026-09-04：记录 H8 完结回传目标URL
     m_pending.insert(reply, pr);
 
     connect(reply, &QNetworkReply::finished, this, &HttpClient::onReplyFinished);

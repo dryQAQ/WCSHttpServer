@@ -27,8 +27,10 @@ signals:
     // orderQty:   波次总件数
     // elapsedMs:  解析耗时(ms)
     // recvSet:    波次中包含的所有SKU集合（用于波次完结判定）
+    // rawBody:    ★ 2026-09-07 H4 原始报文（当前波次执行中时排队/延迟执行用）
     void waveParsed(const QString& orderCode, int skuCount, int orderQty,
-                    qint64 elapsedMs, const QSet<QString>& recvSet);
+                    qint64 elapsedMs, const QSet<QString>& recvSet,
+                    const QByteArray& rawBody);
     // 解析异常信号
     void parseError(const QString& errorMsg);
     // ★ 格口号越界异常信号（不阻塞波次，仅记录异常便于核查和重传）

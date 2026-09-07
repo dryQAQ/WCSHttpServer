@@ -57,6 +57,7 @@ struct WaveSnapshot
     QString statusText;        // 状态文本（中文）
     qint64  elapsedSec  = 0;   // 已耗时（秒）
     int     sumLocation = 0;   // 落格分拣总件数（供WMS回传H8的sumLocation字段）
+    QString lastWaveCode;      // ★ 上一个波次号（本次会话内被覆盖/切出的最近波次，供UI「上波次」显示）
 
     static QString statusToString(int s)
     {
@@ -141,6 +142,18 @@ public:
     void setWaveData(const QString& orderCode, int orderQty, int skuCount);
     void setRecvSet(const QSet<QString>& set);  // 设置接收到的完整inco集合
 
+    // ──── 波次恢复（上一波次任务恢复用）────
+    // 程序重启后把未完成波次恢复到内存（状态/进度集合/计数），继续上次任务。
+    // targetStatus 仅允许 CREATED/BOUND/SORTING/ENDING（由调用方按映射规则给出）；
+    // 前置条件：当前状态必须为 IDLE（调用方保证）。
+    // 内部按 IDLE→CREATED→BOUND→SORTING / →ENDING 的合法链式迁移，不破坏状态机。
+    bool restoreWave(const QString& orderCode, int orderQty, int skuCount,
+                     int targetStatus,
+                     const QSet<QString>& recvSet,
+                     const QSet<QString>& sortedSet,
+                     const QSet<QString>& exceptionSet,
+                     bool hasFullboxRecord);
+
     // ──── 分拣状态（线程安全，内部加锁）────
     void markSorted(const QString& code);       // 标记已分拣
     void markException(const QString& code);    // 标记异常
@@ -212,6 +225,7 @@ private:
 
     // ──── 波次基本信息 ────
     QString         m_orderCode;             // 当前波次号
+    QString         m_lastOrderCode;         // ★ 上一个波次号（覆盖/切出时记录，UI「上波次」显示）
     int             m_orderQty         = 0;  // 波次总件数
     std::atomic<int> m_waveStatus{WAVE_IDLE};// 波次状态（原子操作，跨线程安全）
     QDateTime       m_waveStartTime;         // 波次开始时间

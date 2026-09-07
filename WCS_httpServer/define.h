@@ -20,25 +20,30 @@
 #define WMS_FEEDBACK_PATH_TEST    "/gids5/service/thirdPartyData/dz_bxh_wcs_cs" // 测试环境回传路径
 //#define WMS_FEEDBACK_URL          "http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs"        // 正式环境完整 URL（宏拼接）
 //#define WMS_FEEDBACK_URL_TEST     "http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs"		  // 测试环境完整 URL（宏拼接）
-#define WMS_FEEDBACK_URL          "https://wms.pelliot.com.cn/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder"        // 正式环境满箱回传 URL（H7 满箱同步到WMS）
-#define WMS_FEEDBACK_URL_TEST     "https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder"		  // 测试环境满箱回传 URL（H7 满箱同步到WMS）
-#define WMS_FEEDBACK_END_URL      "https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder"      // 正式环境完结回传 URL（H8 波次完结通知WMS）
-#define WMS_FEEDBACK_END_URL_TEST "https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder"    // 测试环境完结回传 URL（H8 波次完结通知WMS）
+// ★ 2026-09-06：WMS 网关要求 URL 带 appkey=xxx&method=xxx（参数放 XML 配置：
+//   <appkey>/<appkeyTest>/<feedbackMethod>/<feedbackEndMethod>，发送时由 HttpClient 拼接）
+//   满箱/锁格/波次完成等回传（非完结）→ method=gwisSubProductClassifyOrder
+//   完结回传（H8）               → method=gwisSubProductClassifyEndOrder
+#define WMS_FEEDBACK_URL          "https://wms.pelliot.com.cn/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder"        // 正式环境满箱回传 base URL（H7 满箱同步到WMS）
+#define WMS_FEEDBACK_URL_TEST     "https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder"		  // 测试环境满箱回传 base URL（H7 满箱同步到WMS）
+#define WMS_FEEDBACK_END_URL      "https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder"      // 正式环境完结回传 base URL（H8 波次完结通知WMS）
+#define WMS_FEEDBACK_END_URL_TEST "https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder"    // 测试环境完结回传 base URL（H8 波次完结通知WMS）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 认证 AppKey（放入 HTTP Header: AppKey=xxx）
 // ═══════════════════════════════════════════════════════════════════════════
-#define WMS_APPKEY               "dz_bxh_wcs_zs"     // 正式环境 AppKey
-#define WMS_APPKEY_TEST          "dz_bxh_wcs_cs"     // 测试环境 AppKey
+#define WMS_APPKEY               "dz_bxh_wcs_zs"     // 正式环境 AppKey（HTTP Header + URL 参数 appkey 同值）
+#define WMS_APPKEY_TEST          "dz_bxh_dmwcs_cs"   // ★ 2026-09-06 测试环境 AppKey（gwms5 openapi 账号，HTTP Header + URL 参数 appkey 同值）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 回传请求参数
 // ═══════════════════════════════════════════════════════════════════════════
-#define WMS_ORDER_TYPE           "02"                 // 业务类型（02=退货分类）
+// ★ 2026-09-06 客户样例确认：回传报文中 业务类型=01、仓库=H、货主=BXH_CS（测试/正式同套值）
+#define WMS_ORDER_TYPE           "01"                 // 业务类型（01=收货分类，客户样例确认）
 #define WMS_OPERUSER_CODE        "admin"              // 操作人编码（WMS 接口要求）
 #define WMS_OPERUSER_NAME        "管理员"              // 操作人名称（WMS 接口要求）
-#define WMS_WAREHOUSE_CODE       "A"                   // 仓库编码
-#define WMS_GOODS_OWNER          "BXH_ZS"              // 货主编码
+#define WMS_WAREHOUSE_CODE       "H"                   // 仓库编码
+#define WMS_GOODS_OWNER          "BXH_CS"              // 货主编码
 #define WMS_METHOD_FULLBOX       "gwisSubProductClassifyOrder"    // 满箱回传（H7 满箱同步 method（WCS→WMS））
 #define WMS_METHOD_END           "gwisSubProductClassifyEndOrder" // 完结回传（H8 完结回传 method（WCS→WMS））
 
@@ -83,15 +88,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // fromLocation 取值来源：config=使用配置项固定值, volu=使用波次明细中的 volu 字段
 // TODO: RQ-04 待确认 volu 与 fromLocation 的映射关系（2026-08-04）
-#define FULLBOX_FROM_LOCATION_SOURCE   "volu"   // fromLocation 取值来源（config/volu）
-#define FULLBOX_DEFAULT_FROM_LOCATION  "A-66"   // 来源库位默认值（H7 fromLocation 兜底值）
+#define FULLBOX_FROM_LOCATION_SOURCE   "sobi"   // fromLocation 取值来源（config/volu）
+#define FULLBOX_DEFAULT_FROM_LOCATION  "A-01-02"   // 来源库位默认值（H7 fromLocation 兜底值）
 #define FULLBOX_DEFAULT_TARGET_LOCATION "66"   // 目标库位默认值（H7 targetLocation 无容器号时兜底）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 分拣引擎配置
 // ═══════════════════════════════════════════════════════════════════════════
 #define SORTING_REQUIRE_BIND       false     // 开工闸门：未绑定禁止开工（true=强制, false=宽松）
-#define SORTING_CONFLICT_POLICY    "STRICT_EXCEPTION"  // 冲突策略：STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配
+#define SORTING_CONFLICT_POLICY    "LOOSE_FIRST"  // 冲突策略：STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配
 #define SORTING_ALLOW_OVERRECV     false    // 是否允许超收（true=允许, false=拒收）
 #define SORTING_STARTED_MODE       "first_piece"  // 已开始分拣判定口径：first_piece=首件落格, manual=人工开工, both=两者
 
@@ -380,6 +385,21 @@
 #define SQL_ALTER_ADD_LAST_CAR     "ALTER TABLE sorting_records ADD COLUMN last_car  TEXT NOT NULL DEFAULT ''"
 #define SQL_ALTER_ADD_SKU          "ALTER TABLE sorting_records ADD COLUMN sku      TEXT NOT NULL DEFAULT ''"
 
+// ★ 2026-09-06 修复：return_wave_item 旧库缺列迁移（波次明细落库失败 no such column）
+//   老版本建的 return_wave_item 表可能缺后来新增的列（grid_type/plan_qty/sorted_qty/volu/obx_code），
+//   CREATE TABLE IF NOT EXISTS 不会给已存在的表补列 → INSERT 稳定失败。
+//   重复执行会报 duplicate column，try-exec 忽略即可（与上方迁移同模式）
+#define SQL_ALTER_ADD_WI_GRID_TYPE  "ALTER TABLE return_wave_item ADD COLUMN grid_type TEXT NOT NULL DEFAULT '0'"
+#define SQL_ALTER_ADD_WI_PLAN_QTY   "ALTER TABLE return_wave_item ADD COLUMN plan_qty INTEGER NOT NULL DEFAULT 0"
+#define SQL_ALTER_ADD_WI_SORTED_QTY "ALTER TABLE return_wave_item ADD COLUMN sorted_qty INTEGER NOT NULL DEFAULT 0"
+#define SQL_ALTER_ADD_WI_VOLU       "ALTER TABLE return_wave_item ADD COLUMN volu TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_WI_OBX_CODE   "ALTER TABLE return_wave_item ADD COLUMN obx_code TEXT NOT NULL DEFAULT ''"
+// ★ 2026-09-06 保险：return_wave 波次头旧库缺列迁移
+#define SQL_ALTER_ADD_RW_ORDER_QTY  "ALTER TABLE return_wave ADD COLUMN order_qty INTEGER NOT NULL DEFAULT 0"
+#define SQL_ALTER_ADD_RW_STATUS     "ALTER TABLE return_wave ADD COLUMN status INTEGER NOT NULL DEFAULT 0"
+#define SQL_ALTER_ADD_RW_CREATED_AT "ALTER TABLE return_wave ADD COLUMN created_at TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_RW_UPDATED_AT "ALTER TABLE return_wave ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 波次历史存档表（轻量证据，仅记录关键摘要，不复制全部数据）
 // ═══════════════════════════════════════════════════════════════════════════
@@ -577,6 +597,44 @@
 #define SQL_SELECT_LATEST_UNFINISHED_WAVE \
     "SELECT order_code, order_qty, status, created_at, updated_at FROM return_wave " \
     "WHERE status NOT IN (6, 8) ORDER BY updated_at DESC LIMIT 1"
+// 查询面板展示的波次列表：未完成波次（排除已取消=6和已完成=8）
+//   + 已完结/已取消但仍有未成功回传报文（H7/H8 status<>success）的波次（供手动补发）
+#define SQL_SELECT_ALL_UNFINISHED_WAVES \
+    "SELECT w.order_code, w.order_qty, w.status, w.created_at, w.updated_at FROM return_wave w " \
+    "WHERE w.status NOT IN (6, 8) " \
+    "   OR EXISTS (SELECT 1 FROM outbox_end e WHERE e.order_code = w.order_code AND e.status <> 'success') " \
+    "   OR EXISTS (SELECT 1 FROM outbox_fullbox f WHERE f.order_code = w.order_code AND f.status <> 'success') " \
+    "ORDER BY w.updated_at DESC"
+
+// ★ 2026-09-06 UI「波次数据记录」：全部已传输波次（含已完成/已取消）+ 已分拣/异常计数子查询
+//   （一次查询返回全量，避免 UI 逐行请求 DB）
+#define SQL_SELECT_ALL_WAVES \
+    "SELECT w.order_code, w.order_qty, w.status, w.created_at, w.updated_at, " \
+    "  (SELECT COUNT(DISTINCT s.barcode) FROM sorting_records s WHERE s.order_code = w.order_code) AS sorted_count, " \
+    "  (SELECT COUNT(DISTINCT e.epc) FROM exception_record e WHERE e.order_code = w.order_code) AS exc_count " \
+    "FROM return_wave w ORDER BY w.updated_at DESC"
+
+// ──── 波次恢复查询（上一波次任务恢复用）────
+// 查询某波次全部已分拣 EPC（barcode=EPC；sorting_records 有记录即已分拣）
+#define SQL_SELECT_SORTED_EPCS_BY_ORDER \
+    "SELECT DISTINCT barcode FROM sorting_records WHERE order_code = ? AND barcode <> ''"
+// 查询某波次全部异常 EPC
+#define SQL_SELECT_EXCEPTION_EPCS_BY_ORDER \
+    "SELECT DISTINCT epc FROM exception_record WHERE order_code = ? AND epc <> ''"
+// 查询某波次是否存在成功满箱回传（H7）
+#define SQL_SELECT_HAS_SUCCESS_FULLBOX \
+    "SELECT COUNT(*) FROM outbox_fullbox WHERE order_code = ? AND status = 'success'"
+// H4 原始报文单独落库（数据量大，独立表）
+#define SQL_CREATE_TABLE_WAVE_RAW \
+    "CREATE TABLE IF NOT EXISTS wave_raw (" \
+    "  order_code  TEXT PRIMARY KEY," \
+    "  raw_body    TEXT    NOT NULL DEFAULT ''," \
+    "  received_at TEXT    NOT NULL DEFAULT ''" \
+    ")"
+#define SQL_INSERT_WAVE_RAW \
+    "INSERT OR REPLACE INTO wave_raw (order_code, raw_body, received_at) VALUES (?, ?, ?)"
+#define SQL_SELECT_WAVE_RAW \
+    "SELECT raw_body FROM wave_raw WHERE order_code = ?"
 
 // ──── 波次明细操作 ────
 // 插入明细行
@@ -617,6 +675,23 @@
 // 查询格口当前活跃绑定
 #define SQL_SELECT_ACTIVE_BIND \
     "SELECT boxcode, order_code, bind_time FROM grid_box_bind WHERE grid_num = ? AND active = 1 LIMIT 1"
+// 查询全部活跃绑定（程序重启后加载内存/UI 用）
+#define SQL_SELECT_ALL_ACTIVE_BINDS \
+    "SELECT grid_num, boxcode, order_code, bind_time FROM grid_box_bind WHERE active = 1 ORDER BY grid_num ASC"
+// ★ 2026-09-06 按波次查询绑定快照：每格取该波次最近一条绑定（含已归档），供波次切换恢复格口绑定视图
+#define SQL_SELECT_BINDS_BY_ORDER \
+    "SELECT g1.grid_num, g1.boxcode FROM grid_box_bind g1 " \
+    "WHERE g1.order_code = ? AND g1.rowid = " \
+    "  (SELECT MAX(g2.rowid) FROM grid_box_bind g2 WHERE g2.grid_num = g1.grid_num AND g2.order_code = ?) " \
+    "ORDER BY CAST(g1.grid_num AS INTEGER) ASC"
+// ★ 2026-09-07 每格最近一次绑定记录（无论 active）：无当前绑定时"沿用上一波次绑定"用
+#define SQL_SELECT_LAST_KNOWN_BINDS \
+    "SELECT g1.grid_num, g1.boxcode FROM grid_box_bind g1 " \
+    "WHERE g1.rowid = (SELECT MAX(g2.rowid) FROM grid_box_bind g2 WHERE g2.grid_num = g1.grid_num) " \
+    "ORDER BY CAST(g1.grid_num AS INTEGER) ASC"
+// 归档全部活跃绑定（波次完结/取消时清空全部格口绑定）
+#define SQL_ARCHIVE_ALL_BINDS \
+    "UPDATE grid_box_bind SET active = 0, unbind_time = ? WHERE active = 1"
 
 // ──── 分拣流水操作 ────
 // 插入分拣流水
@@ -660,6 +735,12 @@
 // 按 msgId 查询单条 完结回传（H8 完结出站消息（S6 人工重发用））
 #define SQL_SELECT_OUTBOX_END_BY_MSGID \
     "SELECT msg_id, order_code, payload, retry_count FROM outbox_end WHERE msg_id = ?"
+// 查询某波次全部 满箱回传（H7）出站消息（含状态，供未完成波次面板展示/重传）
+#define SQL_SELECT_OUTBOX_FULLBOX_BY_ORDER_ALL \
+    "SELECT msg_id, order_code, boxcode, payload, status, retry_count, created_at FROM outbox_fullbox WHERE order_code = ? ORDER BY created_at DESC"
+// 查询某波次全部 完结回传（H8）出站消息（含状态，供未完成波次面板展示/重传）
+#define SQL_SELECT_OUTBOX_END_BY_ORDER_ALL \
+    "SELECT msg_id, order_code, payload, status, retry_count, created_at FROM outbox_end WHERE order_code = ? ORDER BY created_at DESC"
 
 // ──── 异常记录操作 ────
 // 插入异常记录

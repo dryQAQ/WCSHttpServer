@@ -18,6 +18,11 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QTextCursor>
+#include <QDialog>
+#include <QPlainTextEdit>
+#include <QDialogButtonBox>
+#include <QXmlStreamReader>
+#include <QFile>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -37,8 +42,10 @@ MainWindow::MainWindow(QWidget* parent)
     ConfigManager::instance()->load();
     applyConfig();
     setupConnections();
+    setupCore();   // ★ 2026-09-06 解耦：常驻实例 + 一次性配置/信号 + 设备(PLC/RFID)自动连接
 
-    appendLog("程序已启动，等待操作...");
+    appendLog("程序已启动：PLC/RFID 设备自动连接中；任务接收未开始——"
+              "点击「开始接收任务」后 WMS 才可下发任务");
 
     // ★ 创建日志刷新定时器（100ms，防高频场景下 QTextEdit 卡死）
     m_logFlushTimer = new QTimer(this);
@@ -46,14 +53,22 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_logFlushTimer, &QTimer::timeout, this, &MainWindow::flushLogBuffer);
     m_logFlushTimer->start();
 
-    //自动启动：
-    // onStartStop();
-    // 不自动启动，等待用户点击"开始启动"
+    // ★ 2026-09-06 解耦设计：设备(PLC/RFID)已在 setupCore() 自动连接；
+    //   任务接收默认不开始，等待用户点击"开始接收任务"（WMS 推送才被接受）
 }
 
 MainWindow::~MainWindow()
 {
-    if (m_pServer) { m_pServer->stop(); }
+    // ★ 2026-09-07 防"关闭必崩"：先断开 PLC/S7/RFID 等设备 → 本窗口的所有信号连接，
+    //   避免析构过程中子设备仍在 emit（queued/direct）打到本窗口已半析构的槽/lambda
+    //   （历史 dmp 栈：~HttpServer→PlcManager::stop 期间 → updatePlcPanel→QLabel::setText→abort）
+    if (m_pPlcMgr) m_pPlcMgr->disconnect(this);
+    if (m_pServer) m_pServer->disconnect(this);
+
+    // ★ 2026-09-06 解耦改造：HttpServer/HttpClient 常驻（parent=this），随本窗口析构自动销毁。
+    //   此处先停接收层（HTTP 停止 + 兜底落库，幂等），设备层(PLC/S7/RFID/解析线程)由
+    //   ~HttpServer 按 8 步析构日志收尾，保证退出顺序稳定、可排查。
+    if (m_pServer) { m_pServer->stopReceive(); }
     if (m_timerRefresh) m_timerRefresh->stop();
     if (m_logFlushTimer)
     {
@@ -69,8 +84,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         auto ret = QMessageBox::question(this, "确认退出",
             m_bRunning
-                ? QString("HTTP服务正在运行中，确定退出吗？\n（建议先点击\"结束任务\"完成完结回传）")
-                : QString("服务正在停止中（完结回传未完成），确定退出吗？\n（H8 未确认消息将在下次启动自动补传）"),
+                ? QString("正在接收任务，确定退出吗？\n（建议先点击\"结束任务\"完成完结回传；退出后设备连接将断开）")
+                : QString("正在停止接收（完结回传未完成），确定退出吗？\n（H8 未确认消息将在下次开始接收时自动补传）"),
             QMessageBox::Yes | QMessageBox::No);
         if (ret != QMessageBox::Yes)
         {
@@ -78,6 +93,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
             return;
         }
         // ★ 2026-09-02：退出前执行停止收尾（幂等），避免服务/线程随窗口析构残留
+        // ★ 2026-09-06 解耦：此处仅停接收层；设备层由 ~HttpServer 收尾
         doActualStop();
     }
     // ★ 2026-09-02 修复：未运行时关闭窗口不再调用 onStartStop()
@@ -94,13 +110,14 @@ void MainWindow::setupUI()
     mainLayout->setSpacing(2);
 
     // ═══════════════════════════════════════════
-    // 第一行：服务控制区
+    // 第一行：任务接收控制区（★ 2026-09-06 按钮只控制 WMS 任务接收；设备连接常驻）
     // ═══════════════════════════════════════════
-    QGroupBox* grpServer = new QGroupBox("服务控制");
+    QGroupBox* grpServer = new QGroupBox(QCoreApplication::translate("MainWindow", "任务接收控制"));
     QVBoxLayout* serverLayout = new QVBoxLayout(grpServer);
     serverLayout->setAlignment(Qt::AlignCenter);
 
-    m_btnStartStop = new QPushButton("开始启动");
+    // ★ 2026-09-06 解耦：按钮=控制「任务接收」开关；设备(PLC/RFID)连接随程序启动常驻
+    m_btnStartStop = new QPushButton(QCoreApplication::translate("MainWindow", "开始接收任务"));
     m_btnStartStop->setMinimumWidth(120);
     m_btnStartStop->setMinimumHeight(36);
     m_btnStartStop->setStyleSheet(
@@ -108,7 +125,7 @@ void MainWindow::setupUI()
         "border-radius: 4px; padding: 6px 16px; }"
         "QPushButton:hover { background-color: #45a049; }");
 
-    m_lblServerStatus = new QLabel(QCoreApplication::translate("MainWindow", "● 已停止"));
+    m_lblServerStatus = new QLabel(QCoreApplication::translate("MainWindow", "● 未接收任务"));
     m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
     m_lblServerStatus->setAlignment(Qt::AlignCenter);
 
@@ -139,10 +156,56 @@ void MainWindow::setupUI()
     serverLayout->addWidget(m_lblPort);
     serverLayout->addLayout(bindCountRow);
 
+    // ★ 2026-09-07 设置按钮：弹出 XML 配置编辑，保存即热生效（无需重启程序）
+    QPushButton* btnSettings = new QPushButton(QCoreApplication::translate("MainWindow", "设置配置"));
+    btnSettings->setMinimumHeight(30);
+    btnSettings->setStyleSheet(
+        "QPushButton { background-color: #607D8B; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 4px 12px; }"
+        "QPushButton:hover { background-color: #546E7A; }");
+    QHBoxLayout* settingsRow = new QHBoxLayout();
+    settingsRow->addStretch();
+    settingsRow->addWidget(btnSettings);
+    settingsRow->addStretch();
+    serverLayout->addLayout(settingsRow);
+    connect(btnSettings, &QPushButton::clicked, this, &MainWindow::openConfigEditor);
+
+    // ★ 2026-09-06 回传保障按钮（主工作流不受影响；点击=按当前目标波次主动补发对应报文）
+    //   目标波次：优先「波次数据记录」列表选中行；未选中时用当前内存波次
+    // ★ 2026-09-07 重传满箱切换(H7) 旁新增「格口号输入框」：填了格口号 → 手动满箱切换
+    //   （读取该格口当前分拣记录+容器号，按 H7 立即上传）；不填 → 原有重传行为
+    QHBoxLayout* resendRow = new QHBoxLayout();
+    m_btnResendH7 = new QPushButton(QCoreApplication::translate("MainWindow", "重传满箱切换(H7)"));
+    m_btnResendH8 = new QPushButton(QCoreApplication::translate("MainWindow", "重传任务完结(H8)"));
+    m_editFullboxGrid = new QLineEdit();
+    m_editFullboxGrid->setPlaceholderText(QCoreApplication::translate("MainWindow", "格口号(手动满箱)"));
+    m_editFullboxGrid->setFixedWidth(130);
+    m_editFullboxGrid->setStyleSheet("font-size: 12px; padding: 3px 6px;");
+    m_btnResendH7->setMinimumHeight(30);
+    m_btnResendH8->setMinimumHeight(30);
+    m_btnResendH7->setStyleSheet(
+        "QPushButton { background-color: #FF9800; color: white; font-size: 12px; font-weight: bold; "
+        "border-radius: 4px; padding: 4px 12px; }"
+        "QPushButton:hover { background-color: #F57C00; }");
+    m_btnResendH8->setStyleSheet(
+        "QPushButton { background-color: #8E24AA; color: white; font-size: 12px; font-weight: bold; "
+        "border-radius: 4px; padding: 4px 12px; }"
+        "QPushButton:hover { background-color: #7B1FA2; }");
+    resendRow->addWidget(m_btnResendH7);
+    resendRow->addWidget(m_editFullboxGrid);
+    resendRow->addWidget(m_btnResendH8);
+    resendRow->addStretch();
+    serverLayout->addLayout(resendRow);
+
+    // ★ 重传目标说明（选中行优先，否则当前内存波次——在 onResendSelectedH7/H8 中解析；
+    //   格口号输入框非空时 H7 按钮执行手动满箱切换）
+    connect(m_btnResendH7, &QPushButton::clicked, this, &MainWindow::onResendSelectedH7);
+    connect(m_btnResendH8, &QPushButton::clicked, this, &MainWindow::onResendSelectedH8);
+
     // ═══════════════════════════════════════════
-    // 第二行：PLC 综合状态面板
+    // 第二行：设备状态面板（PLC TCP / S7 / RFID，★ 2026-09-06 设备随程序启动常驻）
     // ═══════════════════════════════════════════
-    QGroupBox* grpPlc = new QGroupBox(QCoreApplication::translate("MainWindow", "PLC 综合状态"));
+    QGroupBox* grpPlc = new QGroupBox(QCoreApplication::translate("MainWindow", "设备状态 (PLC/RFID)"));
     QVBoxLayout* plcOuterLayout = new QVBoxLayout(grpPlc);
     plcOuterLayout->setSpacing(4);
 
@@ -206,6 +269,24 @@ void MainWindow::setupUI()
     s7Row2->addWidget(m_lblS7LockGrids);
     s7Row2->addStretch();
 
+    // ── 分隔线 ──
+    QFrame* lineRfid = new QFrame();
+    lineRfid->setFrameShape(QFrame::HLine);
+    lineRfid->setFrameShadow(QFrame::Sunken);
+
+    // ── RFID 连接状态（★ 2026-09-06 WCS作客户端主动连接 RFID 服务端，随程序启动常驻）──
+    QHBoxLayout* rfidRow = new QHBoxLayout();
+    m_lblRfidStatus = new QLabel(QCoreApplication::translate("MainWindow", "RFID: 连接中..."));
+    m_lblRfidStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
+    ConfigManager* rfidCfg = ConfigManager::instance();
+    m_lblRfidIp = new QLabel(QString("%1:%2")
+        .arg(rfidCfg->config().rfidPushServerIp)
+        .arg(rfidCfg->config().rfidPushServerPort));
+    m_lblRfidIp->setStyleSheet("font-size: 13px; color: #888;");
+    rfidRow->addWidget(m_lblRfidStatus);
+    rfidRow->addWidget(m_lblRfidIp);
+    rfidRow->addStretch();
+
     // ── 最近数据 ──
     QHBoxLayout* lastDataRow1 = new QHBoxLayout();
     m_lblLastSendCode = new QLabel(QCoreApplication::translate("MainWindow", "最近发送: --"));
@@ -241,6 +322,8 @@ void MainWindow::setupUI()
     plcOuterLayout->addWidget(lineS7);
     plcOuterLayout->addLayout(s7Row1);
     plcOuterLayout->addLayout(s7Row2);
+    plcOuterLayout->addWidget(lineRfid);
+    plcOuterLayout->addLayout(rfidRow);
     plcOuterLayout->addWidget(line1);
     plcOuterLayout->addLayout(lastDataRow1);
     plcOuterLayout->addLayout(lastDataRow2);
@@ -269,7 +352,6 @@ void MainWindow::setupUI()
     m_lblSorted      = makeValue();
     m_lblException   = makeValue();
     m_lblSumLocation = makeValue();
-    m_lblElapsed     = makeValue();
     m_lblLastWave    = makeValue();
 
     int row = 0;
@@ -279,7 +361,6 @@ void MainWindow::setupUI()
     waveLayout->addWidget(makeLabel("已分拣:"),    row, 0); waveLayout->addWidget(m_lblSorted,      row++, 1);
     waveLayout->addWidget(makeLabel("异常:"),      row, 0); waveLayout->addWidget(m_lblException,   row++, 1);
     waveLayout->addWidget(makeLabel("分拣件数:"),    row, 0); waveLayout->addWidget(m_lblSumLocation, row++, 1);
-    waveLayout->addWidget(makeLabel("耗时:"),      row, 0); waveLayout->addWidget(m_lblElapsed,     row++, 1);
     waveLayout->addWidget(makeLabel("上波次:"),    row, 0); waveLayout->addWidget(m_lblLastWave,    row++, 1);
 
     // ★ 开始分拣按钮（始终可见，到达可开始分拣状态时激活，否则灰色禁用）
@@ -305,9 +386,18 @@ void MainWindow::setupUI()
         "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 16px; }"
         "QPushButton:hover { background-color: #1976D2; }");
-    QLabel* bindHint = new QLabel("绿色=已绑定  灰色=未绑定");
+    // ★ 2026-09-07 清空格口容器绑定（人工重置：内存清空 + DB 归档留史 + 恢复禁用格口）
+    QPushButton* btnClearBinds = new QPushButton("清空格口绑定");
+    btnClearBinds->setMinimumHeight(30);
+    btnClearBinds->setStyleSheet(
+        "QPushButton { background-color: #E53935; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #C62828; }");
+    btnClearBinds->setToolTip(QString::fromUtf8("清空全部格口当前容器绑定（恢复初始状态）；历史记录归档保留在数据库，可追溯/可沿用"));
+    QLabel* bindHint = new QLabel("绿色=已绑定  灰色=未绑定  黄色=满箱锁格");
     bindHint->setStyleSheet("font-size: 12px; color: #888;");
     bindBtnRow->addWidget(btnRefreshBind);
+    bindBtnRow->addWidget(btnClearBinds);
     bindBtnRow->addWidget(bindHint);
     bindBtnRow->addStretch();
 
@@ -320,6 +410,7 @@ void MainWindow::setupUI()
     bindBtnRow->addWidget(m_lblUnboundCount);
 
     connect(btnRefreshBind, &QPushButton::clicked, this, &MainWindow::onRefreshBindings);
+    connect(btnClearBinds,  &QPushButton::clicked, this, &MainWindow::onClearAllGridBinds);
 
     // 可滚动区域——容纳所有格口绑定指示器
     QScrollArea* scrollBinding = new QScrollArea();
@@ -386,6 +477,59 @@ void MainWindow::setupUI()
     scrollBinding->setWidget(m_bindingWidget);
     bindOuterLayout->addLayout(bindBtnRow);
     bindOuterLayout->addWidget(scrollBinding);
+
+    // ═══════════════════════════════════════════
+    // ★ 2026-09-06 波次数据记录面板：全部已传输波次
+    //   刷新（手动） | 切换选中波次（恢复进度继续/终态载入查看） | 新任务（保留当前波次进度，清空待接收）
+    //   H7/H8 重传按钮位于「任务接收控制」区（主工作流保障，不随本面板操作）
+    // ═══════════════════════════════════════════
+    QGroupBox* grpUnfinished = new QGroupBox(QCoreApplication::translate("MainWindow", "波次数据记录（全部已传输波次）"));
+    QVBoxLayout* unfinishedLayout = new QVBoxLayout(grpUnfinished);
+
+    QHBoxLayout* unfinishedBtnRow = new QHBoxLayout();
+    m_btnRefreshWaves = new QPushButton(QCoreApplication::translate("MainWindow", "刷新"));
+    m_btnResumeWave   = new QPushButton(QCoreApplication::translate("MainWindow", "切换选中波次"));
+    m_btnNewTask      = new QPushButton(QCoreApplication::translate("MainWindow", "新任务"));
+    m_btnRefreshWaves->setMinimumHeight(30);
+    m_btnResumeWave->setMinimumHeight(30);
+    m_btnNewTask->setMinimumHeight(30);
+    m_btnRefreshWaves->setStyleSheet(
+        "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #1976D2; }");
+    m_btnResumeWave->setStyleSheet(
+        "QPushButton { background-color: #4CAF50; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #388E3C; }");
+    m_btnNewTask->setStyleSheet(
+        "QPushButton { background-color: #FF5722; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #E64A19; }");
+    unfinishedBtnRow->addWidget(m_btnRefreshWaves);
+    unfinishedBtnRow->addWidget(m_btnResumeWave);
+    unfinishedBtnRow->addWidget(m_btnNewTask);
+    unfinishedBtnRow->addStretch();
+
+    m_tblWaveRecords = new QTableWidget();
+    m_tblWaveRecords->setColumnCount(8);
+    m_tblWaveRecords->setHorizontalHeaderLabels(
+        QStringList() << "波次号" << "状态" << "件数" << "已分拣" << "异常" << "H7满箱" << "H8完结" << "更新时间");
+    m_tblWaveRecords->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_tblWaveRecords->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_tblWaveRecords->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_tblWaveRecords->horizontalHeader()->setStretchLastSection(true);
+    m_tblWaveRecords->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_tblWaveRecords->setMinimumHeight(200);
+    // ★ 双击行 = 切换选中波次
+    connect(m_tblWaveRecords, &QTableWidget::cellDoubleClicked, this,
+        [this](int, int) { onResumeSelectedWave(); });
+
+    unfinishedLayout->addLayout(unfinishedBtnRow);
+    unfinishedLayout->addWidget(m_tblWaveRecords);
+
+    connect(m_btnRefreshWaves, &QPushButton::clicked, this, &MainWindow::onRefreshWaveRecords);
+    connect(m_btnResumeWave,   &QPushButton::clicked, this, &MainWindow::onResumeSelectedWave);
+    connect(m_btnNewTask,      &QPushButton::clicked, this, &MainWindow::onStartNewWaveTask);
 
     // ═══════════════════════════════════════════
     // ★ 分拣记录查询面板
@@ -536,7 +680,12 @@ void MainWindow::setupUI()
     rowMid->addWidget(grpLog, 1);
     mainLayout->addLayout(rowMid, 1); // 占剩余垂直空间
 
-    mainLayout->addWidget(grpBinding);
+    // 容器绑定状态 + 未完成波次重传面板（水平并排）
+    QHBoxLayout* rowBinding = new QHBoxLayout();
+    rowBinding->addWidget(grpBinding, 1);
+    rowBinding->addWidget(grpUnfinished, 1);
+    mainLayout->addLayout(rowBinding);
+
     mainLayout->addWidget(grpQuery);  // ★ 分拣记录查询面板
 }
 
@@ -567,9 +716,491 @@ void MainWindow::setupConnections()
 void MainWindow::applyConfig()
 {
     AppConfig& cfg = ConfigManager::instance()->config();
+    m_runtimeWmsPort = cfg.wmsListenPort;   // ★ 启动时的监听端口（配置热更新提示用）
     m_lblPort->setText(QString("端口: %1").arg(cfg.wmsListenPort));
     if (m_spinBindCount)
         m_spinBindCount->setValue(cfg.expectedBindCount);
+}
+
+// ============================================================================
+// ★ 2026-09-07 应用"可热生效"配置项（保存配置后调用，无需重启）：
+//   回传 URL/AppKey/method、环境开关、HTTP超时、RFID查询地址/鉴权、RFID心跳开关/间隔、
+//   波次超时/重试、期望绑定数。
+//   端口/PLC地址/线程池/格口显示名等需重启生效（界面已提示）。
+// ============================================================================
+void MainWindow::applyLiveConfig()
+{
+    AppConfig& cfg = ConfigManager::instance()->config();
+
+    if (m_pClient)
+    {
+        m_pClient->setUrl(cfg.activeFeedbackUrl());
+        m_pClient->setEndUrl(cfg.activeEndFeedbackUrl());
+        m_pClient->setAppkey(cfg.activeAppkey());
+        m_pClient->setFeedbackMethod(cfg.feedbackMethod);
+        m_pClient->setEndFeedbackMethod(cfg.feedbackEndMethod);
+        m_pClient->setTimeout(cfg.httpTimeoutMs);
+        m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);
+        m_pClient->setRfidAppkey(cfg.rfidAppkey);
+    }
+    if (m_pServer)
+    {
+        if (m_pServer->waveManager())
+        {
+            m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
+            m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
+        }
+        m_pServer->setExpectedBindCount(cfg.expectedBindCount);
+        if (m_pServer->rfidPush())
+        {
+            m_pServer->rfidPush()->setHeartbeatEnabled(cfg.rfidHeartbeatEnable != 0);
+            m_pServer->rfidPush()->setHeartbeatIntervalMs(cfg.rfidHeartbeatIntervalMs);
+        }
+    }
+    if (m_spinBindCount)
+        m_spinBindCount->setValue(cfg.expectedBindCount);
+
+    // 端口类展示：实际监听未变时明确标注，避免误导
+    if (m_runtimeWmsPort > 0 && cfg.wmsListenPort != m_runtimeWmsPort)
+    {
+        m_lblPort->setText(QString("端口: %1 (监听仍 %2，重启生效)")
+            .arg(cfg.wmsListenPort).arg(m_runtimeWmsPort));
+    }
+    else
+    {
+        m_lblPort->setText(QString("端口: %1 %2")
+            .arg(cfg.wmsListenPort)
+            .arg(cfg.useTestEnv ? QString::fromUtf8("(测试)") : QString::fromUtf8("(正式)")));
+    }
+
+    WCS_LOG_INFO("配置热生效应用完成（回传URL/AppKey/method、环境、HTTP超时、RFID查询/心跳、波次参数、期望绑定数）");
+    appendLog("[配置] 热生效应用完成：回传 URL/AppKey/method、环境开关、HTTP超时、RFID查询/心跳、"
+              "波次超时/重试、期望绑定数 已按新配置更新（端口/IP/线程池类需重启生效）");
+}
+
+// ============================================================================
+// ★ 2026-09-07 设置按钮：弹出 XML 配置编辑对话框
+//   保存：XML 校验 → 备份旧文件(.bak_时间) → 写盘 → 重新加载 → 热生效可热更项
+// ============================================================================
+void MainWindow::openConfigEditor()
+{
+    QString cfgPath = QCoreApplication::applicationDirPath() + "/config/http_server.xml";
+
+    QFile f(cfgPath);
+    if (!f.open(QIODevice::ReadOnly))
+    {
+        QMessageBox::warning(this, QString::fromUtf8("设置配置"),
+            QString::fromUtf8("无法读取配置文件：\n%1").arg(cfgPath));
+        return;
+    }
+    QString xmlText = QString::fromUtf8(f.readAll());
+    f.close();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QString::fromUtf8("配置编辑（保存后热生效，无需重启）"));
+    dlg.resize(960, 700);
+
+    QVBoxLayout* lay = new QVBoxLayout(&dlg);
+    QLabel* tip = new QLabel(QString::fromUtf8(
+        "配置文件：%1\n\n"
+        "保存后立即生效：回传URL/AppKey/method、环境开关(useTestEnv)、HTTP超时、RFID查询地址/鉴权、\n"
+        "RFID心跳开关/间隔、波次超时、重试次数、期望绑定数量。\n"
+        "需重启生效：WMS监听端口、PLC地址/端口、RFID服务端IP/端口、线程池大小、格口显示名。\n"
+        "编辑窗口打开期间请勿同时执行会写配置的操作（如绑定变更），以免被覆盖。")
+        .arg(cfgPath));
+    tip->setWordWrap(true);
+    tip->setStyleSheet("font-size: 12px; color: #555;");
+
+    QPlainTextEdit* ed = new QPlainTextEdit();
+    ed->setPlainText(xmlText);
+    ed->setLineWrapMode(QPlainTextEdit::NoWrap);
+    ed->setStyleSheet("QPlainTextEdit { font-family: Consolas,'Microsoft YaHei'; font-size: 13px; }");
+
+    QDialogButtonBox* box = new QDialogButtonBox(
+        QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+    box->button(QDialogButtonBox::Save)->setText(QString::fromUtf8("保存并生效"));
+    box->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消"));
+
+    lay->addWidget(tip);
+    lay->addWidget(ed, 1);
+    lay->addWidget(box);
+
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(box, &QDialogButtonBox::accepted, &dlg, [&dlg, &ed, &cfgPath, this]() {
+        QString newText = ed->toPlainText();
+
+        // ── 1. XML 语法校验 ──
+        {
+            QXmlStreamReader xr(newText);
+            while (!xr.atEnd())
+            {
+                xr.readNext();
+                if (xr.hasError())
+                {
+                    QMessageBox::warning(&dlg, QString::fromUtf8("保存失败"),
+                        QString::fromUtf8("XML 格式错误：%1（第 %2 行）\n请修正后再保存。")
+                            .arg(xr.errorString()).arg(xr.lineNumber()));
+                    return;
+                }
+            }
+        }
+
+        // ── 2. 备份旧配置 ──
+        {
+            QString bak = cfgPath + ".bak_" +
+                QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+            QFile::copy(cfgPath, bak);
+        }
+
+        // ── 3. 写盘 ──
+        QFile out(cfgPath);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        {
+            QMessageBox::warning(&dlg, QString::fromUtf8("保存失败"),
+                QString::fromUtf8("无法写入配置文件：\n%1").arg(cfgPath));
+            return;
+        }
+        out.write(newText.toUtf8());
+        out.close();
+
+        // ── 4. 重新加载 + 热生效 ──
+        bool loadOk = ConfigManager::instance()->load();
+        if (!loadOk)
+        {
+            QMessageBox::warning(&dlg, QString::fromUtf8("配置加载失败"),
+                QString::fromUtf8("文件已保存，但重新解析失败（%1）。\n请检查内容或恢复备份文件。").arg(cfgPath));
+            return;
+        }
+        applyLiveConfig();
+        appendLog(QString("[配置] 已保存并重新加载：%1（旧文件已备份）").arg(cfgPath));
+
+        QMessageBox::information(&dlg, QString::fromUtf8("已保存并生效"),
+            QString::fromUtf8("配置已保存并热生效。\n\n"
+                              "立即生效：回传URL/AppKey/method、环境开关、HTTP超时、RFID查询/心跳、波次参数等。\n"
+                              "如需改动 监听端口/PLC地址/RFID地址/线程池 等项，请重启软件生效。"));
+        dlg.accept();
+    });
+
+    dlg.exec();
+}
+
+// ============================================================================
+// ★ 2026-09-06 设备连接与任务接收解耦改造：
+//   setupCore() —— 程序启动时执行一次（构造函数末尾调用）：
+//     ① 创建常驻 HttpServer/HttpClient（parent=this，随程序退出才析构，不再逐次启停）；
+//     ② 一次性注入配置 + 连接全部信号（实例常驻，信号只连一次）；
+//     ③ 自动启动设备层（PLC TCP 监听 / S7 锁格 / RFID 客户端 —— 常驻，与按钮无关）。
+//   此后按钮仅控制「接收层」：开始接收任务=startReceive(port)、结束任务收尾=stopReceive()。
+// ============================================================================
+void MainWindow::setupCore()
+{
+    m_stopPhase = StopNone;
+
+    // ★ 常驻实例：HttpServer 构造即打开数据库、建线程池/解析线程等（只此一次）
+    m_pServer = new HttpServer(this);
+    m_pClient = new HttpClient(this);
+    m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用（生命周期由常驻实例管理）
+
+    AppConfig& cfg = ConfigManager::instance()->config();
+
+    // ★ 从配置文件恢复容器绑定（跨会话保留；结束任务后由 WMS 新一轮波次重新下发）
+    m_pServer->loadContainerBindings(cfg.containerBindings);
+    m_bindingDirty = true;  // ★ 初始加载后标记为脏，开始接收后首次刷新时更新面板
+
+    // ★ 设置期望绑定数量（从配置文件加载，默认66）
+    m_pServer->setExpectedBindCount(cfg.expectedBindCount);
+
+    // ★ 回传客户端配置（H7/H8 回传 + RFID SKU-EPC 绑定查询）
+    m_pClient->setUrl(cfg.activeFeedbackUrl());
+    m_pClient->setEndUrl(cfg.activeEndFeedbackUrl());  // ★ 完结回传专用 URL
+    m_pClient->setAppkey(cfg.activeAppkey());
+    m_pClient->setFeedbackMethod(cfg.feedbackMethod);        // ★ 满箱/锁格/波次完成回传 method
+    m_pClient->setEndFeedbackMethod(cfg.feedbackEndMethod);  // ★ 完结回传(H8) method
+    m_pClient->setTimeout(cfg.httpTimeoutMs);
+    m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);  // ★ RFID SKU-EPC 绑定查询 URL
+    m_pClient->setRfidAppkey(cfg.rfidAppkey);      // ★ RFID 查询鉴权 AppKey
+    m_pServer->setHttpClient(m_pClient);           // ★ 设置 HttpClient 供 RFID 查询使用
+
+    // ★ 从配置文件加载 API 路由路径
+    m_pServer->setApiInsertWaveInfo(cfg.apiInsertWaveInfo);
+    m_pServer->setApiBindingLatticePort(cfg.apiBindingLatticePort);
+    m_pServer->setApiInsertWaveIn(cfg.apiInsertWaveIn);
+
+    m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
+    m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
+
+    // ══════════════════════════════════════════════════════════
+    // ★ 一次性信号连接（实例常驻，以下 connect 均只执行一次）
+    // ══════════════════════════════════════════════════════════
+
+    // ★ 波次完成回传 → WMS（HttpServer 异步入池构建 JSON，HttpClient 发送）
+    connect(m_pServer, &HttpServer::waveCompleteReportReady, this,
+        [this](const QJsonObject& reportJson) {
+            if (!m_pClient) return;
+            QString orderCode = reportJson["head"].toObject()["orderCode"].toString();
+            appendLog(QString("波次完成回传 orderCode=%1").arg(orderCode));
+            m_pClient->sendGenericFeedback(reportJson, orderCode);
+        });
+
+    // ★ 回传结果处理：成功→已完成，失败→异常（避免状态卡在"回传中"）
+    // S5 更新：区分完结回传（H8）和满箱回传（H7）
+    connect(m_pClient, &HttpClient::reportResult, this,
+        [this](const QString& orderCode, bool success, const QString& body) {
+            Q_UNUSED(body);
+
+            // ★ S5: 满箱回传（H7，context 以 "fullbox_" 开头）
+            if (orderCode.startsWith("fullbox_"))
+            {
+                QString msgId = orderCode.mid(8); // 去掉 "fullbox_" 前缀
+                if (m_pServer)
+                {
+                    m_pServer->onFullboxReplyFinished(msgId, success, body);
+                }
+                appendLog(QString("[满箱回传] 回传结果 msgId=%1 success=%2")
+                    .arg(msgId).arg(success));
+                return;
+            }
+
+            // ★锁格回传（context 以 "lockGrid_" 开头）
+            if (orderCode.startsWith("lockGrid_"))
+            {
+                appendLog(QString("[锁格] 回传结果 grid=%1 success=%2")
+                    .arg(orderCode.mid(9)).arg(success));
+                return;
+            }
+
+            // ★完结回传 Outbox（H8，context 以 "end_" 开头）
+            if (orderCode.startsWith("end_"))
+            {
+                QString msgId = orderCode.mid(4); // 去掉 "end_" 前缀
+                if (m_pServer)
+                {
+                    m_pServer->onEndReplyFinished(msgId, success, body);
+                }
+                appendLog(QString("[完结回传] 回传结果 success=%1")
+                    .arg(success));
+                return;
+            }
+
+            // ★ 未完成波次面板手动重传（轻量，只更新 outbox 状态，不动波次状态/绑定）
+            if (orderCode.startsWith("resendFullbox_"))
+            {
+                QString msgId = orderCode.mid(QString("resendFullbox_").length());
+                if (m_pServer) m_pServer->onOutboxResendReply(msgId, true, success);
+                appendLog(QString("[未完成波次] H7重传结果 success=%1").arg(success));
+                return;
+            }
+            if (orderCode.startsWith("resendEnd_"))
+            {
+                QString msgId = orderCode.mid(QString("resendEnd_").length());
+                if (m_pServer) m_pServer->onOutboxResendReply(msgId, false, success);
+                appendLog(QString("[未完成波次] H8重传结果 success=%1").arg(success));
+                return;
+            }
+
+            // ★ 波次完成回传（H7 锁格回传，原有逻辑）— 仅记录结果，不改变波次状态
+            //   状态迁移仅由完结回传（H8，以 "end_" 为前缀）处理
+            WaveManager* wm = m_pServer ? m_pServer->waveManager() : nullptr;
+            if (!wm) return;
+            if (success)
+            {
+                appendLog(QString("波次完成回传成功 orderCode=%1").arg(orderCode));
+                // ★ 锁格回传（H7）成功不改变波次状态，状态由完结回传（H8）管理
+            }
+            else
+            {
+                appendLog(QString("波次完成回传失败 orderCode=%1（仍可手动重试）").arg(orderCode), true);
+                // ★ 锁格回传（H7）失败不改变波次状态，状态由完结回传（H8）管理
+            }
+        });
+
+    // ★ 锁格回传 → WMS（HttpServer 构建 JSON，HttpClient 发送）
+    connect(m_pServer, &HttpServer::gridLockReportReady, this,
+        [this](const QJsonObject& reportJson) {
+            if (!m_pClient) return;
+            QString grid = reportJson["head"].toObject()["detailList"].toArray().first()
+                .toObject()["targetLocation"].toString();
+            appendLog(QString("[锁格] 发送回传 grid=%1").arg(grid));
+            m_pClient->sendGenericFeedback(reportJson, "lockGrid_" + grid);
+        });
+
+    // ★ S5 满箱回传 → WMS（H7 满箱同步，T-S5-04）
+    // fullboxReportReady 携带 msgId，HttpClient 返回后路由到 onFullboxReplyFinished
+    connect(m_pServer, &HttpServer::fullboxReportReady, this,
+        [this](const QJsonObject& payload, const QString& msgId) {
+            if (!m_pClient) return;
+            QString orderCode = payload["head"].toObject()["orderCode"].toString();
+            appendLog(QString("[满箱回传] 发送回传 order=%1").arg(orderCode));
+            m_pClient->sendGenericFeedback(payload, "fullbox_" + msgId);
+        });
+
+    // ★ S6 完结回传 → WMS（H8 波次完结通知，T-S6-03）
+    // endReportReady 携带 msgId，HttpClient 返回后路由到 onEndReplyFinished
+    connect(m_pServer, &HttpServer::endReportReady, this,
+        [this](const QJsonObject& payload, const QString& msgId) {
+            if (!m_pClient) return;
+            QString orderCode = payload["head"].toObject()["orderCode"].toString();
+            appendLog(QString("[完结回传] 发送回传 order=%1").arg(orderCode));
+            m_pClient->sendEndFeedback(payload, "end_" + msgId);  // ★ H8 使用专用完结回传 URL
+        });
+
+    // ★ 未完成波次面板：手动重传 H7/H8（走 HttpClient，结果经 reportResult 的 resend* 前缀路由）
+    connect(m_pServer, &HttpServer::outboxResendReady, this,
+        [this](const QString& kind, const QJsonObject& payload, const QString& msgId) {
+            if (!m_pClient) return;
+            if (kind == "fullbox")
+                m_pClient->sendGenericFeedback(payload, "resendFullbox_" + msgId);
+            else if (kind == "end")
+                m_pClient->sendEndFeedback(payload, "resendEnd_" + msgId);
+        });
+
+    // ★ 波次记录面板：重传结果回执 → 日志 + 刷新列表（事件反馈，非轮询）
+    connect(m_pServer, &HttpServer::outboxResendResult, this,
+        [this](const QString& orderCode, const QString& kind, const QString& msgId, bool success) {
+            Q_UNUSED(msgId);
+            appendLog(QString("[重传] %1 补发%2 order=%3")
+                .arg(kind == "fullbox" ? "满箱切换(H7)" : "任务完结(H8)")
+                .arg(success ? "成功" : "失败")
+                .arg(orderCode));
+            onRefreshWaveRecords();
+        });
+
+    // ★ 上一波次恢复完成 → 刷新波次面板
+    connect(m_pServer, &HttpServer::waveResumed, this,
+        [this](const QString& orderCode, int status) {
+            Q_UNUSED(orderCode);
+            updateWavePanel();
+            appendLog(QString("[恢复] 波次面板已刷新 状态=%1")
+                .arg(WaveSnapshot::statusToString(status)));
+        });
+
+    // ★ H8完结回传处理完毕 → 停止接收收尾
+    //   ★ 2026-09-06 解耦：Outbox(H8)补传跨接收会话继续执行（设备/实例常驻），
+    //     回传的最终结果可能在「下一轮开始接收」之后才到达——仅当本窗口正处于
+    //     StopEnding（点击"结束任务"后等待中）时才停止接收，防止上一会话遗留回传
+    //     结果误停新一轮接收；用户取消/超时路径由 doActualStop() 幂等兜底。
+    connect(m_pServer, &HttpServer::endReportFinished, this, [this]() {
+        if (m_stopPhase == StopEnding)
+        {
+            appendLog("[完结回传] 回传流程结束，正在停止任务接收...");
+            doActualStop();
+        }
+        else
+        {
+            appendLog("[完结回传] 后台补传已结束（当前不在停止等待流程，保持接收状态不变）");
+        }
+    });
+
+    // ★ 连接HttpServer日志信号到UI日志区
+    connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
+
+    // ★ 容器绑定变更 → 即时刷新 UI + 持久化到 XML
+    connect(m_pServer, &HttpServer::bindingUpdated, this, [this]() {
+        m_bindingDirty = true;  // ★ 标记脏数据，下次定时刷新时更新
+        updateBindingPanel();
+        // 同步到配置并保存
+        AppConfig& c = ConfigManager::instance()->config();
+        c.containerBindings = m_pServer->getContainerBindings();
+        ConfigManager::instance()->save();
+    });
+
+    // ★ 连接PLC状态信号到UI（全部使用 QueuedConnection，确保跨线程安全）
+    if (m_pPlcMgr)
+    {
+        connect(m_pPlcMgr, &PlcManager::plcConnected, this, [this](const QString& ip, int port) {
+            updatePlcPanel();
+            appendLog(QString("[PLC] TCP连接 %1:%2").arg(ip).arg(port));
+        }, Qt::QueuedConnection);
+        connect(m_pPlcMgr, &PlcManager::plcDisconnected, this, [this](const QString& ip, int port) {
+            updatePlcPanel();
+            appendLog(QString("[PLC] TCP断开 %1:%2").arg(ip).arg(port), true);
+        }, Qt::QueuedConnection);
+
+        // ★ 业务信号：批量处理落格反馈计数
+        //    不再逐条 connect plcFeedbackReceived，改用批量信号
+        connect(m_pPlcMgr, &PlcManager::plcFeedbackBusinessBatch, this,
+            [this](const QVector<PlcFeedbackEntry>& entries) {
+                m_plcFeedbackCount.fetchAndAddRelaxed(entries.size());
+            }, Qt::QueuedConnection);
+
+        // ★ UI日志信号：批量处理，减少高频场景下的UI更新压力
+        connect(m_pPlcMgr, &PlcManager::plcFeedbackBatch, this,
+            [this](const QVector<PlcFeedbackEntry>& entries) {
+                if (entries.isEmpty()) return;
+                if (entries.size() == 1)
+                {
+                    // 单条：直接显示
+                    const auto& e = entries.first();
+                    appendLog(QString("[PLC] 反馈落格 code=%1 → grid=%2 car=%3")
+                        .arg(e.code).arg(e.grid).arg(e.car));
+                }
+                else
+                {
+                    // 多条：汇总显示前3条 + 共N条
+                    QString summary;
+                    int showCount = qMin(entries.size(), FEEDBACK_DISPLAY_MAX);
+                    for (int i = 0; i < showCount; ++i)
+                    {
+                        const auto& e = entries[i];
+                        if (i > 0) summary += "\n";
+                        summary += QString("  code=%1 → grid=%2 car=%3")
+                            .arg(e.code).arg(e.grid).arg(e.car);
+                    }
+                    if (entries.size() > FEEDBACK_DISPLAY_MAX)
+                        summary += QString("\n  ... 共 %1 条").arg(entries.size());
+                    appendLog(QString("[PLC] 批量反馈 (%1条):\n%2").arg(entries.size()).arg(summary));
+                }
+            }, Qt::QueuedConnection);
+
+        connect(m_pPlcMgr, &PlcManager::plcBatchStart, this, [this]() {
+            appendLog("[PLC] 批次开始");
+        }, Qt::QueuedConnection);
+        connect(m_pPlcMgr, &PlcManager::plcBatchStop, this, [this]() {
+            appendLog("[PLC] 批次停止");
+        }, Qt::QueuedConnection);
+        // ★ 发送数据通知
+        connect(m_pPlcMgr, &PlcManager::plcSendInfo, this,
+            [this](const QString& code, const QString& grids, bool success) {
+                QString status = success ? "✓" : "✗";
+                appendLog(QString("[PLC] %1 code=%2 grids=%3").arg(status).arg(code).arg(grids));
+            }, Qt::QueuedConnection);
+
+        // ★ S7 信号（全部使用 QueuedConnection）
+        connect(m_pPlcMgr, &PlcManager::s7Connected, this, [this](const QString& ip) {
+            updatePlcPanel();
+            appendLog(QString("[S7] 连接成功 %1").arg(ip));
+        }, Qt::QueuedConnection);
+        connect(m_pPlcMgr, &PlcManager::s7Disconnected, this, [this](const QString& ip) {
+            updatePlcPanel();
+            appendLog(QString("[S7] 断开 %1").arg(ip), true);
+        }, Qt::QueuedConnection);
+        connect(m_pPlcMgr, &PlcManager::s7Error, this, [this](const QString& errMsg) {
+            appendLog(QString("[S7] 错误: %1").arg(errMsg), true);
+        }, Qt::QueuedConnection);
+        connect(m_pPlcMgr, &PlcManager::gridLocked, this, [this](const QString& grid) {
+            updatePlcPanel();
+            updateBindingPanel();  // ★ 锁格→黄色
+            appendLog(QString("[S7] 锁格 grid=%1").arg(grid), true);
+        }, Qt::QueuedConnection);
+        connect(m_pPlcMgr, &PlcManager::gridUnlocked, this, [this](const QString& grid) {
+            updatePlcPanel();
+            updateBindingPanel();  // ★ 解锁→恢复绿/红
+            appendLog(QString("[S7] 解锁 grid=%1").arg(grid));
+        }, Qt::QueuedConnection);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ★ 设备层自动连接（程序启动即连，常驻；失败仅日志/UI提示，不阻断）
+    // ══════════════════════════════════════════════════════════
+    m_pServer->startDevices();
+
+    // ★ 启动后清理过期数据库记录（一次性；日常清理由数据库内部定时器负责）
+    if (m_pServer->sortingDb())
+        m_pServer->sortingDb()->cleanupOldRecords(SORTING_DB_RETAIN_DAYS);
+
+    // ★ 初始化完成（设备连接状态由每秒定时器刷新显示；波次记录列表初始填充一次，后续手动刷新）
+    onRefreshWaveRecords();
+    appendLog("[初始化] 设备层已启动（PLC/RFID 常驻）；任务接收未开始，请点击「开始接收任务」");
 }
 
 // ============================================================================
@@ -588,24 +1219,24 @@ void MainWindow::onStartStop()
         //      服务停止后软件保持运行，不卡死、不闪退。
         if (m_stopPhase == StopEnding)
         {
-            appendLog("[完结回传] 用户取消等待，立即停止服务（H8 未确认，下次启动自动补传）", true);
+            appendLog("[完结回传] 用户取消等待，立即停止接收（H8 未确认，下次开始接收时自动补传）", true);
             doActualStop();
             return;
         }
         m_stopPhase = StopEnding;
 
         // ★ 2026-09-02：sendEnd 返回 false = 无活跃波次/状态不允许完结（同步拒绝）
-        //   → 无需等待回传，立即停止服务（不卡 30s 等待）
+        //   → 无需等待回传，立即停止接收（不卡 30s 等待）
         if (m_pServer && !m_pServer->sendEnd())
         {
-            appendLog("[完结回传] 无活跃波次或状态不允许完结，直接停止服务", true);
+            appendLog("[完结回传] 无活跃波次或状态不允许完结，直接停止接收", true);
             m_stopPhase = StopNone;   // 允许 doActualStop 正常执行（非重复路径）
             doActualStop();
             return;
         }
         else if (!m_pServer)
         {
-            appendLog("[完结回传] 服务未运行，无法触发完结回传", true);
+            appendLog("[完结回传] 任务接收未开始，无法触发完结回传", true);
             m_stopPhase = StopNone;
             doActualStop();
             return;
@@ -615,15 +1246,16 @@ void MainWindow::onStartStop()
             appendLog("[完结回传] 已触发完结回传（H8）");
         }
 
-        // ★ 不立即停止服务，等待 H8 完结回传结果返回
+        // ★ 不立即停止接收，等待 H8 完结回传结果返回
         //   实际停止由 endReportFinished 信号 / 超时 / 用户取消 → doActualStop()
+        // ★ 2026-09-06 解耦：设备(PLC/RFID)保持连接，仅停止 WMS 任务接收
         m_bRunning = false;
         m_btnStartStop->setEnabled(true);  // ★ 保持可点 = "立即停止"（不再禁用，避免无法取消）
         m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "停止中…(点击立即停止)"));
         m_btnStartStop->setStyleSheet(
             "QPushButton { background-color: #FF9800; color: white; font-size: 14px; font-weight: bold; "
             "border-radius: 4px; padding: 6px 16px; }");
-        m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 停止中"));
+        m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 停止接收中"));
         m_lblServerStatus->setStyleSheet("font-size: 14px; color: #FF9800;");
 
         // ★ 安全网：END_WAIT_TIMEOUT_MS 超时后强制停止（doActualStop 幂等，可安全重复触发）
@@ -637,38 +1269,13 @@ void MainWindow::onStartStop()
             });
         }
         m_stopTimeoutTimer->start(END_WAIT_TIMEOUT_MS);  // 等待上限（不卡死）
-        // 重置TCP状态
-        m_lblTcpStatus->setText(QCoreApplication::translate("MainWindow", "TCP: 未连接"));
-        m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
-        m_lblTcpIp->setText("");
-        m_lblTcpSend->setText("TCP发送: 0");
-        m_lblTcpSendErr->setText("TCP失败: 0");
-        m_lblTcpRecv->setText("TCP接收: 0");
-        m_lblTcpConnCount->setText("客户端: 0");
-        m_lblTcpUptime->setText("");
-        // 重置S7状态
-        m_lblS7Status->setText(QCoreApplication::translate("MainWindow", "S7: 未连接"));
-        m_lblS7Status->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
-        m_lblS7Ip->setText("");
-        m_lblS7Send->setText("S7发送: 0");
-        m_lblS7SendErr->setText("S7失败: 0");
-        m_lblS7LockGrids->setText("锁格: 0");
-        // 重置最近数据
-        m_lblLastSendCode->setText(QCoreApplication::translate("MainWindow", "最近发送: --"));
-        m_lblLastSendGrid->setText("");
-        m_lblLastSendTime->setText("");
-        m_lblLastRecvCode->setText(QCoreApplication::translate("MainWindow", "最近接收: --"));
-        m_lblLastRecvGrid->setText("");
-        m_lblLastRecvTime->setText("");
-        m_lastTcpConnected = false;  // ★ 重置缓存状态
-        m_lastS7Connected  = false;
 
-        // ★ 停止时清除容器绑定（内存 + XML + UI）
-        {
-            AppConfig& c = ConfigManager::instance()->config();
-            c.containerBindings.clear();
-            ConfigManager::instance()->saveNow();  // ★ 立即写盘，不等延迟
-        }
+        // ★ 2026-09-06 解耦：设备(PLC/S7/RFID)保持连接，此处不再复位设备面板
+        //   （面板由每秒定时器实时刷新；状态变化才更新样式）
+        // 波次面板数据保留至结束（H8 完结后由 doActualStop 复位）
+
+        // ★ 容器绑定不再在「结束任务」时清除——绑定由数据库持久化，波次完结（H8成功）时由 HttpServer 统一清空；
+        //   此处仅做绑定面板的视觉复位（H8 成功后 bindingUpdated 信号会再次刷新）
         // 重置绑定面板为全灰
         for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
         {
@@ -685,50 +1292,18 @@ void MainWindow::onStartStop()
         m_btnStartSorting->setEnabled(false);
         m_bindingDirty = false;
 
-        appendLog(QString("服务正在停止，等待完结回传结果（最长 %1s；可再次点击按钮立即停止）...")
+        appendLog(QString("任务接收正在停止，等待完结回传结果（最长 %1s；可再次点击按钮立即停止）... 设备连接保持")
                       .arg(END_WAIT_TIMEOUT_MS / 1000));
     }
-    else    //状态：关闭 --> 开启
+    else    //状态：未接收 --> 开始接收（★ 2026-09-06：仅启动「接收层」，设备层已在 setupCore 常驻）
     {
-        // ★ 2026-09-02：新启动会话，重置停止阶段（防上一轮 StopEnding 残留影响）
+        // ★ 2026-09-02：新一轮接收会话，重置停止阶段（防上一轮 StopEnding 残留影响）
         m_stopPhase = StopNone;
 
-        // ★ 服务始终允许启动以接收 WMS 的绑定请求和波次数据
-        //    容器绑定校验移至波次推送入口（InsertWaveInfo），避免循环依赖：
-        //    服务必须运行才能接收 BindingLatticePort 请求完成绑定
-        // ★ 防泄漏配对：每次启动新建 HttpServer/HttpClient（parent=this），
-        //    释放点=doActualStop() 中的 deleteLater（勿只 stop() 不析构，勿复用旧实例）
-        m_pServer = new HttpServer(this);
-
         AppConfig& cfg = ConfigManager::instance()->config();
-
-        // ★ 从配置文件恢复容器绑定
-        m_pServer->loadContainerBindings(cfg.containerBindings);
-        m_bindingDirty = true;  // ★ 初始加载后标记为脏，首次刷新时更新面板
-
-        // ★ 设置期望绑定数量（从配置文件加载，默认66）
-        m_pServer->setExpectedBindCount(cfg.expectedBindCount);
-        m_pClient = new HttpClient(this);
-        m_pPlcMgr = m_pServer->plcManager();  // ★ 获取PLC管理器引用
-        m_pClient->setUrl(cfg.activeFeedbackUrl());
-        m_pClient->setEndUrl(cfg.activeEndFeedbackUrl());  // ★ 完结回传专用 URL
-        m_pClient->setAppkey(cfg.activeAppkey());
-        m_pClient->setTimeout(cfg.httpTimeoutMs);
-        m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);  // ★ RFID SKU-EPC 绑定查询 URL
-        m_pClient->setRfidAppkey(cfg.rfidAppkey);      // ★ 2026-09-04 RFID 查询鉴权 AppKey
-        m_pServer->setHttpClient(m_pClient);              // ★ 设置 HttpClient 供 RFID 查询使用
-
-        // ★ 从配置文件加载 API 路由路径
-        m_pServer->setApiInsertWaveInfo(cfg.apiInsertWaveInfo);
-        m_pServer->setApiBindingLatticePort(cfg.apiBindingLatticePort);
-        m_pServer->setApiInsertWaveIn(cfg.apiInsertWaveIn);
-
-        m_pServer->waveManager()->setWaveTimeoutMin(cfg.waveTimeoutMin);
-        m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
-
         int port = cfg.wmsListenPort;
 
-        if (m_pServer->start(port))
+        if (m_pServer->startReceive(port))
         {
             m_bRunning = true;
             m_btnStartStop->setText("结束任务");
@@ -736,7 +1311,7 @@ void MainWindow::onStartStop()
                 "QPushButton { background-color: #f44336; color: white; font-size: 14px; font-weight: bold; "
                 "border-radius: 4px; padding: 6px 16px; }"
                 "QPushButton:hover { background-color: #d32f2f; }");
-            m_lblServerStatus->setText("● 运行中");
+            m_lblServerStatus->setText("● 接收中");
             m_lblServerStatus->setStyleSheet("font-size: 14px; color: #4CAF50;");
 
             m_lblPort->setText(QString("端口: %1 %2")
@@ -746,11 +1321,17 @@ void MainWindow::onStartStop()
                 ? "font-size: 14px; color: #FF9800; font-weight: bold;"
                 : "font-size: 14px; color: #f44336; font-weight: bold;");
 
-            appendLog(QString("HTTP服务已启动 端口=%1 环境=%2")
+            appendLog(QString("任务接收已开始（HTTP 监听 %1，环境=%2）——等待 WMS 下发任务")
                 .arg(port)
                 .arg(cfg.useTestEnv ? "测试" : "正式"));
 
-            // ★ 配置摘要日志
+            // ★ 显示当前恢复的容器绑定（程序启动时从配置文件恢复；结束任务后由 WMS 重新下发）
+            m_bindingDirty = true;
+            updateBindingPanel();
+            updatePlcPanel();
+            updateRfidStatus();
+
+            // ★ 配置摘要日志（每次开始接收时打印一次，便于排查）
             {
                 //QString summary;
                 //summary += "\n\n══════════════════ 配置摘要 ══════════════════\n\n";
@@ -781,6 +1362,9 @@ void MainWindow::onStartStop()
                 appendLog("\n\n══════════════════ 配置摘要 ══════════════════\n\n");
                 appendLog ( QString(" 监听端口:        %1 (WMS) / %2 (PLC)\n\n") .arg(port).arg(cfg.plcListenPort));
                 appendLog ( QString(" 回传URL:         %1 (%2)\n\n").arg(cfg.activeFeedbackUrl()).arg(cfg.useTestEnv ? "测试" : "正式"));
+                // ★ 2026-09-06：网关 appkey/method 参数展示（发送时拼到 URL）
+                appendLog(QString(" 网关参数:        appkey=%1 method(满箱/其他)=%2 method(完结H8)=%3\n\n")
+                    .arg(cfg.activeAppkey()).arg(cfg.feedbackMethod).arg(cfg.feedbackEndMethod));
                 appendLog(QString(" AppKey:          %1\n\n").arg(cfg.activeAppkey()));
                 appendLog(QString(" 仓库:            %1\n\n").arg(cfg.warehouseCode));
                 appendLog(QString(" 货主:            %1\n\n").arg(cfg.goodsOwner));
@@ -803,231 +1387,46 @@ void MainWindow::onStartStop()
                     cfg.warehouseCode.toLocal8Bit().data(), cfg.goodsOwner.toLocal8Bit().data(),
                     cfg.waveTimeoutMin, cfg.expectedBindCount);
             }
-
-            // ★ 波次完成回传 → WMS（HttpServer 异步入池构建 JSON，HttpClient 发送）
-            connect(m_pServer, &HttpServer::waveCompleteReportReady, this,
-                [this](const QJsonObject& reportJson) {
-                    if (!m_pClient) return;
-                    QString orderCode = reportJson["head"].toObject()["orderCode"].toString();
-                    appendLog(QString("波次完成回传 orderCode=%1").arg(orderCode));
-                    m_pClient->sendGenericFeedback(reportJson, orderCode);
-                });
-
-            // ★ 回传结果处理：成功→已完成，失败→异常（避免状态卡在"回传中"）
-            // S5 更新：区分完结回传（H8）和满箱回传（H7）
-            connect(m_pClient, &HttpClient::reportResult, this,
-                [this](const QString& orderCode, bool success, const QString& body) {
-                    Q_UNUSED(body);
-
-                    // ★ S5: 满箱回传（H7，context 以 "fullbox_" 开头）
-                    if (orderCode.startsWith("fullbox_"))
-                    {
-                        QString msgId = orderCode.mid(8); // 去掉 "fullbox_" 前缀
-                        if (m_pServer)
-                        {
-                            m_pServer->onFullboxReplyFinished(msgId, success, body);
-                        }
-                        appendLog(QString("[满箱回传] 回传结果 msgId=%1 success=%2")
-                            .arg(msgId).arg(success));
-                        return;
-                    }
-
-                    // ★锁格回传（context 以 "lockGrid_" 开头）
-                    if (orderCode.startsWith("lockGrid_"))
-                    {
-                        appendLog(QString("[锁格] 回传结果 grid=%1 success=%2")
-                            .arg(orderCode.mid(9)).arg(success));
-                        return;
-                    }
-
-                    // ★完结回传 Outbox（H8，context 以 "end_" 开头）
-                    if (orderCode.startsWith("end_"))
-                    {
-                        QString msgId = orderCode.mid(4); // 去掉 "end_" 前缀
-                        if (m_pServer)
-                        {
-                            m_pServer->onEndReplyFinished(msgId, success, body);
-                        }
-                        appendLog(QString("[完结回传] 回传结果 success=%1")
-                            .arg(success));
-                        return;
-                    }
-
-                    // ★ 波次完成回传（H7 锁格回传，原有逻辑）— 仅记录结果，不改变波次状态
-                    //   状态迁移仅由完结回传（H8，以 "end_" 为前缀）处理
-                    WaveManager* wm = m_pServer ? m_pServer->waveManager() : nullptr;
-                    if (!wm) return;
-                    if (success)
-                    {
-                        appendLog(QString("波次完成回传成功 orderCode=%1").arg(orderCode));
-                        // ★ 锁格回传（H7）成功不改变波次状态，状态由完结回传（H8）管理
-                    }
-                    else
-                    {
-                        appendLog(QString("波次完成回传失败 orderCode=%1（仍可手动重试）").arg(orderCode), true);
-                        // ★ 锁格回传（H7）失败不改变波次状态，状态由完结回传（H8）管理
-                    }
-                });
-
-            // ★ 锁格回传 → WMS（HttpServer 构建 JSON，HttpClient 发送）
-            connect(m_pServer, &HttpServer::gridLockReportReady, this,
-                [this](const QJsonObject& reportJson) {
-                    if (!m_pClient) return;
-                    QString grid = reportJson["head"].toObject()["detailList"].toArray().first()
-                        .toObject()["targetLocation"].toString();
-                    appendLog(QString("[锁格] 发送回传 grid=%1").arg(grid));
-                    m_pClient->sendGenericFeedback(reportJson, "lockGrid_" + grid);
-                });
-
-            // ★ S5 满箱回传 → WMS（H7 满箱同步，T-S5-04）
-            // fullboxReportReady 携带 msgId，HttpClient 返回后路由到 onFullboxReplyFinished
-            connect(m_pServer, &HttpServer::fullboxReportReady, this,
-                [this](const QJsonObject& payload, const QString& msgId) {
-                    if (!m_pClient) return;
-                    QString orderCode = payload["head"].toObject()["orderCode"].toString();
-                    appendLog(QString("[满箱回传] 发送回传 order=%1").arg(orderCode));
-                    m_pClient->sendGenericFeedback(payload, "fullbox_" + msgId);
-                });
-
-            // ★ S6 完结回传 → WMS（H8 波次完结通知，T-S6-03）
-            // endReportReady 携带 msgId，HttpClient 返回后路由到 onEndReplyFinished
-            connect(m_pServer, &HttpServer::endReportReady, this,
-                [this](const QJsonObject& payload, const QString& msgId) {
-                    if (!m_pClient) return;
-                    QString orderCode = payload["head"].toObject()["orderCode"].toString();
-                    appendLog(QString("[完结回传] 发送回传 order=%1").arg(orderCode));
-                    m_pClient->sendEndFeedback(payload, "end_" + msgId);  // ★ H8 使用专用完结回传 URL
-                });
-
-            // ★ H8完结回传处理完毕 → 执行实际的服务停止
-            connect(m_pServer, &HttpServer::endReportFinished, this, [this]() {
-                appendLog("[完结回传] 回传流程结束，正在停止服务...");
-                doActualStop();
-            });
-
-            // ★ 连接HttpServer日志信号到UI日志区
-            connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
-
-            // ★ 容器绑定变更 → 即时刷新 UI + 持久化到 XML
-            connect(m_pServer, &HttpServer::bindingUpdated, this, [this]() {
-                m_bindingDirty = true;  // ★ 标记脏数据，下次定时刷新时更新
-                updateBindingPanel();
-                // 同步到配置并保存
-                AppConfig& c = ConfigManager::instance()->config();
-                c.containerBindings = m_pServer->getContainerBindings();
-                ConfigManager::instance()->save();
-            });
-
-            // ★ 连接PLC状态信号到UI（全部使用 QueuedConnection，确保跨线程安全）
-            if (m_pPlcMgr)
-            {
-                connect(m_pPlcMgr, &PlcManager::plcConnected, this, [this](const QString& ip, int port) {
-                    updatePlcPanel();
-                    appendLog(QString("[PLC] TCP连接 %1:%2").arg(ip).arg(port));
-                }, Qt::QueuedConnection);
-                connect(m_pPlcMgr, &PlcManager::plcDisconnected, this, [this](const QString& ip, int port) {
-                    updatePlcPanel();
-                    appendLog(QString("[PLC] TCP断开 %1:%2").arg(ip).arg(port), true);
-                }, Qt::QueuedConnection);
-
-                // ★ 业务信号：批量处理落格反馈计数
-                //    不再逐条 connect plcFeedbackReceived，改用批量信号
-                connect(m_pPlcMgr, &PlcManager::plcFeedbackBusinessBatch, this,
-                    [this](const QVector<PlcFeedbackEntry>& entries) {
-                        m_plcFeedbackCount.fetchAndAddRelaxed(entries.size());
-                    }, Qt::QueuedConnection);
-
-                // ★ UI日志信号：批量处理，减少高频场景下的UI更新压力
-                connect(m_pPlcMgr, &PlcManager::plcFeedbackBatch, this,
-                    [this](const QVector<PlcFeedbackEntry>& entries) {
-                        if (entries.isEmpty()) return;
-                        if (entries.size() == 1)
-                        {
-                            // 单条：直接显示
-                            const auto& e = entries.first();
-                            appendLog(QString("[PLC] 反馈落格 code=%1 → grid=%2 car=%3")
-                                .arg(e.code).arg(e.grid).arg(e.car));
-                        }
-                        else
-                        {
-                            // 多条：汇总显示前3条 + 共N条
-                            QString summary;
-                            int showCount = qMin(entries.size(), FEEDBACK_DISPLAY_MAX);
-                            for (int i = 0; i < showCount; ++i)
-                            {
-                                const auto& e = entries[i];
-                                if (i > 0) summary += "\n";
-                                summary += QString("  code=%1 → grid=%2 car=%3")
-                                    .arg(e.code).arg(e.grid).arg(e.car);
-                            }
-                            if (entries.size() > FEEDBACK_DISPLAY_MAX)
-                                summary += QString("\n  ... 共 %1 条").arg(entries.size());
-                            appendLog(QString("[PLC] 批量反馈 (%1条):\n%2").arg(entries.size()).arg(summary));
-                        }
-                    }, Qt::QueuedConnection);
-
-                connect(m_pPlcMgr, &PlcManager::plcBatchStart, this, [this]() {
-                    appendLog("[PLC] 批次开始");
-                }, Qt::QueuedConnection);
-                connect(m_pPlcMgr, &PlcManager::plcBatchStop, this, [this]() {
-                    appendLog("[PLC] 批次停止");
-                }, Qt::QueuedConnection);
-                // ★ 发送数据通知
-                connect(m_pPlcMgr, &PlcManager::plcSendInfo, this,
-                    [this](const QString& code, const QString& grids, bool success) {
-                        QString status = success ? "✓" : "✗";
-                        appendLog(QString("[PLC] %1 code=%2 grids=%3").arg(status).arg(code).arg(grids));
-                    }, Qt::QueuedConnection);
-
-                // ★ S7 信号（全部使用 QueuedConnection）
-                connect(m_pPlcMgr, &PlcManager::s7Connected, this, [this](const QString& ip) {
-                    updatePlcPanel();
-                    appendLog(QString("[S7] 连接成功 %1").arg(ip));
-                }, Qt::QueuedConnection);
-                connect(m_pPlcMgr, &PlcManager::s7Disconnected, this, [this](const QString& ip) {
-                    updatePlcPanel();
-                    appendLog(QString("[S7] 断开 %1").arg(ip), true);
-                }, Qt::QueuedConnection);
-                connect(m_pPlcMgr, &PlcManager::s7Error, this, [this](const QString& errMsg) {
-                    appendLog(QString("[S7] 错误: %1").arg(errMsg), true);
-                }, Qt::QueuedConnection);
-                connect(m_pPlcMgr, &PlcManager::gridLocked, this, [this](const QString& grid) {
-                    updatePlcPanel();
-                    appendLog(QString("[S7] 锁格 grid=%1").arg(grid), true);
-                }, Qt::QueuedConnection);
-                connect(m_pPlcMgr, &PlcManager::gridUnlocked, this, [this](const QString& grid) {
-                    updatePlcPanel();
-                    appendLog(QString("[S7] 解锁 grid=%1").arg(grid));
-                }, Qt::QueuedConnection);
-
-                // ★ 启动S7连接（与 WCSApp 一致，服务启动后自动连接S7 PLC）
-                m_pPlcMgr->connectS7();
-            }
-
-            
-
-            // ★ 启动后清理过期数据库记录
-            if (m_pServer->sortingDb())
-                m_pServer->sortingDb()->cleanupOldRecords(SORTING_DB_RETAIN_DAYS);
         }
         else
         {
-            appendLog("服务启动失败！", true);
-            // ★ 防止泄漏：启动失败时 m_pServer/m_pClient 已 new 但未 start，需主动析构释放
-            if (m_pServer) { m_pServer->deleteLater(); }
-            if (m_pClient) { m_pClient->deleteLater(); }
-            m_pServer = nullptr;
-            m_pClient = nullptr;
+            appendLog("任务接收启动失败！", true);
+            // ★ 2026-09-06：失败原因弹窗指引（端口占用最常见——旧实例未退出/双开）
+            QString errText = QString("任务接收启动失败（HTTP 监听端口 %1 被占用）。\n\n"
+                                      "最常见原因：端口被占用（上一个程序实例未退出）。\n\n"
+                                      "处理方法：\n"
+                                      "  ① 若弹过\"程序已在运行\"提示 → 使用旧实例即可\n"
+                                      "  ② 任务管理器 → 结束所有 WCS_httpServer.exe → 重新打开\n"
+                                      "  ③ 或重启电脑后打开")
+                                  .arg(port);
+            QMessageBox::warning(this, QString("接收启动失败"), errText);
+            appendLog(QString("接收启动失败排查：请检查端口 %1 是否被占用（netstat -ano | findstr %1）").arg(port), true);
+            // ★ 2026-09-06 解耦：HttpServer/HttpClient 为常驻实例，不随接收失败销毁
+            //   （设备层 PLC/RFID 保持连接，可稍后再次点击「开始接收任务」）
+            m_bRunning = false;
+            m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 未接收任务"));
+            m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
+            m_btnStartStop->setEnabled(true);
+            m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始接收任务"));
+            m_btnStartStop->setStyleSheet(
+                "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
+                "border-radius: 4px; padding: 6px 16px; }"
+                "QPushButton:hover { background-color: #45a049; }");
         }
     }
 }
 
 void MainWindow::onRefreshTimer()
 {
-    if (m_bRunning && m_pServer && m_pServer->waveManager())
+    if (!m_pServer) return;
+
+    // ★ 2026-09-06 解耦：设备状态（PLC TCP/S7/RFID）无论是否接收任务都每秒实时刷新
+    updatePlcPanel();
+    updateRfidStatus();
+
+    if (m_bRunning && m_pServer->waveManager())
     {
         updateWavePanel();
-        updatePlcPanel();
         // ★ 仅绑定数据变更时才刷新绑定面板（避免每秒66次findChildren）
         if (m_bindingDirty)
         {
@@ -1048,6 +1447,36 @@ void MainWindow::onRefreshTimer()
     }
 }
 
+// ★ 2026-09-06 解耦：RFID 客户端连接状态 → UI 标签（状态变化时才改样式/记日志）
+void MainWindow::updateRfidStatus()
+{
+    RfidPushClient* rfid = m_pServer ? m_pServer->rfidPush() : nullptr;
+    bool now = (rfid != nullptr) && rfid->isConnected();
+    if (m_rfidStatusInited && now == m_lastRfidConnected)
+        return;
+    m_rfidStatusInited = true;
+    m_lastRfidConnected = now;
+
+    if (!m_lblRfidStatus) return;
+    if (now)
+    {
+        m_lblRfidStatus->setText(QString("● RFID: 已连接"));
+        m_lblRfidStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
+        m_lblRfidIp->setStyleSheet("font-size: 13px; color: #2196F3;");
+        if (m_rfidStatusLog)
+            appendLog(QString("[RFID] 推送连接已建立 %1").arg(m_lblRfidIp->text()));
+        m_rfidStatusLog = true;
+    }
+    else
+    {
+        m_lblRfidStatus->setText(QString("RFID: 未连接(自动重连中)"));
+        m_lblRfidStatus->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
+        m_lblRfidIp->setStyleSheet("font-size: 13px; color: #888;");
+        if (m_rfidStatusLog)
+            appendLog(QString("[RFID] 推送连接断开 %1（自动重连中，无需操作）").arg(m_lblRfidIp->text()), true);
+    }
+}
+
 void MainWindow::updateWavePanel()
 {
     WaveSnapshot snap = m_pServer->waveManager()->snapshot();
@@ -1056,15 +1485,11 @@ void MainWindow::updateWavePanel()
     m_lblWaveStatus->setText(snap.statusText);
     m_lblSkuCount->setText(QString::number(snap.skuCount));
     m_lblSorted->setText(QString("%1 / %2").arg(snap.sortedCount).arg(snap.totalRecv));
+    // ★ 分母含义提示：y=WMS下发的计划总件数 orderQty（H4 head.orderQty，strict校验=ΣgridNumber）
+    m_lblSorted->setToolTip(QString::fromUtf8("已分拣件数 / 计划总件数（WMS下发 orderQty=计划件数）"));
     m_lblException->setText(QString::number(snap.exceptionCount));
     m_lblSumLocation->setText(QString::number(snap.sumLocation));
-
-    if (snap.elapsedSec >= 0)
-    {
-        int min = snap.elapsedSec / 60;
-        int sec = snap.elapsedSec % 60;
-        m_lblElapsed->setText(QString("%1分%2秒").arg(min).arg(sec));
-    }
+    m_lblLastWave->setText(snap.lastWaveCode.isEmpty() ? QString::fromUtf8("--") : snap.lastWaveCode);
 
     // 颜色提示
     if (snap.waveStatus == WAVE_SORTING)
@@ -1074,8 +1499,10 @@ void MainWindow::updateWavePanel()
     else
         m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #2196F3;");
 
-    // ★ 开始分拣按钮：BOUND 或 SORTING 状态时橙色激活，否则灰色禁用
-    bool canSort = (snap.waveStatus == WAVE_BOUND || snap.waveStatus == WAVE_SORTING);
+    // ★ 开始分拣按钮：接收中且 BOUND 或 SORTING 状态时橙色激活，否则灰色禁用
+    //   （★ 2026-09-06 解耦：停止接收/等待完结时不可再开始分拣）
+    bool canSort = m_bRunning
+        && (snap.waveStatus == WAVE_BOUND || snap.waveStatus == WAVE_SORTING);
     m_btnStartSorting->setEnabled(canSort);
 }
 
@@ -1232,9 +1659,10 @@ void MainWindow::updatePlcPanel()
     }
 }
 
-// ★ 实际执行服务停止 —— 唯一停止出口（2026-09-02 起幂等）
+// ★ 实际执行「停止接收」收尾 —— 唯一停止出口（2026-09-02 起幂等；★ 2026-09-06 解耦后不再销毁实例）
 //   调用方：H8 回传成功/耗尽（endReportFinished）、等待超时（安全网）、用户取消等待、程序退出
-//   保证：任意路径到达都只会执行一次完整收尾；服务停止后软件保持运行，可再次点击"开始启动"
+//   保证：任意路径到达都只会执行一次完整收尾；停止后软件保持运行、设备保持连接，
+//         可再次点击"开始接收任务"
 void MainWindow::doActualStop()
 {
     // ★ 幂等：停止流程只执行一次（防 endReportFinished 与超时/取消重复触发）
@@ -1245,29 +1673,28 @@ void MainWindow::doActualStop()
     // ★ 停止超时安全网（正常流程已完成）
     if (m_stopTimeoutTimer) m_stopTimeoutTimer->stop();
 
-    // ★ 防止启停泄漏：每次"结束任务→重新启动"若只 stop() 不析构，
-    //   旧的 HttpServer/HttpClient 会因 parent=this 一直残留到应用退出，
-    //   一天50波次即累积50个实例（线程/句柄/SQLite/缓存/线程池全部泄漏）。
-    //   deleteLater 会触发 HttpServer::~HttpServer() 完成 stop+worker收尾+资源清理，
-    //   并自动断开所有信号槽连接。
-    if (m_pServer) { m_pServer->stop(); m_pServer->deleteLater(); }
-    m_pServer = nullptr;
-    if (m_pClient) { m_pClient->deleteLater(); }
-    m_pClient = nullptr;
-    // PlcManager 由 HttpServer 内部持有，随其析构释放，仅置空避免悬垂指针
-    m_pPlcMgr = nullptr;
+    // ★ 2026-09-06 解耦：HttpServer/HttpClient 常驻（程序启动建一次，退出才析构），
+    //   此处只停止「接收层」（HTTP 停止 + 停止兜底落库，幂等），
+    //   设备层(PLC TCP/S7/RFID)保持连接，Outbox(H7/H8)补传定时器保持运行。
+    //   —— 原"每轮启停 new/deleteLater 实例"方案取消：无实例泄漏、无启停竞态、信号只连一次。
+    if (m_pServer)
+        m_pServer->stopReceive();
     m_bRunning = false;   // ★ 确保状态复位（取消等待路径直接进入）
 
+    // ★ 显示波次最终状态（H8 完结后状态已由 HttpServer 更新为完结/保持）
+    if (m_pServer && m_pServer->waveManager())
+        updateWavePanel();
+
     m_btnStartStop->setEnabled(true);
-    m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始启动"));
+    m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始接收任务"));
     m_btnStartStop->setStyleSheet(
         "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 16px; }"
         "QPushButton:hover { background-color: #45a049; }");
-    m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 已停止"));
+    m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 未接收任务"));
     m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
 
-    appendLog("服务已停止");
+    appendLog("任务接收已停止（设备 PLC/RFID 保持连接；可再次点击「开始接收任务」）");
 }
 
 
@@ -1279,6 +1706,34 @@ void MainWindow::onRefreshBindings()
 {
     updateBindingPanel();
     appendLog("容器绑定状态已刷新");
+}
+
+// ★ 2026-09-07 清空格口容器绑定（人工重置按钮）
+//   确认后：内存绑定清空 + DB 归档留史（可追溯/可沿用）+ 恢复满箱禁用格口 → 提示 + 日志
+void MainWindow::onClearAllGridBinds()
+{
+    if (!m_pServer)
+    {
+        appendLog("[清空绑定] 服务未就绪", true);
+        return;
+    }
+
+    auto ret = QMessageBox::question(this, QString::fromUtf8("清空格口容器绑定"),
+        QString::fromUtf8("确定清空全部格口的当前容器绑定吗？\n\n"
+                          " ① 所有格口恢复初始未绑定状态（可重新由 WMS 下发 H6 绑定）；\n"
+                          " ② 原绑定记录将归档保留在数据库（可追溯、可沿用）；\n"
+                          " ③ 满箱锁格禁用的格口一并恢复。"),
+        QMessageBox::Yes | QMessageBox::Cancel);
+    if (ret != QMessageBox::Yes)
+        return;
+
+    appendLog("[清空绑定] 执行清空格口容器绑定 ...", true);
+    m_pServer->clearAllGridBinds();   // 内部：内存清空 + DB归档留史 + enableAllGrids + bindingUpdated + 日志
+    updateBindingPanel();
+    m_bindingDirty = true;
+    appendLog("[清空绑定] 完成：格口已恢复初始状态，历史绑定已归档保留于数据库（可在日志/DB 追溯）", true);
+    QMessageBox::information(this, QString::fromUtf8("已清空"),
+        QString::fromUtf8("已清空全部格口容器绑定，格口恢复初始状态。\n历史绑定记录已归档保存在数据库中，可追溯。"));
 }
 
 void MainWindow::updateBindingPanel()
@@ -1298,7 +1753,19 @@ void MainWindow::updateBindingPanel()
         QLabel* lblBox    = m_bindingBoxLabels[i];
         if (!lblStatus || !lblBox) continue;
 
-        if (!boxCode.isEmpty())
+        // ★ 2026-09-06 三态颜色：锁格=黄(满箱锁格禁用)、已绑定=绿、未绑定=红
+        bool bLocked = m_pPlcMgr && m_pPlcMgr->isGridDisabled(gridNum);
+
+        if (bLocked)
+        {
+            boundCount++;
+            lblStatus->setStyleSheet(
+                "font-size: 10px; color: white; border-radius: 6px; background-color: #FFC107;");
+            lblStatus->setToolTip(QString("格口%1 已满箱锁格（黄色）：禁止继续分配/落格，等待 WMS 重新绑定(H6)").arg(gridKey));
+            lblBox->setText(boxCode.isEmpty() ? QString::fromUtf8("锁格") : boxCode);
+            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
+        }
+        else if (!boxCode.isEmpty())
         {
             boundCount++;
             lblStatus->setStyleSheet(
@@ -1320,6 +1787,298 @@ void MainWindow::updateBindingPanel()
     int unboundCount = BINDING_SLOT_COUNT - boundCount;
     m_lblBoundCount->setText(QString("已绑定: %1").arg(boundCount));
     m_lblUnboundCount->setText(QString("未绑定: %1").arg(unboundCount));
+}
+
+// ============================================================================
+// ★ 2026-09-06 波次数据记录面板（全部已传输波次 + 进度）——手动刷新
+// ============================================================================
+
+void MainWindow::onRefreshWaveRecords()
+{
+    if (!m_pServer || !m_tblWaveRecords) return;
+
+    QVector<WaveRecordProgress> waves = m_pServer->getAllWaves();
+
+    // ★ 当前在内存中运行的波次：状态列显示实时状态（DB 状态可能滞后）
+    WaveManager* wm = m_pServer->waveManager();
+    QString liveOrder = wm ? wm->orderCode() : QString();
+    int liveStatus    = wm ? wm->status() : -1;
+
+    m_tblWaveRecords->setRowCount(waves.size());
+    for (int row = 0; row < waves.size(); ++row)
+    {
+        const WaveRecordProgress& w = waves[row];
+
+        // H7 满箱状态汇总
+        QString h7Status = QString::fromUtf8("无");
+        {
+            QVector<OutboxRecord> fb = m_pServer->getWaveFullboxOutbox(w.orderCode);
+            if (!fb.isEmpty())
+            {
+                int pend = 0, succ = 0, fail = 0;
+                for (const OutboxRecord& r : fb)
+                {
+                    if (r.status == "success") ++succ;
+                    else if (r.status == "failed") ++fail;
+                    else ++pend;
+                }
+                h7Status = QString("成功%1/待发%2/失败%3").arg(succ).arg(pend).arg(fail);
+            }
+        }
+
+        // H8 完结状态汇总
+        QString h8Status = QString::fromUtf8("无");
+        {
+            QVector<OutboxRecord> eb = m_pServer->getWaveEndOutbox(w.orderCode);
+            if (!eb.isEmpty())
+            {
+                int pend = 0, succ = 0, fail = 0;
+                for (const OutboxRecord& r : eb)
+                {
+                    if (r.status == "success") ++succ;
+                    else if (r.status == "failed") ++fail;
+                    else ++pend;
+                }
+                h8Status = QString("成功%1/待发%2/失败%3").arg(succ).arg(pend).arg(fail);
+            }
+        }
+
+        // 状态列：当前运行波次显示实时状态 + 「（当前）」标记
+        QString statusText;
+        if (!liveOrder.isEmpty() && w.orderCode == liveOrder)
+            statusText = WaveSnapshot::statusToString(liveStatus) + QString::fromUtf8("（当前）");
+        else
+            statusText = WaveSnapshot::statusToString(w.status);
+
+        auto setCell = [&](int col, const QString& text) {
+            QTableWidgetItem* item = new QTableWidgetItem(text);
+            item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+            m_tblWaveRecords->setItem(row, col, item);
+        };
+        // ★ 当前运行波次的已分拣/异常显示内存实时值
+        int sortedCnt  = w.sortedCount;
+        int excCnt     = w.exceptionCount;
+        if (!liveOrder.isEmpty() && w.orderCode == liveOrder)
+        {
+            if (wm) { sortedCnt = wm->sorted(); excCnt = wm->exception(); }
+        }
+        setCell(0, w.orderCode);
+        setCell(1, statusText);
+        setCell(2, QString::number(w.orderQty));
+        setCell(3, QString::number(sortedCnt));
+        setCell(4, QString::number(excCnt));
+        setCell(5, h7Status);
+        setCell(6, h8Status);
+        setCell(7, w.updatedAt);
+    }
+}
+
+// ★ 解析重传目标波次：列表选中行优先；未选中用当前内存波次（重传其未成功的 H7/H8）
+QString MainWindow::selectedOrCurrentWaveOrder()
+{
+    if (m_tblWaveRecords)
+    {
+        int row = m_tblWaveRecords->currentRow();
+        if (row >= 0)
+        {
+            QTableWidgetItem* it = m_tblWaveRecords->item(row, 0);
+            if (it && !it->text().trimmed().isEmpty())
+                return it->text().trimmed();
+        }
+    }
+    if (m_pServer && m_pServer->waveManager())
+    {
+        WaveManager* wm = m_pServer->waveManager();
+        if (wm->status() != WAVE_IDLE && !wm->orderCode().isEmpty())
+            return wm->orderCode();
+    }
+    return QString();
+}
+
+void MainWindow::onResendSelectedH7()
+{
+    if (!m_pServer) return;
+
+    // ★ 2026-09-07 手动满箱切换：输入框填了格口号 → 读取该格口当前记录+容器号，立即按 H7 上传
+    if (m_editFullboxGrid && !m_editFullboxGrid->text().trimmed().isEmpty())
+    {
+        QString grid = m_editFullboxGrid->text().trimmed();
+        appendLog(QString("[手动满箱] 格口%1 开始满箱切换上传 ...").arg(grid));
+        m_pServer->manualFullbox(grid);
+        onRefreshWaveRecords();
+        return;
+    }
+
+    QString orderCode = selectedOrCurrentWaveOrder();
+    if (orderCode.isEmpty())
+    {
+        appendLog("[重传] 未指定波次：请在「波次数据记录」中选中一行（或当前有运行波次）", true);
+        return;
+    }
+    appendLog(QString("[重传] 满箱切换(H7) 主动补发 order=%1（不影响主工作流）").arg(orderCode));
+    m_pServer->resendOutbox(orderCode, true, false);
+    onRefreshWaveRecords();
+}
+
+void MainWindow::onResendSelectedH8()
+{
+    if (!m_pServer) return;
+    QString orderCode = selectedOrCurrentWaveOrder();
+    if (orderCode.isEmpty())
+    {
+        appendLog("[重传] 未指定波次：请在「波次数据记录」中选中一行（或当前有运行波次）", true);
+        return;
+    }
+    appendLog(QString("[重传] 任务完结(H8) 主动补发 order=%1（不影响主工作流）").arg(orderCode));
+    m_pServer->resendOutbox(orderCode, false, true);
+    onRefreshWaveRecords();
+}
+
+// ★ 切换选中波次：未完成→按 DB 进度恢复到内存继续；已完成/已取消→载入查看
+//   ★ 2026-09-06 状态隔离：任意状态都可切出；若正在等待 H8 完结，自动取消等待再切换（报文留 outbox 补发）
+void MainWindow::onResumeSelectedWave()
+{
+    if (m_stopPhase == StopEnding)
+    {
+        appendLog("[切换] 正在等待完结回传(H8)——自动取消等待（H8报文保留outbox继续补发），继续切换", true);
+        doActualStop();   // 幂等收尾：停止接收 + UI 复位；H8 未确认报文保留
+    }
+    if (!m_pServer || !m_tblWaveRecords) return;
+
+    int row = m_tblWaveRecords->currentRow();
+    if (row < 0)
+    {
+        appendLog("[切换] 请先在「波次数据记录」中选中一行波次", true);
+        return;
+    }
+
+    QTableWidgetItem* it = m_tblWaveRecords->item(row, 0);
+    if (!it) return;
+    QString orderCode = it->text().trimmed();
+    if (orderCode.isEmpty()) return;
+
+    // 摘要弹窗（含数据快照）
+    QJsonObject s = m_pServer->getUnfinishedWaveSummary(orderCode);
+    if (s.isEmpty())
+    {
+        appendLog(QString("[切换] 获取波次摘要失败 order=%1").arg(orderCode), true);
+        return;
+    }
+
+    int dbStatus = s["status"].toInt();
+    bool bViewOnly = (dbStatus == WAVE_FINISHED || dbStatus == WAVE_CANCELLED);
+    QString msg = QString(
+        "波次号: %1\n"
+        "状态: %2\n"
+        "计划件数: %3\n"
+        "已分拣: %4    异常: %5\n"
+        "H7满箱: %6\n"
+        "H8完结: %7\n"
+        "更新时间: %8\n\n"
+        "%9")
+        .arg(s["orderCode"].toString())
+        .arg(s["statusText"].toString())
+        .arg(s["orderQty"].toInt())
+        .arg(s["sortedCount"].toInt())
+        .arg(s["exceptionCount"].toInt())
+        .arg(s["h7"].toString())
+        .arg(s["h8"].toString())
+        .arg(s["updatedAt"].toString())
+        .arg(bViewOnly
+             ? QString::fromUtf8("该波次已完结/取消：将以「查看模式」载入其数据\n（不参与分拣/回传；可重传H7/H8核对）")
+             : QString::fromUtf8("切换到该波次并按其上次进度继续？\n（切换后若当前有其它任务会先保留其进度与数据）"));
+
+    QMessageBox box(QMessageBox::Question, QString::fromUtf8("切换波次"), msg,
+                    QMessageBox::Yes | QMessageBox::Cancel, this);
+    box.button(QMessageBox::Yes)->setText(bViewOnly ? QString::fromUtf8("载入查看") : QString::fromUtf8("切换到该波次"));
+    box.button(QMessageBox::Cancel)->setText(QString::fromUtf8("取消"));
+    if (box.exec() != QMessageBox::Yes)
+        return;
+
+    appendLog(QString("[切换] 执行切换 order=%1 ...").arg(orderCode));
+    bool ok = m_pServer->resumeUnfinishedWave(orderCode);
+    if (ok)
+    {
+        int status = m_pServer->waveManager() ? m_pServer->waveManager()->status() : -1;
+        if (status == WAVE_CREATED || status == WAVE_BOUND)
+        {
+            QString hint;
+            if (!m_bRunning)
+                hint = QString::fromUtf8("当前未开启任务接收，请先点击「开始接收任务」，再点击「开始分拣」继续。");
+            else if (dbStatus == WAVE_HELD || dbStatus == WAVE_CANCEL_PENDING)
+                hint = QString::fromUtf8("原状态：异常挂起。已切换到已绑定——\n请点击「开始分拣」，分拣完成后点「结束任务」重新回传完结（生成新H8），成功后任务即完结。");
+            else if (status == WAVE_BOUND)
+                hint = QString::fromUtf8("当前状态：已绑定，请点击「开始分拣」继续。");
+            else
+                hint = QString::fromUtf8("当前状态：已下发，请等待 WMS 下发容器绑定（H6）推进到已绑定后，再点击「开始分拣」。");
+            QMessageBox::information(this, QString::fromUtf8("已切换"),
+                QString::fromUtf8("已切换波次：%1\n%2").arg(orderCode).arg(hint));
+        }
+        else if (status == WAVE_FINISHED || status == WAVE_CANCELLED)
+        {
+            // ★ 历史终态波次「载入查看」
+            QMessageBox::information(this, QString::fromUtf8("已载入"),
+                QString::fromUtf8("已载入历史波次（查看模式）：%1（%2）\n"
+                                  "当前为查看态，不参与分拣/回传；可查看数据，或点击「重传满箱切换/重传任务完结」补发核对。")
+                    .arg(orderCode).arg(WaveSnapshot::statusToString(status)));
+        }
+        updateWavePanel();
+        updateBindingPanel();
+        onRefreshWaveRecords();
+    }
+    else
+    {
+        appendLog(QString("[切换] 切换失败 order=%1（详见上方原因）").arg(orderCode), true);
+    }
+}
+
+// ★ 新任务：当前波次的进度与全部数据保留（DB），内存清空回到空闲；
+//   之后 WMS 下发新波次即开始新任务；旧波次可从列表「切换」回来继续
+//   ★ 2026-09-06 状态隔离：若正在等待 H8 完结，自动取消等待再切出
+void MainWindow::onStartNewWaveTask()
+{
+    if (m_stopPhase == StopEnding)
+    {
+        appendLog("[新任务] 正在等待完结回传(H8)——自动取消等待（H8报文保留outbox继续补发），继续开始新任务", true);
+        doActualStop();
+    }
+    if (!m_pServer || !m_pServer->waveManager())
+    {
+        appendLog("[新任务] 服务未就绪", true);
+        return;
+    }
+
+    WaveManager* wm = m_pServer->waveManager();
+    QString curOrder = wm->orderCode();
+    int curStatus    = wm->status();
+
+    bool hasActiveWave = !(curOrder.isEmpty() || curStatus == WAVE_IDLE);
+
+    if (hasActiveWave)
+    {
+        auto ret = QMessageBox::question(this, QString::fromUtf8("开始新任务"),
+            QString("当前波次：%1（%2）\n\n"
+                    "点击「开始新任务」后：\n"
+                    "  ① 当前波次进度与全部数据保留（可从「波次数据记录」切换回来继续）；\n"
+                    "  ② 界面回到空闲、容器绑定与格口状态复位为初始全新状态，等待 WMS 下发新波次；\n"
+                    "  ③ 未成功的 H7/H8 回传可在切回该波次时自动补发，或用「重传」按钮。\n\n"
+                    "确定开始新任务吗？")
+                .arg(curOrder).arg(WaveSnapshot::statusToString(curStatus)),
+            QMessageBox::Yes | QMessageBox::Cancel);
+        if (ret != QMessageBox::Yes)
+            return;
+        appendLog(QString("[新任务] 开始新任务，当前波次进度已保留 order=%1（%2）").arg(curOrder).arg(WaveSnapshot::statusToString(curStatus)));
+    }
+    else
+    {
+        appendLog("[新任务] 当前无任务，执行初始状态复位——等待 WMS 下发新波次（需已开启任务接收）");
+    }
+
+    m_pServer->startNewWaveTask();
+    updateWavePanel();
+    updateBindingPanel();
+    onRefreshWaveRecords();
+    appendLog("[新任务] 已回到空闲（初始全新状态）：等待 WMS 下发新波次；旧波次可随时从「波次数据记录」切换回来");
 }
 
 void MainWindow::onClearLog()
@@ -1643,6 +2402,11 @@ void MainWindow::onQueryRecords()
 // ★ 开始分拣按钮点击：手动触发分拣中状态
 void MainWindow::onStartSortingClicked()
 {
+    if (!m_bRunning)
+    {
+        appendLog("[分拣] 未在接收任务（或正在停止），无法开始分拣", true);
+        return;
+    }
     if (!m_pServer || !m_pServer->waveManager())
         return;
 

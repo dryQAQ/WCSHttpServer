@@ -1,0 +1,88 @@
+===== E2E 全流程验收证据 (2026-09-06 23:41~23:45, 真实 WCS_httpServer.exe + 本仿真台) =====
+
+--- 1) WCS->PLC 落格指令与自动回执 (模拟PLC侧留存) ---
+[2026-09-06 23:41:33.879] [PLC] 收 {A101260009000092855500001|001|001} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 31 7C 30 30 31 7C 30 30 31 7D]
+[2026-09-06 23:41:33.879] [PLC] 事件 [E2E] 收到WCS指令 epc=A101260009000092855500001 grid=001 car=001 → 自动回执
+[2026-09-06 23:41:33.880] [PLC] 收 {A101260009000092855500002|002|002} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 32 7C 30 30 32 7C 30 30 32 7D]
+[2026-09-06 23:41:33.880] [PLC] 事件 [E2E] 收到WCS指令 epc=A101260009000092855500002 grid=002 car=002 → 自动回执
+[2026-09-06 23:41:33.881] [PLC] 收 {A101260009000092855500003|003|003} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 33 7C 30 30 33 7C 30 30 33 7D]
+[2026-09-06 23:41:33.881] [PLC] 事件 [E2E] 收到WCS指令 epc=A101260009000092855500003 grid=003 car=003 → 自动回执
+[2026-09-06 23:44:09.129] [PLC] 收 {A101260009000092855500006|001|001} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 36 7C 30 30 31 7C 30 30 31 7D]
+[2026-09-06 23:44:09.129] [PLC] 事件 [E2E] 收到WCS指令 epc=A101260009000092855500006 grid=001 car=001 → 自动回执
+[2026-09-06 23:44:35.310] [PLC] 收 {A101260009000092855500007|002|002} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 37 7C 30 30 32 7C 30 30 32 7D]
+[2026-09-06 23:44:35.310] [PLC] 事件 [E2E] 收到WCS指令 epc=A101260009000092855500007 grid=002 car=002 → 自动回执
+--- PLC 自动回执帧(发) 示例 ---
+[2026-09-06 23:44:09.129] [PLC] 发 {A101260009000092855500006|001|001|003|1} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 36 7C 30 30 31 7C 30 30 31 7C 30 30 33 7C 31 7D]
+[2026-09-06 23:44:35.311] [PLC] 发 {A101260009000092855500007|002|002|004|1} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 37 7C 30 30 32 7C 30 30 32 7C 30 30 34 7C 31 7D]
+[2026-09-06 23:44:52.938] [PLC] 发 {A101260009000092855500009|004|003|005|1} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 39 7C 30 30 34 7C 30 30 33 7C 30 30 35 7C 31 7D]
+[2026-09-06 23:45:12.049] [PLC] 发 {A101260009000092855500008|003|005|007|1} [7B 41 31 30 31 32 36 30 30 30 39 30 30 30 30 39 32 38 35 35 35 30 30 30 30 38 7C 30 30 33 7C 30 30 35 7C 30 30 37 7C 31 7D]
+
+--- 2) 锁格触发 H7 满箱回传 (网关留存, 含校验) ---
+[2026-09-06 23:44:20.597] [WMS网关] 收 H7回传 POST /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder body=303B | method=gwisSubProductClassifyOrder OK；URL appkey=一致；Header AppKey=一致
+    raw: POST /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder?appkey=dz_bxh_dmwcs_cs&method=gwisSubProductClassifyOrder
+AppKey-Header: dz_bxh_dmwcs_cs
+
+{"head":{"createDate":"2026-09-06 23:44:20.000","createUserCode":"admin","createUserName":"管理员","detailList":[{"num":"001","qty":"1","sku":"SK0000000001001","targetLocation":"H-01-2001"}],"fromLocation":"A-66","goodsOwner":"BXH_CS","orderCode":"PP2026E2E200","orderType":"01","warehouseCode":"H"}}
+[2026-09-06 23:44:20.597] [WMS网关] 发 应答 H7 HTTP 200 len=113
+    raw: {"success": true, "body": "产品分类框号库位完成分类--同步成功!", "ts": "2026-09-06 23:44:20:000"}
+[2026-09-06 23:44:40.571] [WMS网关] 收 H7回传 POST /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder body=303B | method=gwisSubProductClassifyOrder OK；URL appkey=一致；Header AppKey=一致
+    raw: POST /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder?appkey=dz_bxh_dmwcs_cs&method=gwisSubProductClassifyOrder
+AppKey-Header: dz_bxh_dmwcs_cs
+
+{"head":{"createDate":"2026-09-06 23:44:40.000","createUserCode":"admin","createUserName":"管理员","detailList":[{"num":"002","qty":"1","sku":"SK0000000002001","targetLocation":"H-01-2002"}],"fromLocation":"A-66","goodsOwner":"BXH_CS","orderCode":"PP2026E2E200","orderType":"01","warehouseCode":"H"}}
+[2026-09-06 23:44:40.572] [WMS网关] 发 应答 H7 HTTP 200 len=113
+    raw: {"success": true, "body": "产品分类框号库位完成分类--同步成功!", "ts": "2026-09-06 23:44:40:000"}
+
+--- 3) H8 完结回传 (网关留存) ---
+[2026-09-06 23:45:26.266] [WMS网关] 收 H8回传 POST /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder body=163B | method=gwisSubProductClassifyEndOrder OK；URL appkey=一致；Header AppKey=一致
+    raw: POST /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder?appkey=dz_bxh_dmwcs_cs&method=gwisSubProductClassifyEndOrder
+AppKey-Header: dz_bxh_dmwcs_cs
+
+{"head":{"operuserCode":"admin","operuserDate":"2026-09-06 23:45:26.000","operuserName":"管理员","orderCode":"PP2026E2E200","orderType":"01","sumLocation":"5"}}
+[2026-09-06 23:45:26.266] [WMS网关] 发 应答 H8 HTTP 200 len=101
+    raw: {"success": true, "body": "产品分类任务完结--同步成功!", "ts": "2026-09-06 23:45:26:000"}
+
+--- 4) 汇总计数 (仿真台网关) ---
+H7收=5 H8收=1
+
+--- 5) WCS 侧日志 (HTTP.log) ---
+2026-09-06 23:44:59.550 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::buildFullboxPayload:2708] 满箱回传报文（H7） Σqty=2 聚合sku行=1 原始落格记录=2 grid=004
+2026-09-06 23:44:59.550 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::buildFullboxPayload:2717] 满箱回传报文构建（H7） order=PP2026E2E200 grid=004 box=H-01-2004 items=2 fromLocation=A-66
+2026-09-06 23:44:59.552 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::sendFullbox:2886] 满箱回传（H7） 已清理该格内存分拣记录 grid=004 items=2
+2026-09-06 23:44:59.552 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::sendFullbox:2902] 满箱回传消息已入Outbox（H7） order=PP2026E2E200 grid=004 box=H-01-2004 items=2
+2026-09-06 23:44:59.552 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::sendGenericFeedback:263] 锁格回传发送 context=fullbox_7b39393233353361362d646262302d343462382d393461622d3361663766643335626330637d len=303
+2026-09-06 23:44:59.552 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::sendFullbox:2919] 满箱回传耗时（H7） grid=004 前置校验=0ms payload构建=0ms Outbox=1ms 信号发送=0ms 总计=1ms
+2026-09-06 23:44:59.552 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::{ctor}::<lambda_78bff8b2169037190e2c7e97fb02592a>::operator ():575] [锁格→满箱] 格口已禁用 grid=4 (等待WMS重新绑定H6)
+2026-09-06 23:44:59.552 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::{ctor}::<lambda_78bff8b2169037190e2c7e97fb02592a>::operator ():580] [锁格→满箱] 完成 grid=004 order=PP2026E2E200
+2026-09-06 23:44:59.578 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::onReplyFinished:177] 回传完成 orderCode=fullbox_7b39393233353361362d646262302d343462382d393461622d3361663766643335626330637d status=200 success=1
+2026-09-06 23:44:59.578 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::onFullboxReplyFinished:2973] 满箱回传成功（H7） order=PP2026E2E200 box=H-01-2004 网络往返=28ms
+2026-09-06 23:44:59.580 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::onFullboxReplyFinished:3003] 满箱回传（H7） 容器已归档 grid=004 box=H-01-2004
+2026-09-06 23:45:12.150 [0x0000f194] INFO  HTTP - [TID-1788709512150-75a64431][HttpServer::buildReportFromRecords:2617] 波次完成回传 order=PP2026E2E200 grids=1 items=1
+2026-09-06 23:45:12.151 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::sendGenericFeedback:263] 锁格回传发送 context=PP2026E2E200 len=374
+2026-09-06 23:45:12.158 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::onReplyFinished:177] 回传完成 orderCode=PP2026E2E200 status=200 success=1
+2026-09-06 23:45:26.246 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::buildEndPayload:3178] 完结回传报文构建（H8） order=PP2026E2E200 sumLocation=5
+2026-09-06 23:45:26.246 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::sendEnd:3303] 完结回传消息已入Outbox（H8） order=PP2026E2E200 sumLocation=5
+2026-09-06 23:45:26.247 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::sendEndFeedback:288] 完结回传（H8）请求参数: URL=http://127.0.0.1:8099/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder?appkey=dz_bxh_dmwcs_cs&method=gwisSubProductClassifyEndOrder AppKey=dz_bxh_dmwcs_cs timeout=3000ms
+2026-09-06 23:45:26.247 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::sendEndFeedback:290] 完结回传（H8）请求体 context=end_7b34656435623861342d336561362d346331322d383138392d3832326236656366613133397d len=163 payload={"head":{"operuserCode":"admin","operuserDate":"2026-09-06 23:45:26.000","operuserName":"管理员","orderCode":"PP2026E2E200","orderType":"01","sumLocation":"5"}}
+2026-09-06 23:45:26.247 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::sendEndFeedback:319] 完结回传（H8）请求已发送 context=end_7b34656435623861342d336561362d346331322d383138392d3832326236656366613133397d pendingCount=1
+2026-09-06 23:45:26.247 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::sendEnd:3320] 完结回传耗时（H8） order=PP2026E2E200 payload构建=0ms Outbox=1ms 信号发送=1ms 总计=2ms
+2026-09-06 23:45:26.247 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::sendEnd:3332] 完结回传（H8） 会话兜底定时器已启动 timeout=30000ms order=PP2026E2E200
+2026-09-06 23:45:26.266 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpClient::onReplyFinished:177] 回传完成 orderCode=end_7b34656435623861342d336561362d346331322d383138392d3832326236656366613133397d status=200 success=1
+2026-09-06 23:45:26.267 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::onEndReplyFinished:3466] 完结回传成功（H8） order=PP2026E2E200 网络往返=20ms
+2026-09-06 23:45:26.280 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::onEndReplyFinished:3494] 完结回传（H8） 波次历史已存档 order=PP2026E2E200
+2026-09-06 23:45:26.280 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::onEndReplyFinished:3507] 完结回传（H8） Outbox重试定时器已停止 order=PP2026E2E200
+2026-09-06 23:45:26.295 [0x00008aac] INFO  HTTP - [TID-1788709412515-920a5e6f][HttpServer::onEndReplyFinished:3533] 波次完结清理完成 order=PP2026E2E200（格口记录/计数/待查SKU/重试/已发送EPC/容器绑定 已清空）
+
+--- 6) WCS 侧日志 (PLC.log S7锁格检测) ---
+2026-09-06 23:44:20.550 [0x00008aac] WARN  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:690] S7锁格检测(上升沿) grid=1 lock
+2026-09-06 23:44:20.550 [0x00008aac] INFO  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:758] S7锁格轮询完成 lock=1 unlock=0 totalLocked=1
+2026-09-06 23:44:27.551 [0x00008aac] WARN  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:714] S7锁格检测(下降沿) grid=1 unlock
+2026-09-06 23:44:27.551 [0x00008aac] INFO  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:758] S7锁格轮询完成 lock=0 unlock=1 totalLocked=0
+2026-09-06 23:44:40.550 [0x00008aac] WARN  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:690] S7锁格检测(上升沿) grid=2 lock
+2026-09-06 23:44:40.550 [0x00008aac] INFO  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:758] S7锁格轮询完成 lock=1 unlock=0 totalLocked=1
+2026-09-06 23:44:46.550 [0x00008aac] WARN  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:714] S7锁格检测(下降沿) grid=2 unlock
+2026-09-06 23:44:46.550 [0x00008aac] INFO  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:758] S7锁格轮询完成 lock=0 unlock=1 totalLocked=0
+2026-09-06 23:44:59.550 [0x00008aac] WARN  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:690] S7锁格检测(上升沿) grid=4 lock
+2026-09-06 23:44:59.550 [0x00008aac] INFO  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:758] S7锁格轮询完成 lock=1 unlock=0 totalLocked=1
+2026-09-06 23:45:04.551 [0x00008aac] WARN  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:714] S7锁格检测(下降沿) grid=4 unlock
+2026-09-06 23:45:04.551 [0x00008aac] INFO  PLC - [TID-1788709412515-920a5e6f][PlcManager::pollS7LockStatus:758] S7锁格轮询完成 lock=0 unlock=1 totalLocked=0

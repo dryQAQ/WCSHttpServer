@@ -8,6 +8,7 @@
 #include <QThread>
 #include <tchar.h>
 #include <Windows.h>
+#include <vector>
 #include "define.h"
 
 // ============================================================================
@@ -118,19 +119,33 @@ bool PlcManager::start(const char* ip, int port)
 void PlcManager::stop()
 {
     if (!m_bRunning.load()) return;
+    PLC_LOG_INFO("PLC服务停止 开始 running=%d", m_bRunning.load() ? 1 : 0);
 
+    // ★ 2026-09-06 防死锁/迭代器失效：
+    //   原实现持 m_clientMutex 遍历 Disconnect——Disconnect 可能在工作线程同步触发 OnClose，
+    //   OnClose 内再次加 m_clientMutex（非递归锁）→ 死锁；或迭代中 map 被 erase → 迭代器失效崩溃。
+    //   改为：先快照 connId，锁外逐个 Disconnect，最后持锁清空。
+    std::vector<CONNID> connIds;
     {
         std::unique_lock<std::mutex> lock(m_clientMutex);
         for (auto& pair : m_mapClient)
-        {
-            m_tcpServer->Disconnect(pair.first, true);
-            PLC_LOG_INFO("断开PLC连接 conn=%llu", (unsigned long long)pair.first);
-        }
+            connIds.push_back(pair.first);
+    }
+    PLC_LOG_INFO("PLC服务停止 断开连接数=%d", (int)connIds.size());
+    for (CONNID id : connIds)
+    {
+        m_tcpServer->Disconnect(id, true);
+        PLC_LOG_INFO("断开PLC连接 conn=%llu", (unsigned long long)id);
+    }
+    {
+        std::unique_lock<std::mutex> lock(m_clientMutex);
         m_mapClient.clear();
     }
+    PLC_LOG_INFO("PLC服务停止 连接已清空，执行 Server.Stop()");
 
     m_tcpServer->Stop();
     m_bRunning.store(false);
+    PLC_LOG_INFO("PLC服务停止 Server.Stop() 完成");
 
     // ★ 停止批量反馈定时器，最后一次刷新
     if (m_feedbackBatchTimer)
@@ -138,8 +153,7 @@ void PlcManager::stop()
         m_feedbackBatchTimer->stop();
         flushFeedbackBatch();
     }
-
-    PLC_LOG_INFO("PLC服务已停止");
+    PLC_LOG_INFO("PLC服务停止 反馈刷新完成，stop() 返回");
 }
 
 // ============================================================================
@@ -904,8 +918,10 @@ EnHandleResult PlcManager::OnReceive(ITcpServer* pSender, CONNID dwConnID,
     // ★ 仅拷贝数据到缓冲区，解析和信号发射交给 parsePlcFeedback
     //    避免在 HP-Socket 工作线程中做耗时操作
     QByteArray rawData((const char*)pData, iLength);
-    PLC_LOG_INFO("TCP接收 rawData=%s len=%d conn=%llu",
-        rawData.toHex(' ').constData(), iLength, (unsigned long long)dwConnID);
+    QString rawText = QString::fromLocal8Bit(rawData);
+    PLC_LOG_INFO("TCP接收 rawData=%s text=%s len=%d conn=%llu",
+        rawData.toHex(' ').constData(), rawText.toLocal8Bit().data(),
+        iLength, (unsigned long long)dwConnID);
     parsePlcFeedback(rawData);
 
     return HR_OK;
@@ -1073,7 +1089,9 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
                 m_lastRecvStatus   = status;
             }
 
-            PLC_LOG_INFO("PLC反馈(5字段) code=%s grid=%s firstCar=%s lastCar=%s status=%d",
+            // ★ 2026-09-07：日志带原始报文 raw={...}，便于核对 PLC 发来的 5 字段原始数据
+            PLC_LOG_INFO("PLC反馈(5字段) raw={%s} code=%s grid=%s firstCar=%s lastCar=%s status=%d",
+                content.toLocal8Bit().data(),
                 code.toLocal8Bit().data(), grid.toLocal8Bit().data(),
                 firstCar.toLocal8Bit().data(), lastCar.toLocal8Bit().data(), status);
 
@@ -1108,7 +1126,8 @@ void PlcManager::parsePlcFeedback(const QByteArray& rawData)
             QString grid = parts[1].trimmed();
             QString car  = parts[2].trimmed();
 
-            PLC_LOG_INFO("PLC反馈(3字段) code=%s grid=%s car=%s",
+            PLC_LOG_INFO("PLC反馈(3字段) raw={%s} code=%s grid=%s car=%s",
+                content.toLocal8Bit().data(),
                 code.toLocal8Bit().data(), grid.toLocal8Bit().data(), car.toLocal8Bit().data());
 
             // 更新最近接收数据

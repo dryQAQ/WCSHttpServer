@@ -13,6 +13,7 @@
 #include <QString>
 #include <QDateTime>
 #include <QVector>
+#include <QSet>
 #include <QSqlDatabase>
 #include <QThread>
 #include <QThreadStorage>
@@ -56,6 +57,18 @@ struct ReturnWaveRecord
     int     status     = 0;   // WaveStatus 枚举值
     QString createdAt;
     QString updatedAt;
+};
+
+// ★ 2026-09-06 波次记录（UI「波次数据记录」列表行：波次头 + 进度计数）
+struct WaveRecordProgress
+{
+    QString orderCode;
+    int     orderQty      = 0;
+    int     status        = 0;   // WaveStatus 枚举值
+    QString createdAt;
+    QString updatedAt;
+    int     sortedCount   = 0;   // 已分拣件数（sorting_records 去重计数）
+    int     exceptionCount = 0;  // 异常件数（exception_record 去重计数）
 };
 
 // ──── 新增：波次明细 ────
@@ -167,6 +180,25 @@ public:
     int getWaveStatus(const QString& orderCode);
     // 查询最近一条未完成波次（排除已取消和已完成），用于软件重启后恢复波次数据
     ReturnWaveRecord getLatestUnfinishedWave();
+    // ★ 2026-09-06：查询全部已传输波次（含已完成/已取消）+ 进度计数，UI「波次数据记录」列表用
+    QVector<WaveRecordProgress> getAllWaves();
+    // 查询全部未完成波次（排除已取消和已完成），供未完成波次手动重传面板展示
+    QVector<ReturnWaveRecord> getAllUnfinishedWaves();
+
+    // ═══════════════════════════════════════════════════════════════
+    // 波次恢复查询（上一波次任务恢复用）
+    // ═══════════════════════════════════════════════════════════════
+
+    // 某波次全部已分拣 EPC（sorting_records，barcode=EPC）
+    QSet<QString> getSortedEpcsByOrder(const QString& orderCode);
+    // 某波次全部异常 EPC（exception_record）
+    QSet<QString> getExceptionEpcsByOrder(const QString& orderCode);
+    // 某波次是否存在成功满箱回传（H7）
+    bool hasSuccessFullbox(const QString& orderCode);
+    // H4 原始报文落库（单独表 wave_raw，INSERT OR REPLACE）
+    void saveWaveRawPayload(const QString& orderCode, const QByteArray& body);
+    // 查询某波次 H4 原始报文（追溯用）
+    QByteArray getWaveRawPayload(const QString& orderCode);
 
     // 插入波次明细（先清旧再插新，支持覆盖重下）
     bool insertWaveItems(const QString& orderCode, const QVector<ReturnWaveItemRecord>& items);
@@ -179,12 +211,20 @@ public:
     // S0 新增：容器绑定（T-S0-02）
     // ═══════════════════════════════════════════════════════════════
 
-    // 绑定容器（先归档旧绑定，再插入新绑定）
-    bool bindGridBox(const QString& gridNum, const QString& boxcode);
+    // 绑定容器（先归档旧绑定，再插入新绑定；orderCode 关联所属波次，供波次切换恢复绑定视图）
+    bool bindGridBox(const QString& gridNum, const QString& boxcode, const QString& orderCode = QString());
+    // ★ 2026-09-06 按波次查询绑定快照（每格取该波次最近一条绑定，含已归档）
+    QMap<QString, QString> getBindsByOrder(const QString& orderCode);
+    // ★ 2026-09-07 每格最近一次绑定（无当前 active 绑定时"沿用上一波次绑定"用）
+    QMap<QString, QString> getLastKnownBinds();
     // 获取格口当前活跃绑定
     GridBoxBindRecord getActiveBind(const QString& gridNum);
     // 归档指定格口的所有活跃绑定（满箱/取消时调用）
     bool archiveGridBinds(const QString& gridNum);
+    // 获取全部活跃绑定（程序重启后加载内存/UI 用）
+    QVector<GridBoxBindRecord> getAllActiveBinds();
+    // 归档全部活跃绑定（波次完结/取消时清空全部格口绑定）
+    bool archiveAllBinds();
 
     // ═══════════════════════════════════════════════════════════════
     // S0 新增：完结波次历史存档（T-S0-02）
@@ -225,6 +265,10 @@ public:
     bool markOutboxEndSuccess(const QString& msgId);
     // 按波次号查询待重试出站消息（人工重发用）
     QVector<OutboxRecord> getOutboxByOrderCode(const QString& orderCode);
+    // 按波次号查询全部 满箱回传（H7）出站消息（含状态，供未完成波次面板展示/重传）
+    QVector<OutboxRecord> getOutboxFullboxByOrder(const QString& orderCode);
+    // 按波次号查询全部 完结回传（H8）出站消息（含状态，供未完成波次面板展示/重传）
+    QVector<OutboxRecord> getOutboxEndByOrder(const QString& orderCode);
     // 按 msgId 查询单条出站消息（人工重发用）
     OutboxRecord getOutboxFullboxByMsgId(const QString& msgId);
     OutboxRecord getOutboxEndByMsgId(const QString& msgId);     // ★ S6 完结回传按 msgId 查询（H8）

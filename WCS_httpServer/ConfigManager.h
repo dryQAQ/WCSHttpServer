@@ -17,11 +17,14 @@ struct AppConfig
     int     wmsListenPort    = WMS_LISTEN_PORT;       // HTTP 监听端口（默认 8191）
 
     // ──── 回传配置（WCS → WMS）────
-    QString feedbackUrl      = WMS_FEEDBACK_URL;      // 正式环境满箱回传 URL（H7）
-    QString feedbackTestUrl  = WMS_FEEDBACK_URL_TEST; // 测试环境满箱回传 URL（H7）
-    QString feedbackEndUrl   = WMS_FEEDBACK_END_URL;  // 正式环境完结回传 URL（H8）
-    QString feedbackEndTestUrl = WMS_FEEDBACK_END_URL_TEST; // 测试环境完结回传 URL（H8）
-    QString appkey            = WMS_APPKEY;            // 正式环境 AppKey
+    QString feedbackUrl      = WMS_FEEDBACK_URL;      // 正式环境满箱回传 base URL（H7，不含 appkey/method 参数）
+    QString feedbackTestUrl  = WMS_FEEDBACK_URL_TEST; // 测试环境满箱回传 base URL（H7）
+    QString feedbackEndUrl   = WMS_FEEDBACK_END_URL;  // 正式环境完结回传 base URL（H8）
+    QString feedbackEndTestUrl = WMS_FEEDBACK_END_URL_TEST; // 测试环境完结回传 base URL（H8）
+    // ★ 2026-09-06：WMS 网关 method 参数（发送时拼成 ?appkey=xxx&method=yyy，独立配置便于调整）
+    QString feedbackMethod    = WMS_METHOD_FULLBOX;   // 满箱/锁格/波次完成等回传 method（默认 gwisSubProductClassifyOrder）
+    QString feedbackEndMethod = WMS_METHOD_END;       // 完结回传(H8) method（默认 gwisSubProductClassifyEndOrder）
+    QString appkey            = WMS_APPKEY;            // 正式环境 AppKey（HTTP Header + URL 参数 appkey 同值）
     QString appkeyTest        = WMS_APPKEY_TEST;       // 测试环境 AppKey
     bool    useTestEnv        = true;                  // true=使用测试环境
 
@@ -127,4 +130,6 @@ private:
     AppConfig m_config;
     QTimer*  m_saveTimer  = nullptr;  // 延迟保存定时器（2秒）
     bool     m_saveDirty   = false;   // 脏标记
+    QByteArray m_seenHash;            // ★ 2026-09-07 最近一次"程序读写后"的配置文件内容哈希
+                                      //   保存前比对：外部(手工/编辑器)改动过则先同步内存再写，绝不覆盖手改
 };

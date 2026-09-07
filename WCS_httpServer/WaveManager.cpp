@@ -35,6 +35,91 @@ void WaveManager::setRecvSet(const QSet<QString>& set)
     WCS_INFO("[WaveMgr] 接收inco集合 size=%d", m_setCodeRecv.size());
 }
 
+bool WaveManager::restoreWave(const QString& orderCode, int orderQty, int skuCount,
+                              int targetStatus,
+                              const QSet<QString>& recvSet,
+                              const QSet<QString>& sortedSet,
+                              const QSet<QString>& exceptionSet,
+                              bool hasFullboxRecord)
+{
+    // 前置校验：仅 IDLE 可恢复；目标状态允许业务态 CREATED/BOUND/SORTING/ENDING，
+    // ★ 2026-09-06 另支持终态查看 FINISHED/CANCELLED（历史波次“载入查看”，不参与分拣/回传）
+    if (m_waveStatus.load() != WAVE_IDLE)
+    {
+        WCS_WARN("[WaveMgr] 恢复拒绝 当前状态非IDLE status=%d(%s)",
+            m_waveStatus.load(), WaveSnapshot::statusToString(m_waveStatus.load()).toLocal8Bit().data());
+        return false;
+    }
+    const bool bViewOnly = (targetStatus == WAVE_FINISHED || targetStatus == WAVE_CANCELLED);
+    if (targetStatus != WAVE_CREATED && targetStatus != WAVE_BOUND &&
+        targetStatus != WAVE_SORTING && targetStatus != WAVE_ENDING && !bViewOnly)
+    {
+        WCS_WARN("[WaveMgr] 恢复拒绝 非法目标状态 target=%d", targetStatus);
+        return false;
+    }
+
+    // 重建进度集合与波次基本信息
+    {
+        std::unique_lock<std::mutex> lock(m_lock);
+        m_setCodeRecv      = recvSet;
+        m_setCodeSorted    = sortedSet;
+        m_setCodeException = exceptionSet;
+        m_setCodeProcessing.clear();
+        m_mapCodeRetry.clear();
+    }
+    m_orderCode       = orderCode;
+    m_orderQty        = orderQty;
+    m_waveStartTime   = QDateTime::currentDateTime();
+    m_bSortingStarted = (targetStatus == WAVE_SORTING || targetStatus == WAVE_ENDING);
+    m_hasFullboxRecord.store(hasFullboxRecord);
+
+    // 已完成件数已达计划 → 置已回传标记，避免恢复后重复触发波次完成回传
+    int done = sortedSet.size() + exceptionSet.size();
+    m_bReported.store((orderQty > 0 && done >= orderQty) || bViewOnly);
+
+    // 链式走合法状态迁移（全部在白名单内）
+    bool ok = false;
+    if (bViewOnly)
+    {
+        // ★ 2026-09-06 终态查看：IDLE→CREATED→(业务链)→终态
+        ok = setState(WAVE_CREATED);
+        if (targetStatus == WAVE_CANCELLED)
+            ok = ok && setState(WAVE_CANCELLED);                    // CREATED→CANCELLED
+        else
+        {
+            ok = ok && setState(WAVE_BOUND);                        // CREATED→BOUND
+            ok = ok && setState(WAVE_SORTING);                      // BOUND→SORTING
+            ok = ok && setState(WAVE_ENDING);                       // SORTING→ENDING
+            ok = ok && setState(WAVE_FINISHED);                     // ENDING→FINISHED
+        }
+    }
+    else
+    {
+        ok = setState(WAVE_CREATED);                                // IDLE→CREATED
+        if (ok && targetStatus >= WAVE_BOUND)
+            ok = setState(WAVE_BOUND);                              // CREATED→BOUND
+        if (ok && targetStatus >= WAVE_SORTING && targetStatus != WAVE_ENDING)
+            ok = setState(WAVE_SORTING);                            // BOUND→SORTING
+        if (ok && targetStatus == WAVE_ENDING)
+            ok = setState(WAVE_ENDING);                             // BOUND→ENDING
+    }
+
+    if (!ok)
+    {
+        WCS_WARN("[WaveMgr] 恢复失败 状态链迁移异常 order=%s", orderCode.toLocal8Bit().data());
+        clearWave();  // 兜底回滚（清数据，尽力回到 IDLE）
+        return false;
+    }
+
+    WCS_INFO("[WaveMgr] 恢复波次 order=%s qty=%d SKU=%d target=%d(%s)%s sorted=%d exception=%d fullbox=%d",
+        orderCode.toLocal8Bit().data(), orderQty, skuCount, targetStatus,
+        WaveSnapshot::statusToString(targetStatus).toLocal8Bit().data(),
+        bViewOnly ? "(查看模式)" : "", (int)sortedSet.size(), (int)exceptionSet.size(), hasFullboxRecord ? 1 : 0);
+
+    emit waveStatusChanged(targetStatus);
+    return true;
+}
+
 void WaveManager::markSorted(const QString& code)
 {
     bool complete = false;
@@ -47,6 +132,8 @@ void WaveManager::markSorted(const QString& code)
         if (m_bReported.load(std::memory_order_relaxed))
         {
             m_setCodeSorted.insert(code);
+            // ★ 2026-09-06 双计修复：曾异常(如PLC临时失败)后重投成功的件，从异常集合移除
+            m_setCodeException.remove(code);
             m_setCodeProcessing.remove(code);
             m_mapCodeRetry.remove(code);
             lock.unlock();
@@ -55,6 +142,10 @@ void WaveManager::markSorted(const QString& code)
         }
 
         m_setCodeSorted.insert(code);
+        // ★ 2026-09-06 双计修复：同一 code 曾入异常集合（PLC 报无格口/信息不全等临时失败后重投成功），
+        //   成功时必须从异常集合移除——否则 sorted 与 exception 两集合同时含该 code，
+        //   导致 UI 异常数虚高、波次完成判定/对账双计
+        m_setCodeException.remove(code);
         m_setCodeProcessing.remove(code);
         m_mapCodeRetry.remove(code);
 
@@ -204,6 +295,7 @@ WaveSnapshot WaveManager::snapshot() const
     }
 
     snap.sumLocation   = sorted();
+    snap.lastWaveCode  = m_lastOrderCode;  // ★ UI「上波次」显示
 
     {
         std::unique_lock<std::mutex> lock(m_lock);
@@ -260,8 +352,8 @@ bool WaveManager::setState(int newStatus)
         allowed = (newStatus == WAVE_IDLE);
         break;
     case WAVE_HELD:
-        // 异常挂起 → 空闲（人工清理后）| 已完成（人工强制完结）
-        allowed = (newStatus == WAVE_IDLE || newStatus == WAVE_FINISHED);
+        // 异常挂起 → 空闲（人工清理后）| 已完成（人工强制完结）| 已绑定（人工恢复后重新开工，闭环重新回传完结）
+        allowed = (newStatus == WAVE_IDLE || newStatus == WAVE_FINISHED || newStatus == WAVE_BOUND);
         break;
     }
 
@@ -354,12 +446,24 @@ void WaveManager::clearWave()
     m_setCodeException.clear();
     m_mapCodeRetry.clear();
     m_setCodeProcessing.clear();
+    // ★ 上波次记录：清空前把当前波次号保存为“上波次”（覆盖/新任务/切出场景 UI 显示用）
+    if (!m_orderCode.isEmpty())
+        m_lastOrderCode = m_orderCode;
     m_orderCode.clear();
     m_orderQty = 0;
     m_bSortingStarted = false;
     m_bReported.store(false);
+    m_hasFullboxRecord.store(false);   // ★ 2026-09-07 修复：清空时同步复位满箱标记，防 IDLE 下 isSortingStarted() 误判
     WCS_INFO("[WaveMgr] 波次已清理");
-    setState(WAVE_IDLE);
+    // ★ 2026-09-07 修复：BOUND/CREATED/SORTING/ENDING/FULLBOX_SYNC 等状态白名单不允许迁移 IDLE，
+    //   但 clearWave 语义即"强制清空回空闲"（H4覆盖/切换切出/新任务/取消收尾共用）。
+    //   此前 setState(WAVE_IDLE) 被拒后状态残留（如切到"已绑定"波次后再切其它，
+    //   restoreWave 因"当前状态非IDLE"拒绝 → 无法切换，现场实测）。白名单拒绝时直接置位。
+    if (!setState(WAVE_IDLE))
+    {
+        m_waveStatus.store(WAVE_IDLE);
+        emit waveStatusChanged(WAVE_IDLE);
+    }
 }
 
 bool WaveManager::isSortingStarted() const

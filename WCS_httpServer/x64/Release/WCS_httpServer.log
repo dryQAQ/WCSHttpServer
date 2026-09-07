@@ -1,25 +1,28 @@
-﻿D:\vs2019\Community\MSBuild\Microsoft\VC\v160\Microsoft.CppClean.targets(77,5): warning : 对路径“d:\wcs\wcsapp\wcs_httpserver\release_wcshttpserver\wcs_httpserver.exe”的访问被拒绝。
-  Reading Qt configuration (D:/Qt/5.15.2/msvc2019_64/bin/qmake)
+﻿  Reading Qt configuration (D:/Qt/5.15.2/msvc2019_64/bin/qmake)
   uic WCS_httpServer.ui
   rcc WCS_httpServer.qrc
   moc WCS_httpServer.h
   moc ConfigManager.h
   moc LifecycleLogger.h
   moc log_center.h
+  moc OutboxManager.h
   moc WaveManager.h
+   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   moc ParseWorker.h
   moc PlcManager.h
+  moc RfidPushClient.h
   moc MainWindow.h
   moc HttpServer.h
   moc HttpClient.h
-   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   ConfigManager.cpp
   HttpClient.cpp
   HttpServer.cpp
   log_center.cpp
   MainWindow.cpp
+  OutboxManager.cpp
   ParseWorker.cpp
   PlcManager.cpp
+  RfidPushClient.cpp
   SiemensPLC.cpp
   snap7.cpp
   SortingDatabase.cpp
@@ -32,10 +35,13 @@
   moc_ConfigManager.cpp
   moc_LifecycleLogger.cpp
   moc_log_center.cpp
+  moc_OutboxManager.cpp
   moc_WaveManager.cpp
   moc_ParseWorker.cpp
   moc_PlcManager.cpp
+  moc_RfidPushClient.cpp
   moc_MainWindow.cpp
   moc_HttpServer.cpp
   moc_HttpClient.cpp
   WCS_httpServer.vcxproj -> D:\WCS\WCSApp\WCS_httpServer\release_WcsHttpServer\WCS_httpServer.exe
+  WCS_httpServer.vcxproj -> ..\release_WcsHttpServer\WCS_httpServer.pdb (完整 PDB)

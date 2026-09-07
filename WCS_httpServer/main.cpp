@@ -25,6 +25,10 @@
 #include <QApplication>
 #include <QTextCodec>
 #include <QDir>
+#include <QMessageBox>   // ★ 2026-09-06 单实例提示
+#include <QtGlobal>      // ★ 2026-09-07 Qt 消息钩子（QtMsgType/QMessageLogContext）
+#include <atomic>
+#include <string>
 // ★ 必须在 windows.h 之前包含 winsock2.h：
 //   windows.h 会拉入旧版 winsock.h，而 MainWindow.h→HttpServer.h→HPSocket.h
 //   使用的是 winsock2.h，两者同时包含会导致 sockaddr/fd_set 等类型重定义错误
@@ -38,6 +42,29 @@
 #include "ConfigManager.h"
 #include "LogService.h"
 
+// ★ 2026-09-07 Qt 消息钩子：qFatal/qCritical/qWarning 文本落 run.log；
+//   崩溃前最后一条 Qt 消息（qFatal 文本即 abort 根因）随 crash.log 落盘
+static char g_lastQtLevel[16]  = {0};
+static char g_lastQtMsg[1024]  = {0};
+
+static void QtMsgHook(QtMsgType type, const QMessageLogContext& ctx, const QString& msg)
+{
+    const char* lvl = (type == QtFatalMsg)   ? "FATAL"
+                    : (type == QtCriticalMsg) ? "CRITICAL"
+                    : (type == QtWarningMsg)  ? "WARNING" : "INFO";
+    QByteArray mb = msg.toLocal8Bit();
+    LOG_INFO("[Qt%s] %s (%s:%d)", lvl, mb.constData(),
+             ctx.file ? ctx.file : "", ctx.line);
+    if (type == QtFatalMsg || type == QtCriticalMsg || type == QtWarningMsg)
+    {
+        strcpy_s(g_lastQtLevel, lvl);
+        size_t n = (size_t)mb.size();
+        if (n >= sizeof(g_lastQtMsg)) n = sizeof(g_lastQtMsg) - 1;
+        memcpy(g_lastQtMsg, mb.constData(), n);
+        g_lastQtMsg[n] = '\0';
+    }
+}
+
 // ──── 全局崩溃捕获（2026-09-04 新增，定位"空按停止闪退"等异常退出）────
 // ★ 2026-09-04 修复"无法生成 crash 文件"：
 //   原实现仅注册 SetUnhandledExceptionFilter（只能捕获 SEH 异常，如 0xC0000005 访问冲突），
@@ -46,7 +73,7 @@
 //   现将"写 crash.log + 写 minidump"抽成公共函数，同时注册 SEH handler 与 signal handler。
 static void WriteCrashReport(EXCEPTION_POINTERS* pException)
 {
-    // 1. 记录崩溃摘要到 crash.log（exe 同目录）
+    // 1. 记录崩溃摘要 + 栈回溯到 crash.log（exe 同目录）
     HANDLE hLog = CreateFileA("crash.log", GENERIC_WRITE, FILE_SHARE_READ,
                               NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hLog != INVALID_HANDLE_VALUE)
@@ -67,6 +94,26 @@ static void WriteCrashReport(EXCEPTION_POINTERS* pException)
         SetFilePointer(hLog, 0, NULL, FILE_END);
         DWORD written = 0;
         WriteFile(hLog, buf2, (DWORD)strlen(buf2), &written, NULL);
+
+        // ★ 2026-09-06 栈回溯：返回地址列表（无需符号/调试器，配合 dmp 定位崩溃函数）
+        char buf3[2048];
+        int off = 0;
+        {
+            void* frames[32] = { 0 };
+            USHORT count = CaptureStackBackTrace(0, 32, frames, nullptr);
+            off = wsprintfA(buf3, "stack   : %u frames\r\n", count);
+            for (USHORT i = 0; i < count && off < (int)sizeof(buf3) - 48; ++i)
+                off += wsprintfA(buf3 + off, "  [%02u] %p\r\n", i, frames[i]);
+        }
+        WriteFile(hLog, buf3, (DWORD)off, &written, NULL);
+
+        // ★ 2026-09-07 Qt 最后消息（qFatal 文本即 abort 根因）
+        if (g_lastQtMsg[0])
+        {
+            char qtBuf[1200];
+            int nq = wsprintfA(qtBuf, "\r\nqt-last: [%s] %s\r\n", g_lastQtLevel, g_lastQtMsg);
+            WriteFile(hLog, qtBuf, (DWORD)nq, &written, NULL);
+        }
         CloseHandle(hLog);
     }
 
@@ -125,6 +172,25 @@ int main(int argc, char* argv[])
     app.setApplicationName("WMS_HttpServer");
     app.setApplicationVersion("1.0.0");
 
+    // ★ 2026-09-07 Qt 消息钩子：qFatal 等文本进 run.log（崩溃前最后一条=abort 根因）
+    qInstallMessageHandler(QtMsgHook);
+
+    // ★ 2026-09-06：单实例互斥（防止双开导致端口 8191/2000/2010 被占用、数据库冲突）
+    //   已有实例在运行时，第二个实例直接提示并退出（无需手动杀进程，用旧实例即可）
+    //   Local\ 命名空间：同登录会话内互斥；进程结束（含崩溃）时互斥体自动释放
+    HANDLE hSingleMutex = CreateMutexW(NULL, FALSE, L"Local\\WCS_HttpServer_SingleInstance");
+    if (hSingleMutex && GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        QMessageBox::warning(nullptr, QObject::tr("程序已在运行"),
+            QObject::tr("WCS_httpServer 已经在运行中，请勿重复启动。\n\n"
+                        "如果找不到运行窗口：\n"
+                        "  ① 任务管理器 → 结束 WCS_httpServer.exe 进程\n"
+                        "  ② 或重启电脑后重新打开本程序"));
+        CloseHandle(hSingleMutex);
+        return 0;
+    }
+    // hSingleMutex 保持到进程结束（随进程退出自动释放，无需显式关闭）
+
     // ★ 统一本地编码为 UTF-8（与源码 /utf-8 编译保持一致）：
     //   否则 QString::toLocal8Bit()/fromLocal8Bit() 在中文系统走 GBK，
     //   而源码中文字面量是 UTF-8，两者混写进 hlog 日志文件会变成乱码。
@@ -142,8 +208,7 @@ int main(int argc, char* argv[])
     QDir().mkpath(exeDir + "/log/DataBase");    // 数据库操作日志
     
     QDir().mkpath(exeDir + "/log/EPC");         // EpcCache 日志
-    QDir().mkpath(exeDir + "/log/RFID");        // RFID 推送客户端日志
-    QDir().mkpath(exeDir + "/log/RFID");        // ★ 2026-09-04 RFID 推送原始报文日志
+    // ★ 2026-09-06：RFID/SEND 分类日志已并入 run.log（现场反馈独立文件无法写入/不便查看），不再建 RFID/SEND 目录
     QDir().mkpath(exeDir + "/data");            // 分拣数据库目录（UI 查询独立于服务，需提前创建）
 
     // ★ 2026-09-04 启动步骤日志（方便排查"程序当前在做什么"）
@@ -155,7 +220,7 @@ int main(int argc, char* argv[])
 
     MainWindow mainWindow;
     mainWindow.show();
-    LOG_INFO("[启动] 主窗口已显示，等待用户操作（点击\"开始启动\"后服务才监听端口）");
+    LOG_INFO("[启动] 主窗口已显示；设备(PLC/RFID)自动连接中，点击\"开始接收任务\"后 WMS 推送才被接收");
 
     return app.exec();
 }

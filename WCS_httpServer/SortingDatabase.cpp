@@ -259,6 +259,19 @@ bool SortingDatabase::open(const QString& dbPath)
                 m_dbPath.toLocal8Bit().data(),
                 db.lastError().nativeErrorCode().toLocal8Bit().data(),
                 db.lastError().text().toLocal8Bit().data());
+            // ★ 2026-09-06 诊断增强：Driver not loaded 时输出驱动/插件环境，直接定位原因
+            //   （常见：缺 sqldrivers/qsqlite.dll 或 Qt5Sql.dll、插件位数/版本不匹配、qt.conf 指向错误）
+            Data_ERROR("[SortingDB] [诊断] QSQLITE驱动可用=%d 全部驱动=[%s]",
+                QSqlDatabase::isDriverAvailable("QSQLITE") ? 1 : 0,
+                QSqlDatabase::drivers().join(",").toLocal8Bit().constData());
+            QStringList libPaths = QCoreApplication::libraryPaths();
+            Data_ERROR("[SortingDB] [诊断] Qt插件搜索路径=[%s]",
+                libPaths.join(";").toLocal8Bit().constData());
+            QString exeDir = QCoreApplication::applicationDirPath();
+            QDir sqDir(exeDir + "/sqldrivers");
+            Data_ERROR("[SortingDB] [诊断] exe目录=%s sqldrivers目录存在=%d 内容=[%s]",
+                exeDir.toLocal8Bit().constData(), sqDir.exists() ? 1 : 0,
+                sqDir.exists() ? sqDir.entryList(QDir::Files).join(",").toLocal8Bit().constData() : "(无)");
             return false;
         }
 
@@ -375,9 +388,21 @@ void SortingDatabase::createTables()
     // ──── S0 新增表 ────
     // 退货波次头
     q.exec(SQL_CREATE_TABLE_RETURN_WAVE);
+    // ★ 2026-09-06 保险：return_wave 旧库缺列迁移
+    q.exec(SQL_ALTER_ADD_RW_ORDER_QTY);
+    q.exec(SQL_ALTER_ADD_RW_STATUS);
+    q.exec(SQL_ALTER_ADD_RW_CREATED_AT);
+    q.exec(SQL_ALTER_ADD_RW_UPDATED_AT);
     // 退货波次明细
     q.exec(SQL_CREATE_TABLE_RETURN_WAVE_ITEM);
     q.exec(SQL_CREATE_INDEX_WAVE_ITEM_ORDER);
+    // ★ 2026-09-06 修复：return_wave_item 旧库缺列迁移（老库无这些列时 INSERT 报 no such column 导致
+    //   波次明细落库稳定失败）。SQLite 不支持 IF NOT EXISTS，重复执行报 duplicate column，忽略即可。
+    q.exec(SQL_ALTER_ADD_WI_GRID_TYPE);
+    q.exec(SQL_ALTER_ADD_WI_PLAN_QTY);
+    q.exec(SQL_ALTER_ADD_WI_SORTED_QTY);
+    q.exec(SQL_ALTER_ADD_WI_VOLU);
+    q.exec(SQL_ALTER_ADD_WI_OBX_CODE);
     // 格口容器绑定
     q.exec(SQL_CREATE_TABLE_GRID_BOX_BIND);
     q.exec(SQL_CREATE_INDEX_BIND_GRID_ACTIVE);
@@ -393,11 +418,13 @@ void SortingDatabase::createTables()
     q.exec(SQL_CREATE_TABLE_OUTBOX_END);
     // 异常记录
     q.exec(SQL_CREATE_TABLE_EXCEPTION_RECORD);
+    // H4 原始报文单独落库（数据量大，独立表）
+    q.exec(SQL_CREATE_TABLE_WAVE_RAW);
 
     if (q.lastError().isValid())
         qWarning() << "[SortingDB] 建表失败:" << q.lastError().text();
     else
-        Data_INFO("[SortingDB] createTables 建表完成（7张核心表）");
+        Data_INFO("[SortingDB] createTables 建表完成（7张核心表 + wave_raw）");
 }
 
 // ============================================================================
@@ -434,7 +461,7 @@ bool SortingDatabase::insertRecord(const QString& orderCode, const QString& barc
         q.addBindValue(now);
         q.addBindValue(now);
 
-        Data_INFO("[SortingDB] insertRecord barcode=%s sku=%s grid=%s carNum=%s firstCar=%s lastCar=%s gridCount=%d volu=%s orderCode=%s",
+        Data_INFO("[SortingDB] insertRecord barcode=%s sku=%s grid=%s carNum=%s firstCar=%s lastCar=%s gridCount=%d sobi=%s orderCode=%s",
             barcode.toLocal8Bit().data(), sku.toLocal8Bit().data(),
             gridNum.toLocal8Bit().data(),
             carNum.toLocal8Bit().data(),
@@ -794,6 +821,155 @@ ReturnWaveRecord SortingDatabase::getLatestUnfinishedWave()
     });
 }
 
+// ★ 2026-09-06 查询全部已传输波次（含已完成/已取消）+ 进度计数（UI「波次数据记录」）
+QVector<WaveRecordProgress> SortingDatabase::getAllWaves()
+{
+    return runOnDbThread([&]() -> QVector<WaveRecordProgress> {
+        QVector<WaveRecordProgress> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_ALL_WAVES);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            WaveRecordProgress rec;
+            rec.orderCode      = q.value(0).toString();
+            rec.orderQty       = q.value(1).toInt();
+            rec.status         = q.value(2).toInt();
+            rec.createdAt      = q.value(3).toString();
+            rec.updatedAt      = q.value(4).toString();
+            rec.sortedCount    = q.value(5).toInt();
+            rec.exceptionCount = q.value(6).toInt();
+            result.append(rec);
+        }
+        return result;
+    });
+}
+
+QVector<ReturnWaveRecord> SortingDatabase::getAllUnfinishedWaves()
+{
+    return runOnDbThread([&]() -> QVector<ReturnWaveRecord> {
+        QVector<ReturnWaveRecord> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_ALL_UNFINISHED_WAVES);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            ReturnWaveRecord rec;
+            rec.orderCode = q.value(0).toString();
+            rec.orderQty = q.value(1).toInt();
+            rec.status = q.value(2).toInt();
+            rec.createdAt = q.value(3).toString();
+            rec.updatedAt = q.value(4).toString();
+            result.append(rec);
+        }
+        return result;
+    });
+}
+
+// ============================================================================
+// 波次恢复查询（上一波次任务恢复用）
+// ============================================================================
+
+QSet<QString> SortingDatabase::getSortedEpcsByOrder(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> QSet<QString> {
+        QSet<QString> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_SORTED_EPCS_BY_ORDER);
+        q.addBindValue(orderCode);
+        if (!q.exec()) return result;
+        while (q.next())
+            result.insert(q.value(0).toString());
+        return result;
+    });
+}
+
+QSet<QString> SortingDatabase::getExceptionEpcsByOrder(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> QSet<QString> {
+        QSet<QString> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_EXCEPTION_EPCS_BY_ORDER);
+        q.addBindValue(orderCode);
+        if (!q.exec()) return result;
+        while (q.next())
+            result.insert(q.value(0).toString());
+        return result;
+    });
+}
+
+bool SortingDatabase::hasSuccessFullbox(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> bool {
+        if (!m_bOpened) return false;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return false;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_HAS_SUCCESS_FULLBOX);
+        q.addBindValue(orderCode);
+        if (q.exec() && q.next())
+            return q.value(0).toInt() > 0;
+        return false;
+    });
+}
+
+void SortingDatabase::saveWaveRawPayload(const QString& orderCode, const QByteArray& body)
+{
+    runOnDbThread([&]() {
+        if (!m_bOpened) return;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen())
+        {
+            Data_WARN("[SortingDB] saveWaveRawPayload 数据库不可用 order=%s", orderCode.toLocal8Bit().data());
+            return;
+        }
+
+        QSqlQuery q(db);
+        q.prepare(SQL_INSERT_WAVE_RAW);
+        q.addBindValue(orderCode);
+        q.addBindValue(QString::fromUtf8(body));
+        q.addBindValue(currentTimeStr());
+        if (!q.exec())
+            Data_ERROR("[SortingDB] saveWaveRawPayload 失败 order=%s err=%s",
+                orderCode.toLocal8Bit().data(), q.lastError().text().toLocal8Bit().data());
+        else
+            Data_INFO("[SortingDB] H4原始报文已落库 order=%s body=%d字节",
+                orderCode.toLocal8Bit().data(), body.size());
+    });
+}
+
+QByteArray SortingDatabase::getWaveRawPayload(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> QByteArray {
+        QByteArray result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_WAVE_RAW);
+        q.addBindValue(orderCode);
+        if (q.exec() && q.next())
+            result = q.value(0).toString().toUtf8();
+        return result;
+    });
+}
+
 bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<ReturnWaveItemRecord>& items)
 {
     return runOnDbThread([&]() -> bool {
@@ -918,7 +1094,7 @@ bool SortingDatabase::incrementSortedQty(const QString& orderCode, const QString
 // S0 新增：容器绑定
 // ============================================================================
 
-bool SortingDatabase::bindGridBox(const QString& gridNum, const QString& boxcode)
+bool SortingDatabase::bindGridBox(const QString& gridNum, const QString& boxcode, const QString& orderCode)
 {
     return runOnDbThread([&]() -> bool {
         if (!m_bOpened)
@@ -961,7 +1137,8 @@ bool SortingDatabase::bindGridBox(const QString& gridNum, const QString& boxcode
         q.prepare(SQL_INSERT_GRID_BIND);
         q.addBindValue(gridNum);
         q.addBindValue(boxcode);
-        q.addBindValue(QString(""));  // order_code 绑定时无需关联波次，存空字符串（NOT NULL 约束）
+        // ★ 2026-09-06 关联所属波次（切换波次时按此恢复格口绑定视图；历史行为=空串）
+        q.addBindValue(orderCode);
         q.addBindValue(now);
         if (!q.exec())
         {
@@ -1007,6 +1184,82 @@ bool SortingDatabase::archiveGridBinds(const QString& gridNum)
         q.prepare(SQL_ARCHIVE_OLD_BIND);
         q.addBindValue(currentTimeStr());
         q.addBindValue(gridNum);
+        return q.exec();
+    });
+}
+
+QVector<GridBoxBindRecord> SortingDatabase::getAllActiveBinds()
+{
+    return runOnDbThread([&]() -> QVector<GridBoxBindRecord> {
+        QVector<GridBoxBindRecord> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_ALL_ACTIVE_BINDS);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            GridBoxBindRecord rec;
+            rec.gridNum = q.value(0).toString();
+            rec.boxcode = q.value(1).toString();
+            rec.orderCode = q.value(2).toString();
+            rec.bindTime = q.value(3).toString();
+            rec.active = true;
+            result.append(rec);
+        }
+        return result;
+    });
+}
+
+// ★ 2026-09-06 按波次查询绑定快照（每格取该波次最近一条，含已归档）——波次切换恢复绑定视图用
+QMap<QString, QString> SortingDatabase::getBindsByOrder(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> QMap<QString, QString> {
+        QMap<QString, QString> result;
+        if (!m_bOpened || orderCode.isEmpty()) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_BINDS_BY_ORDER);
+        q.addBindValue(orderCode);
+        q.addBindValue(orderCode);
+        if (!q.exec()) return result;
+        while (q.next())
+            result.insert(q.value(0).toString(), q.value(1).toString());
+        return result;
+    });
+}
+
+// ★ 2026-09-07 每格最近一次绑定记录（无论 active）——无当前绑定时"沿用上一波次绑定"用
+QMap<QString, QString> SortingDatabase::getLastKnownBinds()
+{
+    return runOnDbThread([&]() -> QMap<QString, QString> {
+        QMap<QString, QString> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_LAST_KNOWN_BINDS);
+        if (!q.exec()) return result;
+        while (q.next())
+            result.insert(q.value(0).toString(), q.value(1).toString());
+        return result;
+    });
+}
+
+bool SortingDatabase::archiveAllBinds()
+{
+    return runOnDbThread([&]() -> bool {
+        if (!m_bOpened) return false;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return false;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_ARCHIVE_ALL_BINDS);
+        q.addBindValue(currentTimeStr());
         return q.exec();
     });
 }
@@ -1239,6 +1492,59 @@ QVector<OutboxRecord> SortingDatabase::getOutboxByOrderCode(const QString& order
             rec.boxcode = q.value(2).toString();
             rec.payload = q.value(3).toString();
             rec.retryCount = q.value(4).toInt();
+            result.append(rec);
+        }
+        return result;
+    });
+}
+
+QVector<OutboxRecord> SortingDatabase::getOutboxFullboxByOrder(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> QVector<OutboxRecord> {
+        QVector<OutboxRecord> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_OUTBOX_FULLBOX_BY_ORDER_ALL);
+        q.addBindValue(orderCode);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            OutboxRecord rec;
+            rec.msgId = q.value(0).toString();
+            rec.orderCode = q.value(1).toString();
+            rec.boxcode = q.value(2).toString();
+            rec.payload = q.value(3).toString();
+            rec.status = q.value(4).toString();
+            rec.retryCount = q.value(5).toInt();
+            rec.createdAt = q.value(6).toString();
+            result.append(rec);
+        }
+        return result;
+    });
+}
+
+QVector<OutboxRecord> SortingDatabase::getOutboxEndByOrder(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> QVector<OutboxRecord> {
+        QVector<OutboxRecord> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_OUTBOX_END_BY_ORDER_ALL);
+        q.addBindValue(orderCode);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            OutboxRecord rec;
+            rec.msgId = q.value(0).toString();
+            rec.orderCode = q.value(1).toString();
+            rec.payload = q.value(2).toString();
+            rec.status = q.value(3).toString();
+            rec.retryCount = q.value(4).toInt();
+            rec.createdAt = q.value(5).toString();
             result.append(rec);
         }
         return result;

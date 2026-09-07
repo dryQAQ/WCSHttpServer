@@ -64,6 +64,9 @@ void ParseWorker::run()
             orderQty = v.isString() ? v.toString().toInt() : v.toInt();
         }
         QJsonArray items   = root["items"].toArray();
+        // ★ sobi 来源库位（对应满箱回传 head.fromLocation）：优先 items[].sobi，
+        //   兼容根节点级 sobi（波次级来源库位）作为明细缺省兜底
+        QString rootSobi   = root["sobi"].toString().trimmed();
 
         // 构建新Map（key=Sku编码, value=格口分配信息）
         auto* newMap = new QMap<QString, GridEntry>();
@@ -79,7 +82,12 @@ void ParseWorker::run()
             QString inco     = item["inco"].toString().trimmed();
             QString gridNum  = item["gridNum"].toString().trimmed();
             QString gridType = item["gridType"].toString().trimmed();
-            QString volu     = item["volu"].toString().trimmed();   // ★ 来源库位
+            // ★ 2026-09-06 来源库位（对应满箱回传报文 head.fromLocation）：
+            //   WMS 下发字段为 sobi（如 "H-01-AB"），旧报文兼容 volu；根节点 sobi 兜底
+            QString sobi     = item["sobi"].toString().trimmed();
+            QString volu     = sobi.isEmpty() ? item["volu"].toString().trimmed() : sobi;
+            if (volu.isEmpty())
+                volu = rootSobi;
             QString obxCode  = item["obxCode"].toString().trimmed();               // ★ 容器号
             // ★ 兼容整数和字符串两种类型
             int gridNumber = 0;
@@ -142,9 +150,9 @@ void ParseWorker::run()
                 entry.orderQty  = orderQty;
                 entry.skuCount  = 0;  // 循环结束后统一回填
                 newMap->insert(inco, entry);
-                WCS_INFO("[SKU映射] 新增 SKU=%s gridNum=%s gridType=%s gridCount=%d volu=%s", 
+                WCS_INFO("[SKU映射] 新增 SKU=%s gridNum=%s gridType=%s gridCount=%d sobi=%s", 
                     inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), 
-                    entry.gridType.toLocal8Bit().data(), gridNumber, volu.toLocal8Bit().data());
+                    entry.gridType.toLocal8Bit().data(), gridNumber, sobi.toLocal8Bit().data());
             }
         }
 
@@ -162,11 +170,11 @@ void ParseWorker::run()
         WCS_INFO("[Parse] orderCode=%s items=%d SKU=%d qty=%d elapsed=%lldms",
             orderCode.toLocal8Bit().data(), items.size(), newMap->size(), orderQty, elapsed);
 
-        // ★ 输出完整 SKU→格口 映射表（方便排查 SKU 映射失败问题）
+        // ★ 输出完整 SKU→格口 映射表（方便排查 SKU 映射失败问题；sobi=WMS下发的来源库位字段）
         WCS_INFO("[SKU映射] ==== 完整映射表(orderCode=%s) ====", orderCode.toLocal8Bit().data());
         for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it)
         {
-            WCS_INFO("[SKU映射] SKU=%s → gridNum=%s gridType=%s gridCount=%d volu=%s",
+            WCS_INFO("[SKU映射] SKU=%s → gridNum=%s gridType=%s gridCount=%d sobi=%s",
                 it.key().toLocal8Bit().data(), it.value().gridNum.toLocal8Bit().data(),
                 it.value().gridType.toLocal8Bit().data(), it.value().gridCount, 
                 it.value().volu.toLocal8Bit().data());
@@ -177,6 +185,8 @@ void ParseWorker::run()
             QString("[Parse] orderCode=%1 items=%2 SKU=%3 elapsed=%4ms")
                 .arg(orderCode).arg(items.size()).arg(newMap->size()).arg(elapsed));
 
-        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed, recvSet);
+        // ★ 2026-09-07 透传 H4 原文（供当前波次执行中排队/延迟执行；先拷贝防复用）
+        QByteArray rawCopy = task.rawBody;
+        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed, recvSet, rawCopy);
     }
 }

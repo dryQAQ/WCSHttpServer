@@ -77,11 +77,16 @@ bool RfidPushClient::start(const QString& ip, int port)
 
 void RfidPushClient::stop()
 {
+    // ★ 2026-09-06 防析构崩溃：先无条件 Stop（HP-Socket 同步停止并等待工作线程退出，
+    //   连接启动中/重连中同样安全），再 Reset 销毁组件。
+    //   原判断 HasStarted() 会漏掉「STARTING/连接重试中」状态 → 直接 Reset 销毁半启动组件，
+    //   工作线程回调访问已销毁对象 → 关程序时崩溃（dmp 集中在此场景）。
     if (m_reconnectTimer) m_reconnectTimer->stop();
     if (m_heartbeatTimer)  m_heartbeatTimer->stop();
-    if (m_client && m_client->HasStarted())
+    m_connected.store(false);
+    if (m_client)
     {
-        m_client->Stop();
+        m_client->Stop();   // 无条件停（幂等；同步等线程退出后再销毁）
         RFID_INFO("RFID推送客户端已停止");
     }
     m_client.Reset();
@@ -112,30 +117,23 @@ void RfidPushClient::onReconnectTimer()
 }
 
 // ★ 2026-09-04：应用层心跳——RFID 服务端要求客户端每 2s 发一次心跳保活
-//   仅已连接（OnConnect 置位的 m_connected）时发送；发送报文无条件落日志（与接收侧对称）
+//   仅已连接（OnConnect 置位的 m_connected）时发送
+//   ★ 2026-09-06：心跳报文不打印 run.log（高频保活帧，避免刷屏）；仅失败时告警
+//   ★ 2026-09-07：心跳发送/接收明细打印到生命周期日志 LIFECYCLE/lifecycle.log（核对服务端是否认可心跳）
 void RfidPushClient::onHeartbeatTimer()
 {
     if (!m_heartbeatEnabled || !m_client || !m_connected.load()) return;   // 心跳关闭/未连接/连接中不发送
 
-    static int s_beatCount = 0;
     QByteArray beat(RFID_HEARTBEAT_MSG);
-
-    // ★ 2026-09-04：发送的报文也打印日志（hex + 文本），方便排查心跳格式
-    QString beatText = QString::fromUtf8(beat);
-    QString beatHex  = QString::fromLatin1(beat.toHex(' '));
-
-    if (m_client->Send((const BYTE*)beat.constData(), beat.length()))
+    if (!m_client->Send((const BYTE*)beat.constData(), beat.length()))
     {
-        ++s_beatCount;
-        RFID_INFO("[发送报文] len=%d hex=%s text=%s | 发送成功(累计%d次)",
-                  beat.length(), beatHex.toLocal8Bit().constData(),
-                  beatText.toLocal8Bit().constData(), s_beatCount);
+        RFID_WARN("[心跳] 发送失败 err=%d（连接可能已断，等待自动重连）",
+                  (int)m_client->GetLastError());
     }
     else
     {
-        RFID_WARN("[发送报文] len=%d hex=%s text=%s | 发送失败 err=%d（等待自动重连）",
-                  beat.length(), beatHex.toLocal8Bit().constData(),
-                  beatText.toLocal8Bit().constData(), (int)m_client->GetLastError());
+        LIFE_LOG("[RFID][心跳发送] %s -> %s:%d",
+                 beat.trimmed().constData(), m_ip.toLocal8Bit().constData(), m_port);
     }
 }
 
@@ -186,19 +184,38 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
 {
     if (!pData || iLength <= 0) return HR_OK;
 
-    // ★ 2026-09-04：原始报文无条件落日志（无论波次状态、无论格式对错，方便维护排查）
+    // ★ 2026-09-04：原始报文落日志（无论波次状态、格式对错，方便维护排查）
+    // ★ 2026-09-06：纯心跳帧（应答）不打印——高频保活帧，无排查价值，避免刷屏
     QByteArray raw((const char*)pData, iLength);
     {
-        bool truncated = (raw.size() > 512);
-        QByteArray head = raw.left(512);
-        RFID_INFO("[原始报文] conn=%llu len=%d hex=%s%s",
-                  (unsigned long long)dwConnID, iLength,
-                  head.toHex(' ').constData(),
-                  truncated ? " ...(截断)" : "");
-        RFID_INFO("[原始报文] conn=%llu text=%s%s",
-                  (unsigned long long)dwConnID,
-                  QString::fromUtf8(head).toLocal8Bit().constData(),
-                  truncated ? " ...(截断)" : "");
+        bool pureHeartbeat = false;
+        QByteArray probe = raw;
+        if (probe.startsWith("RFID{HEARTBEAT") || probe.startsWith("{HEARTBEAT"))
+        {
+            int e = probe.indexOf('}');
+            if (e > 0)
+            {
+                QByteArray after = probe.mid(e + 1);
+                while (after.startsWith("0D")) after.remove(0, 2);
+                while (!after.isEmpty() && (after.at(0) == '\r' || after.at(0) == '\n'))
+                    after.remove(0, 1);
+                pureHeartbeat = after.isEmpty();   // '}' 后仅帧尾 → 纯心跳块
+            }
+        }
+
+        if (!pureHeartbeat)
+        {
+            bool truncated = (raw.size() > 512);
+            QByteArray head = raw.left(512);
+            RFID_INFO("[原始报文] conn=%llu len=%d hex=%s%s",
+                      (unsigned long long)dwConnID, iLength,
+                      head.toHex(' ').constData(),
+                      truncated ? " ...(截断)" : "");
+            RFID_INFO("[原始报文] conn=%llu text=%s%s",
+                      (unsigned long long)dwConnID,
+                      QString::fromUtf8(head).toLocal8Bit().constData(),
+                      truncated ? " ...(截断)" : "");
+        }
     }
 
     {
@@ -219,17 +236,19 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
                 break;
 
             // ── 心跳/应答帧（RFID{HEARTBEAT...} / {HEARTBEAT...} 文本帧，非业务数据）──
-            //   识别并静默记录，避免每 2s 一次被"报文非法"告警刷屏
+            //   ★ 2026-09-06：run.log 静默剥除，不打印（高频保活帧，避免刷屏）
+            //   ★ 2026-09-07：收发明细打印到生命周期日志 LIFECYCLE/lifecycle.log
             if (m_recvBuffer.startsWith("RFID{HEARTBEAT") || m_recvBuffer.startsWith("{HEARTBEAT"))
             {
                 int end = m_recvBuffer.indexOf('}');
                 if (end < 0)
                     break;   // 帧不完整（还没收到 '}'）→ 等更多数据
-                QByteArray frame = m_recvBuffer.left(end + 1);
-                RFID_INFO("[心跳] 收到心跳/应答帧: %s",
-                          QString::fromUtf8(frame).toLocal8Bit().constData());
+                QByteArray hbText = m_recvBuffer.left(end + 1);   // 心跳文本（含 {}）
                 m_recvBuffer.remove(0, end + 1);
                 stripFrameTail(m_recvBuffer);
+                LIFE_LOG("[RFID][心跳接收] conn=%llu %s",
+                         (unsigned long long)dwConnID,
+                         hbText.left(128).constData());
                 continue;
             }
 
@@ -274,21 +293,24 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
             m_recvBuffer.remove(0, endBrace + 1);
             stripFrameTail(m_recvBuffer);
 
-            // ── 解析 content：流水号|小车号|epc ──
+            // ── 解析 content：流水号|设备编码|epc ──
+            // ★ 2026-09-06 纠正（现场确认）：帧格式为 {流水号|设备编码|epc}，
+            //   小车号在「流水号」中（如 SN0098 = 98 号小车）；parts[1] 是设备编码，
+            //   不能当作小车号参与 PLC 指令
             QList<QByteArray> parts = content.split('|');
-            QString seq, carNum, epc;
+            QString seq, devCode, epc;
             if (parts.size() >= 3)
             {
-                seq    = QString::fromUtf8(parts[0]).trimmed();
-                carNum = QString::fromUtf8(parts[1]).trimmed();
-                epc    = QString::fromUtf8(parts[2]).trimmed();
+                seq     = QString::fromUtf8(parts[0]).trimmed();  // 流水号，如 SN0098
+                devCode = QString::fromUtf8(parts[1]).trimmed();  // 设备编码，如 01（不参与PLC指令）
+                epc     = QString::fromUtf8(parts[2]).trimmed();  // EPC
             }
             else if (parts.size() == 2)
             {
-                // 兼容两段帧：{流水号|epc}（缺小车号），仅告警仍尝试处理
+                // 兼容两段帧：{流水号|epc}（缺设备编码），仅告警仍尝试处理
                 seq = QString::fromUtf8(parts[0]).trimmed();
                 epc = QString::fromUtf8(parts[1]).trimmed();
-                RFID_WARN("RFID帧仅2段(缺小车号) seq=%s epc=%s frame=%s",
+                RFID_WARN("RFID帧仅2段(缺设备编码) seq=%s epc=%s frame=%s",
                           seq.toLocal8Bit().constData(), epc.toLocal8Bit().constData(),
                           content.constData());
             }
@@ -296,6 +318,26 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
             {
                 RFID_WARN("RFID帧格式非法 parts=%d frame=%s", parts.size(), content.constData());
                 continue;
+            }
+
+            // ★ 2026-09-06：小车号 = 流水号中的数字（"SN0098"→98；无字母前缀的纯数字同样兼容）
+            // ★ 2026-09-07：SN0000 同样解析（car=0），不做有效性过滤——只要读到就按解析结果处理
+            QString carNum;
+            {
+                QString numPart = seq;
+                int i = 0;
+                while (i < numPart.size() && !numPart.at(i).isDigit())
+                    ++i;                       // 跳过 "SN" 等非数字前缀
+                numPart = numPart.mid(i);
+                int j = 0;
+                while (j < numPart.size() && numPart.at(j).isDigit())
+                    ++j;                       // 截取连续数字
+                numPart = numPart.left(j);
+                if (!numPart.isEmpty())
+                    carNum = QString::number(numPart.toInt());   // "SN0098"→"98"，"SN0000"→"0"
+                else
+                    RFID_INFO("流水号未含数字 seq=%s（车号置空，按原样继续处理）",
+                              seq.toLocal8Bit().constData());
             }
 
             // ── 无条码帧：EPC 未读到（占位 NOREAD），仅记录不处理，不进入分拣 ──

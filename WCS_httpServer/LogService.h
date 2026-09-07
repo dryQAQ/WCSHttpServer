@@ -68,10 +68,20 @@
 #define WAVE_ITEM_INFO(fmt, ...) hlog_format(HLOG_LEVEL_INFO, "WAVE_ITEM", "\t" fmt, ##__VA_ARGS__)
 #endif
 
-// ──── RFID 模块（RFID 推送 TCP 原始报文 + 解析，2026-09-04 新增）────
-// 写入 ./log/RFID/rfid.log —— 原始报文无条件落日志，方便维护排查
+// ──── RFID 模块（RFID 推送 TCP 原始报文 + 解析）────
+// ★ 2026-09-06：不再单独建 ./log/RFID/rfid.log（现场反馈独立文件无法写入/不便查看），
+//   统一并入 run.log（与 LOG_* 相同文件），保留 RFID_* 宏名避免改调用点
 #ifndef RFID_INFO
-#define RFID_INFO(fmt, ...)  hlog_format(HLOG_LEVEL_INFO,  "RFID", "\t" fmt, ##__VA_ARGS__)
-#define RFID_WARN(fmt, ...)  hlog_format(HLOG_LEVEL_WARN,  "RFID", "\t" fmt, ##__VA_ARGS__)
-#define RFID_ERROR(fmt, ...) hlog_format(HLOG_LEVEL_ERROR, "RFID", "\t" fmt, ##__VA_ARGS__)
+#define RFID_INFO(fmt, ...)  LOG_INFO(fmt, ##__VA_ARGS__)
+#define RFID_WARN(fmt, ...)  LOG_WARN(fmt, ##__VA_ARGS__)
+#define RFID_ERROR(fmt, ...) LOG_ERROR(fmt, ##__VA_ARGS__)
+#endif
+
+// ──── SEND 模块（WMS 出站回传报文归档）────
+// ★ 2026-09-06：不再单独建 ./log/SEND/send.log（现场反馈独立文件无法写入/不便查看），
+//   统一并入 run.log；发送/响应报文与运行日志同文件，检索 "[原始报文]" 即可定位
+#ifndef SEND_INFO
+#define SEND_INFO(fmt, ...)  LOG_INFO(fmt, ##__VA_ARGS__)
+#define SEND_WARN(fmt, ...)  LOG_WARN(fmt, ##__VA_ARGS__)
+#define SEND_ERROR(fmt, ...) LOG_ERROR(fmt, ##__VA_ARGS__)
 #endif

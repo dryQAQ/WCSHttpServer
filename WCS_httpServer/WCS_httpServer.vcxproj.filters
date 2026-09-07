@@ -76,6 +76,9 @@
     <ClCompile Include="sqlite3.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="OutboxManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="ConfigManager.h">
@@ -100,6 +103,9 @@
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="HttpServer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="OutboxManager.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>
@@ -135,6 +141,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="EpcCache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LogService.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
