@@ -23,6 +23,7 @@
 #include <QDialogButtonBox>
 #include <QXmlStreamReader>
 #include <QFile>
+#include <QSplitter>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -151,30 +152,33 @@ void MainWindow::setupUI()
     bindCountRow->addWidget(m_spinBindCount);
     bindCountRow->addStretch();
 
-    serverLayout->addWidget(m_btnStartStop);
-    serverLayout->addWidget(m_lblServerStatus);
-    serverLayout->addWidget(m_lblPort);
+    serverLayout->addWidget(m_btnStartStop, 0, Qt::AlignHCenter);
+
+    // ★ 2026-09-07 布局：「未接收任务」状态 + 端口（水平同一行）
+    QHBoxLayout* statusPortRow = new QHBoxLayout();
+    statusPortRow->addStretch();
+    statusPortRow->addWidget(m_lblServerStatus);
+    statusPortRow->addWidget(m_lblPort);
+    statusPortRow->addStretch();
+    serverLayout->addLayout(statusPortRow);
+
     serverLayout->addLayout(bindCountRow);
 
     // ★ 2026-09-07 设置按钮：弹出 XML 配置编辑，保存即热生效（无需重启程序）
+    //   布局：与「重传满箱切换/重传任务完结」同处一行（见下方 resendRow）
     QPushButton* btnSettings = new QPushButton(QCoreApplication::translate("MainWindow", "设置配置"));
     btnSettings->setMinimumHeight(30);
     btnSettings->setStyleSheet(
         "QPushButton { background-color: #607D8B; color: white; font-size: 13px; font-weight: bold; "
         "border-radius: 4px; padding: 4px 12px; }"
         "QPushButton:hover { background-color: #546E7A; }");
-    QHBoxLayout* settingsRow = new QHBoxLayout();
-    settingsRow->addStretch();
-    settingsRow->addWidget(btnSettings);
-    settingsRow->addStretch();
-    serverLayout->addLayout(settingsRow);
     connect(btnSettings, &QPushButton::clicked, this, &MainWindow::openConfigEditor);
 
     // ★ 2026-09-06 回传保障按钮（主工作流不受影响；点击=按当前目标波次主动补发对应报文）
     //   目标波次：优先「波次数据记录」列表选中行；未选中时用当前内存波次
     // ★ 2026-09-07 重传满箱切换(H7) 旁新增「格口号输入框」：填了格口号 → 手动满箱切换
     //   （读取该格口当前分拣记录+容器号，按 H7 立即上传）；不填 → 原有重传行为
-    QHBoxLayout* resendRow = new QHBoxLayout();
+    // ★ 2026-09-07 布局纠正：H8 在上与「设置配置」同一行；H7 在下（带格口号输入框）
     m_btnResendH7 = new QPushButton(QCoreApplication::translate("MainWindow", "重传满箱切换(H7)"));
     m_btnResendH8 = new QPushButton(QCoreApplication::translate("MainWindow", "重传任务完结(H8)"));
     m_editFullboxGrid = new QLineEdit();
@@ -191,11 +195,21 @@ void MainWindow::setupUI()
         "QPushButton { background-color: #8E24AA; color: white; font-size: 12px; font-weight: bold; "
         "border-radius: 4px; padding: 4px 12px; }"
         "QPushButton:hover { background-color: #7B1FA2; }");
-    resendRow->addWidget(m_btnResendH7);
-    resendRow->addWidget(m_editFullboxGrid);
-    resendRow->addWidget(m_btnResendH8);
-    resendRow->addStretch();
-    serverLayout->addLayout(resendRow);
+    // ── 上行：重传任务完结(H8) + 设置配置（同一水平行）──
+    QHBoxLayout* resendRowH8 = new QHBoxLayout();
+    resendRowH8->addStretch();
+    resendRowH8->addWidget(m_btnResendH8);
+    resendRowH8->addWidget(btnSettings);   // ★ 2026-09-07「设置配置」与「重传任务完结(H8)」同一水平行
+    resendRowH8->addStretch();
+    serverLayout->addLayout(resendRowH8);
+
+    // ── 下行：重传满箱切换(H7) + 格口号输入框（H7 在 H8 下方）──
+    QHBoxLayout* resendRowH7 = new QHBoxLayout();
+    resendRowH7->addStretch();
+    resendRowH7->addWidget(m_btnResendH7);
+    resendRowH7->addWidget(m_editFullboxGrid);
+    resendRowH7->addStretch();
+    serverLayout->addLayout(resendRowH7);
 
     // ★ 重传目标说明（选中行优先，否则当前内存波次——在 onResendSelectedH7/H8 中解析；
     //   格口号输入框非空时 H7 按钮执行手动满箱切换）
@@ -664,29 +678,48 @@ void MainWindow::setupUI()
     connect(btnClearLog, &QPushButton::clicked, this, &MainWindow::onClearLog);
 
     // ═══════════════════════════════════════════
-    // 组装布局
+    // 组装布局（★ 2026-09-07 改用 QSplitter：各分组间有可拖动分隔条，
+    //   左右（行内水平分隔条）与高度（整体垂直分隔条）均可手动调整）
     // ═══════════════════════════════════════════
-    // 第一行：服务控制 + PLC 综合状态（水平）
-    QHBoxLayout* rowTop = new QHBoxLayout();
-    grpServer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    rowTop->addWidget(grpServer);
-    rowTop->addWidget(grpPlc, 1);
-    mainLayout->addLayout(rowTop);
+    QSplitter* vsplit = new QSplitter(Qt::Vertical, central);
+    vsplit->setChildrenCollapsible(false);
+    vsplit->setHandleWidth(5);
 
-    // 第二行：波次信息 + 运行日志（水平）
-    QHBoxLayout* rowMid = new QHBoxLayout();
-    grpWave->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-    rowMid->addWidget(grpWave);
-    rowMid->addWidget(grpLog, 1);
-    mainLayout->addLayout(rowMid, 1); // 占剩余垂直空间
+    // 第一行：任务接收控制 + 设备状态(PLC/RFID) —— 水平可拖动
+    QSplitter* rowTopSplit = new QSplitter(Qt::Horizontal);
+    rowTopSplit->setChildrenCollapsible(false);
+    rowTopSplit->setHandleWidth(5);
+    rowTopSplit->addWidget(grpServer);
+    rowTopSplit->addWidget(grpPlc);
+    rowTopSplit->setStretchFactor(0, 0);
+    rowTopSplit->setStretchFactor(1, 1);   // 设备状态占剩余宽度
+    vsplit->addWidget(rowTopSplit);
 
-    // 容器绑定状态 + 未完成波次重传面板（水平并排）
-    QHBoxLayout* rowBinding = new QHBoxLayout();
-    rowBinding->addWidget(grpBinding, 1);
-    rowBinding->addWidget(grpUnfinished, 1);
-    mainLayout->addLayout(rowBinding);
+    // 第二行：波次信息 + 运行日志 —— 水平可拖动；行高优先给该行
+    QSplitter* rowMidSplit = new QSplitter(Qt::Horizontal);
+    rowMidSplit->setChildrenCollapsible(false);
+    rowMidSplit->setHandleWidth(5);
+    rowMidSplit->addWidget(grpWave);
+    rowMidSplit->addWidget(grpLog);
+    rowMidSplit->setStretchFactor(0, 0);
+    rowMidSplit->setStretchFactor(1, 1);   // 日志占剩余宽度
+    vsplit->addWidget(rowMidSplit);
+    vsplit->setStretchFactor(vsplit->indexOf(rowMidSplit), 1);  // 占剩余垂直空间
 
-    mainLayout->addWidget(grpQuery);  // ★ 分拣记录查询面板
+    // 第三行：容器绑定状态 + 波次数据记录/未完成波次 —— 水平可拖动
+    QSplitter* rowBindingSplit = new QSplitter(Qt::Horizontal);
+    rowBindingSplit->setChildrenCollapsible(false);
+    rowBindingSplit->setHandleWidth(5);
+    rowBindingSplit->addWidget(grpBinding);
+    rowBindingSplit->addWidget(grpUnfinished);
+    rowBindingSplit->setStretchFactor(0, 1);
+    rowBindingSplit->setStretchFactor(1, 1);
+    vsplit->addWidget(rowBindingSplit);
+
+    // 第四行：分拣记录查询
+    vsplit->addWidget(grpQuery);
+
+    mainLayout->addWidget(vsplit, 1);
 }
 
 void MainWindow::setupConnections()
