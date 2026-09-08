@@ -200,6 +200,15 @@ public:
     // 查询某波次 H4 原始报文（追溯用）
     QByteArray getWaveRawPayload(const QString& orderCode);
 
+    // ═══════════════════════════════════════════════════════════════
+    // 每日峰值效率（2026-09-07：波次面板峰值效率持久化）
+    // ═══════════════════════════════════════════════════════════════
+
+    // 保存某日 1 分钟窗口件数峰值（INSERT OR REPLACE，peak_per_hour=×60 一并存）
+    bool saveDailyPeak(const QString& date, int peakPerMinute);
+    // 查询某日峰值（1 分钟窗口件数口径；无记录返回 0）
+    int  getDailyPeakPerMinute(const QString& date);
+
     // 插入波次明细（先清旧再插新，支持覆盖重下）
     bool insertWaveItems(const QString& orderCode, const QVector<ReturnWaveItemRecord>& items);
     // 获取波次明细

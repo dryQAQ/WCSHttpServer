@@ -33,7 +33,7 @@
   </ImportGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
     <QtInstall>5.15.2_msvc2019_64</QtInstall>
-    <QtModules>core;sql;gui;widgets;network</QtModules>
+    <QtModules>core;sql;network;gui;widgets;printsupport;charts</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
@@ -56,6 +56,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+    <IncludePath>D:\WCS\WCSApp\WCS_httpServer\include;D:\WCS\WCSApp\WCS_httpServer\lib;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\Qt\5.15.2\msvc2019_64\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <LibraryPath>D:\Qt\5.15.2\msvc2019_64\lib;D:\WCS\WCSApp\WCS_httpServer\lib;$(LibraryPath)</LibraryPath>
@@ -65,7 +67,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
       <AdditionalLibraryDirectories>D:\WCS\WCSApp\WCS_httpServer\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>HPSocket_U.lib;hlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>HPSocket_U.lib;hlog.lib;Qt5PrintSupport.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ClCompile>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -119,6 +121,8 @@
     <ClCompile Include="OutboxManager.cpp" />
     <ClCompile Include="ParseWorker.cpp" />
     <ClCompile Include="PlcManager.cpp" />
+    <ClCompile Include="qcustomplot.cpp" />
+    <!-- ★ 2026-09-07 效率统计图库 -->
     <ClCompile Include="RfidPushClient.cpp" />
     <ClCompile Include="SiemensPLC.cpp" />
     <ClCompile Include="snap7.cpp" />
@@ -151,6 +155,8 @@
     <QtMoc Include="MainWindow.h" />
     <QtMoc Include="HttpServer.h" />
     <QtMoc Include="HttpClient.h" />
+    <QtMoc Include="qcustomplot.h" />
+    <!-- ★ 2026-09-07 QCustomPlot Q_OBJECT moc -->
     <ClInclude Include="SiemensPLC.h" />
     <ClInclude Include="snap7.h" />
   </ItemGroup>

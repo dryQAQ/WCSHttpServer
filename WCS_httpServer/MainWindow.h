@@ -38,6 +38,8 @@
 #include "ConfigManager.h"
 #include "SortingDatabase.h"
 
+class QDialog;   // ★ 2026-09-07 效率统计弹窗指针（仅在 .cpp 中定义具体类）
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -63,6 +65,7 @@ private slots:
     void onQueryRecords();    // ★ 查询分拣记录
     void onStartSortingClicked(); // ★ 开始分拣按钮点击
     void doActualStop();     // ★ 实际执行「停止任务接收」收尾（H8回传完成/超时/取消后调用；设备保持连接）
+    void onOpenEffChart();   // ★ 2026-09-07 打开 RFID 推送效率统计弹窗（QCustomPlot）
 
 private:
     // ★ 2026-09-02 修复"结束任务卡死/闪退"：停止流程阶段状态机
@@ -138,6 +141,8 @@ private:
     QLabel*      m_lblException    = nullptr;  // 异常数量
     QLabel*      m_lblSumLocation  = nullptr;  // 去重格口总数
     QLabel*      m_lblLastWave     = nullptr;  // 上一个波次号
+    QLabel*      m_lblEfficiency   = nullptr;  // ★ 2026-09-07 分拣效率（折算件/时）
+    QLabel*      m_lblPeakEff      = nullptr;  // ★ 2026-09-07 峰值效率（当日最大，件/时；落库 daily_peak）
     QPushButton* m_btnStartSorting = nullptr;  // ★ 开始分拣按钮（手动触发分拣中状态）
 
     // ──── 容器绑定面板 UI（92格口 6列×16行）────
@@ -191,9 +196,11 @@ private:
     QDateEdit*   m_editQueryDateTo   = nullptr;   // 查询结束日期
     QPushButton* m_btnQueryRecords   = nullptr;   // 查询按钮
     QPushButton* m_btnQueryClear     = nullptr;   // 清空结果
+    QPushButton* m_btnEffChart       = nullptr;   // ★ 2026-09-07 效率统计（弹出 QCustomPlot 弹窗）
     QTableWidget* m_tblRecords       = nullptr;   // 查询结果表格
     QLabel*      m_lblRecordCount    = nullptr;   // 记录统计标签
     QLabel*      m_lblDbStats        = nullptr;   // 数据库统计标签
     QTimer*      m_dbCleanupTimer    = nullptr;   // ★ 数据库清理定时器（每日凌晨）
     QTimer*      m_stopTimeoutTimer = nullptr;   // ★ 停止超时安全网（30秒）
+    QDialog*     m_effDlg            = nullptr;   // ★ 2026-09-07 效率统计弹窗实例（单例复用，关闭即删）
 };

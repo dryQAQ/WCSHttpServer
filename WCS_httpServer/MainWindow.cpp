@@ -25,7 +25,160 @@
 #include <QXmlStreamReader>
 #include <QFile>
 #include <QSplitter>
+#include <QShowEvent>
+#include <QHideEvent>
+#include "qcustomplot.h"   // ★ 2026-09-07 效率统计图（QCustomPlot）
 
+// ============================================================================
+// EfficiencyChartDialog — RFID 推送效率统计弹窗（2026-09-07）
+//   · 图1（柱状）：最近 30 分钟窗口、1 分钟最小刻度 → 每分钟 RFID 推送件数
+//   · 图2（折线）：今天 0 点~23 点 → 对应时刻峰值效率（件/时）
+// 说明：独立弹窗，不参与主界面布局；仅"当日观察"统计，不留存记录；
+//   弹窗打开期间 1s 刷新（复用绘图缓冲、1440 点规模，内存可控），关闭即停止
+// ============================================================================
+class EfficiencyChartDialog : public QDialog
+{
+public:
+    EfficiencyChartDialog(HttpServer* srv, QWidget* parent = nullptr)
+        : QDialog(parent), m_srv(srv)
+    {
+        setWindowTitle(QString::fromUtf8("RFID 推送效率统计（当日观察）"));
+        resize(920, 660);
+
+        QVBoxLayout* lay = new QVBoxLayout(this);
+
+        // ── 图1：最近 30 分钟柱状（每分钟件数，取自主流程分桶）──
+        auto* capMin = new QLabel(QString::fromUtf8("柱状图：最近 30 分钟 · 每分钟 RFID 推送件数"), this);
+        capMin->setStyleSheet("font-size: 12px; font-weight: bold; color: #333;");
+        lay->addWidget(capMin);
+        m_plotMin = new QCustomPlot(this);
+        m_plotMin->setMinimumHeight(250);
+        lay->addWidget(m_plotMin);
+        m_bars = new QCPBars(m_plotMin->xAxis, m_plotMin->yAxis);
+        m_bars->setPen(Qt::NoPen);
+        m_bars->setBrush(QColor("#2196F3"));
+        m_plotMin->xAxis->setLabel(QString::fromUtf8("时间（最近 30 分钟，最小刻度 1 分钟）"));
+        m_plotMin->yAxis->setLabel(QString());          // ★ y 轴仅数值显示
+        m_plotMin->yAxis->setNumberFormat("f");
+        m_plotMin->yAxis->setNumberPrecision(0);
+        m_plotMin->xAxis->setRange(-0.6, 29.6);
+        m_plotMin->yAxis->setRange(0, 10);
+        m_plotMin->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+        // ★ 2026-09-07 柱状图 x 轴 30 个分钟刻度文字重叠 → 斜向 60° 显示 + 小字号
+        //   （QCP 2.1.1 自动外边距已计入斜向文字高度，无需手工留边）
+        m_plotMin->xAxis->setTickLabelRotation(60);
+        m_plotMin->xAxis->setTickLabelFont(QFont(font().family(), 8));
+
+        // ── 图2：今日 0~23 时折线（每小时记 1 点 = 该小时峰值效率：小时峰值件数 ×60 件/时）──
+        auto* capDay = new QLabel(QString::fromUtf8("折线图：今天 0 点~23 点 · 每小时峰值效率（件/时）"), this);
+        capDay->setStyleSheet("font-size: 12px; font-weight: bold; color: #333;");
+        lay->addWidget(capDay);
+        m_plotDay = new QCustomPlot(this);
+        m_plotDay->setMinimumHeight(250);
+        lay->addWidget(m_plotDay);
+        m_line = m_plotDay->addGraph();
+        m_line->setPen(QPen(QColor("#FF9800"), 2));
+        m_line->setAdaptiveSampling(true);   // ★ 大数据量自适应采样，降低渲染消耗
+        m_line->setLineStyle(QCPGraph::lsLine);
+        m_plotDay->xAxis->setLabel(QString::fromUtf8("时间（今天 0 点 ~ 23 点）"));
+        m_plotDay->yAxis->setLabel(QString());          // ★ y 轴仅数值显示
+        m_plotDay->yAxis->setNumberFormat("f");
+        m_plotDay->yAxis->setNumberPrecision(0);
+        m_plotDay->xAxis->setRange(-1.0, 24.0);   // x = 小时 0..23
+        m_plotDay->yAxis->setRange(0, 10);
+        m_plotDay->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+
+        // 标题行：日期 + 当前/峰值提示（轻量刷新，不重建控件）
+        m_lblInfo = new QLabel(QString::fromUtf8("当前日期：%1").arg(QDate::currentDate().toString("yyyy-MM-dd")));
+        m_lblInfo->setStyleSheet("font-size: 13px; font-weight: bold; color: #555;");
+        lay->insertWidget(0, m_lblInfo);
+
+        m_timer = new QTimer(this);
+        m_timer->setInterval(1000);          // 弹窗打开期间 1s 实时刷新
+        connect(m_timer, &QTimer::timeout, this, &EfficiencyChartDialog::refresh);
+        refresh();
+    }
+
+    void showEvent(QShowEvent* ev) override { m_timer->start(); refresh(); QDialog::showEvent(ev); }
+    void hideEvent(QHideEvent* ev) override { m_timer->stop(); QDialog::hideEvent(ev); }
+
+private slots:
+    void refresh()
+    {
+        if (!m_srv) return;
+        QVector<int> lastMin;
+        m_srv->efficiencySeries(30, &lastMin, nullptr);   // 柱状：主流程每分钟分桶件数
+        const qint64 nowMin = QDateTime::currentMSecsSinceEpoch() / 60000;
+        const QString today = QDate::currentDate().toString("yyyy-MM-dd");
+        m_lblInfo->setText(QString::fromUtf8("日期：%1    最近1分钟 %2 件（%3 件/时）    当日峰值 %4 件/分（%5 件/时）")
+            .arg(today)
+            .arg(m_srv->rfidPushPerMinute())
+            .arg(m_srv->rfidPushPerMinute() * 60)
+            .arg(m_srv->peakPerMinuteToday())
+            .arg(m_srv->peakPerMinuteToday() * 60));
+
+        // ── 柱状：最近 30 个整分钟桶（旧→新），柱标签=该分钟时刻 HH:MM ──
+        QVector<double> keys(lastMin.size()), vals(lastMin.size());
+        QVector<double> tickPos;
+        QVector<QString> tickLabels;
+        for (int i = 0; i < lastMin.size(); ++i)
+        {
+            keys[i] = i;
+            vals[i] = lastMin[i];
+            const qint64 bucketStart = (nowMin - (lastMin.size() - 1 - i)) * 60000;
+            tickPos.append(i);
+            tickLabels << QDateTime::fromMSecsSinceEpoch(bucketStart).toString("HH:mm");
+        }
+        m_bars->setData(keys, vals);
+        auto textTicker = QSharedPointer<QCPAxisTickerText>::create();
+        textTicker->addTicks(tickPos, tickLabels);
+        m_plotMin->xAxis->setTicker(textTicker);
+        m_plotMin->xAxis->setRange(-0.6, qMax(lastMin.size() - 0.4, 0.4));
+        // y 轴自适应 + 顶部留 15% 余量（0 值数据时保留基准 10）
+        m_plotMin->yAxis->rescale(true);
+        double yMax = m_plotMin->yAxis->range().upper;
+        m_plotMin->yAxis->setRange(0, yMax > 0 ? yMax * 1.15 : 10.0);
+        m_plotMin->replot(QCustomPlot::rpQueuedReplot);
+
+        // ── 折线：今日每小时峰值效率（每小时记 1 点 = 该小时峰值件数 × 60）──
+        QVector<int> hourPeaks;
+        m_srv->efficiencySeries(30, nullptr, &hourPeaks);
+        QVector<double> dKeys, dVals;
+        dKeys.reserve(24);
+        dVals.reserve(24);
+        for (int h = 0; h < 24; ++h)
+        {
+            dKeys << h;                          // x = 小时 0..23
+            dVals << hourPeaks[h] * 60.0;        // y = 该小时峰值效率（件/时）
+        }
+        m_line->setData(dKeys, dVals);
+        QVector<double> dayPos;
+        QVector<QString> dayTickLabels;
+        for (int h = 0; h <= 23; ++h)
+        {
+            dayPos.append(h);
+            dayTickLabels << QString("%1点").arg(h);
+        }
+        auto dayTicker = QSharedPointer<QCPAxisTickerText>::create();
+        dayTicker->addTicks(dayPos, dayTickLabels);
+        m_plotDay->xAxis->setTicker(dayTicker);
+        m_plotDay->yAxis->rescale(true);
+        double dMax = m_plotDay->yAxis->range().upper;
+        m_plotDay->yAxis->setRange(0, dMax > 0 ? dMax * 1.15 : 10.0);
+        m_plotDay->replot(QCustomPlot::rpQueuedReplot);
+    }
+
+private:
+    HttpServer*      m_srv    = nullptr;
+    QCustomPlot*     m_plotMin = nullptr;
+    QCustomPlot*     m_plotDay = nullptr;
+    QCPBars*         m_bars    = nullptr;
+    QCPGraph*        m_line    = nullptr;
+    QLabel*          m_lblInfo = nullptr;
+    QTimer*          m_timer   = nullptr;
+};
+
+// ============================================================================
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
@@ -368,6 +521,8 @@ void MainWindow::setupUI()
     m_lblException   = makeValue();
     m_lblSumLocation = makeValue();
     m_lblLastWave    = makeValue();
+    m_lblEfficiency  = makeValue();   // ★ 2026-09-07 分拣效率
+    m_lblPeakEff     = makeValue();   // ★ 2026-09-07 峰值效率（当日最大）
 
     int row = 0;
     waveLayout->addWidget(makeLabel("波次号:"),    row, 0); waveLayout->addWidget(m_lblWaveCode,    row++, 1);
@@ -376,6 +531,8 @@ void MainWindow::setupUI()
     waveLayout->addWidget(makeLabel("已分拣:"),    row, 0); waveLayout->addWidget(m_lblSorted,      row++, 1);
     waveLayout->addWidget(makeLabel("异常:"),      row, 0); waveLayout->addWidget(m_lblException,   row++, 1);
     waveLayout->addWidget(makeLabel("分拣件数:"),    row, 0); waveLayout->addWidget(m_lblSumLocation, row++, 1);
+    waveLayout->addWidget(makeLabel("效率:"),      row, 0); waveLayout->addWidget(m_lblEfficiency,  row++, 1);   // ★ 件/时
+    waveLayout->addWidget(makeLabel("峰值效率:"),  row, 0); waveLayout->addWidget(m_lblPeakEff,     row++, 1);   // ★ 当日峰值 件/时
     waveLayout->addWidget(makeLabel("上波次:"),    row, 0); waveLayout->addWidget(m_lblLastWave,    row++, 1);
 
     // ★ 开始分拣按钮（始终可见，到达可开始分拣状态时激活，否则灰色禁用）
@@ -599,6 +756,17 @@ void MainWindow::setupUI()
     m_btnQueryClear = new QPushButton(QCoreApplication::translate("MainWindow", "清空"));
     m_btnQueryClear->setMinimumHeight(32);
     queryCondRow->addWidget(m_btnQueryClear);
+
+    // ★ 2026-09-07 效率统计按钮：弹出 RFID 推送效率统计图（独立弹窗，不影响主界面）
+    m_btnEffChart = new QPushButton(QCoreApplication::translate("MainWindow", "效率统计"));
+    m_btnEffChart->setMinimumHeight(32);
+    m_btnEffChart->setStyleSheet(
+        "QPushButton { background-color: #26A69A; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 14px; }"
+        "QPushButton:hover { background-color: #00897B; }");
+    m_btnEffChart->setToolTip(QCoreApplication::translate("MainWindow",
+        "弹出 RFID 推送效率统计图：最近30分钟柱状（每分钟件数） + 今日0~23点峰值折线（件/时）"));
+    queryCondRow->addWidget(m_btnEffChart);
     queryCondRow->addStretch();
 
     // ── 统计标签 ──
@@ -650,6 +818,7 @@ void MainWindow::setupUI()
         m_lblRecordCount->setText(QCoreApplication::translate("MainWindow", "共 0 条记录"));
         m_lblDbStats->setText("");
     });
+    connect(m_btnEffChart, &QPushButton::clicked, this, &MainWindow::onOpenEffChart);
     // 回车触发查询
     connect(m_editQueryBarcode, &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
     connect(m_editQuerySku,     &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
@@ -1523,6 +1692,36 @@ void MainWindow::updateWavePanel()
     m_lblSorted->setToolTip(QString::fromUtf8("已分拣件数 / 计划总件数（WMS下发 orderQty=计划件数）"));
     m_lblException->setText(QString::number(snap.exceptionCount));
     m_lblSumLocation->setText(QString::number(snap.sumLocation));
+    // ★ 2026-09-07 效率显示：1分钟接收 RFID 推送件数 × 60 = 折算每小时件数（滑动窗口）
+    {
+        int perMin = m_pServer->rfidPushPerMinute();
+        if (perMin > 0)
+        {
+            m_lblEfficiency->setText(QString("%1 件/时").arg(perMin * 60));
+            m_lblEfficiency->setToolTip(QString::fromUtf8("最近1分钟接收 RFID 推送 %1 件，折算每小时 = %1 × 60 = %2 件/时")
+                .arg(perMin).arg(perMin * 60));
+        }
+        else
+        {
+            m_lblEfficiency->setText(QString::fromUtf8("--"));
+            m_lblEfficiency->setToolTip(QString::fromUtf8("开始接收 RFID 推送后显示效率（件/时，滑动1分钟窗口）"));
+        }
+    }
+    // ★ 2026-09-07 峰值效率：当日最大（每分钟窗口件数峰值 × 60 折算件/时），每天最终值落库 daily_peak
+    {
+        int peakMin = m_pServer->peakPerMinuteToday();
+        if (peakMin > 0)
+        {
+            m_lblPeakEff->setText(QString("%1 件/时").arg(peakMin * 60));
+            m_lblPeakEff->setToolTip(QString::fromUtf8("当日峰值：1分钟窗口最高 %1 件 → 折算 %2 件/时（每天最终最大值保存到数据库 daily_peak）")
+                .arg(peakMin).arg(peakMin * 60));
+        }
+        else
+        {
+            m_lblPeakEff->setText(QString::fromUtf8("--"));
+            m_lblPeakEff->setToolTip(QString::fromUtf8("当日峰值效率（件/时，全天最大）"));
+        }
+    }
     m_lblLastWave->setText(snap.lastWaveCode.isEmpty() ? QString::fromUtf8("--") : snap.lastWaveCode);
 
     // 颜色提示
@@ -2214,6 +2413,28 @@ void MainWindow::flushLogBuffer()
     m_txtLog->setUpdatesEnabled(true);
 
     m_txtLog->moveCursor(QTextCursor::End);
+}
+
+// ============================================================================
+// ★ 2026-09-07 onOpenEffChart — 打开 RFID 推送效率统计弹窗
+//   单实例复用：已打开则置前；关闭即销毁（WA_DeleteOnClose），仅当日观察不落盘
+// ============================================================================
+void MainWindow::onOpenEffChart()
+{
+    if (!m_pServer) return;
+
+    if (m_effDlg)
+    {
+        m_effDlg->show();
+        m_effDlg->raise();
+        m_effDlg->activateWindow();
+        return;
+    }
+
+    m_effDlg = new EfficiencyChartDialog(m_pServer, this);
+    m_effDlg->setAttribute(Qt::WA_DeleteOnClose);
+    connect(m_effDlg, &QDialog::destroyed, this, [this]() { m_effDlg = nullptr; });
+    m_effDlg->show();
 }
 
 // ============================================================================

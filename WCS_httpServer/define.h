@@ -642,6 +642,23 @@
 #define SQL_SELECT_WAVE_RAW \
     "SELECT raw_body FROM wave_raw WHERE order_code = ?"
 
+// ──── 每日峰值效率表（2026-09-07：波次面板峰值效率，每天最终最大值落库）────
+// stat_date       — 统计日期 yyyy-MM-dd（主键）
+// peak_per_minute — 当日 1 分钟窗口 RFID 推送件数峰值（原始口径）
+// peak_per_hour   — 折算每小时 = peak_per_minute * 60（展示口径）
+// updated_at      — 最后更新时间
+#define SQL_CREATE_TABLE_DAILY_PEAK \
+    "CREATE TABLE IF NOT EXISTS daily_peak (" \
+    "  stat_date        TEXT PRIMARY KEY," \
+    "  peak_per_minute  INTEGER NOT NULL DEFAULT 0," \
+    "  peak_per_hour    INTEGER NOT NULL DEFAULT 0," \
+    "  updated_at       TEXT    NOT NULL DEFAULT ''" \
+    ")"
+#define SQL_INSERT_DAILY_PEAK \
+    "INSERT OR REPLACE INTO daily_peak (stat_date, peak_per_minute, peak_per_hour, updated_at) VALUES (?, ?, ?, ?)"
+#define SQL_SELECT_DAILY_PEAK \
+    "SELECT peak_per_minute FROM daily_peak WHERE stat_date = ?"
+
 // ──── 波次明细操作 ────
 // 插入明细行
 #define SQL_INSERT_WAVE_ITEM \

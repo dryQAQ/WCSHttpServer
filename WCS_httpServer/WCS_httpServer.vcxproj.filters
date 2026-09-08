@@ -79,6 +79,12 @@
     <ClCompile Include="OutboxManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="qcustomplot.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RfidPushClient.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="ConfigManager.h">
@@ -106,6 +112,12 @@
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="OutboxManager.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="qcustomplot.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="RfidPushClient.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

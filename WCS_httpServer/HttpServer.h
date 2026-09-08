@@ -18,6 +18,7 @@
 #include <QTimer>
 #include <atomic>
 #include <mutex>
+#include <deque>
 #include "HPSocket.h"
 #include "TaskQueue.h"
 #include "DoubleBuffer.h"
@@ -163,6 +164,17 @@ public:
     void onOutboxResendReply(const QString& msgId, bool isH7, bool success);   // 手动重传结果（轻量，不动波次状态/绑定）
     // ★ 2026-09-07 手动满箱切换：UI 输入格口号 → 读取该格口当前记录+容器号，按 H7 满箱回传上传
     bool manualFullbox(const QString& grid);
+    // ──── RFID 推送效率统计（★ 2026-09-07：滑动 1 分钟窗口）────
+    void recordRfidPush();                              // 记录一次有效 RFID 推送（含 EPC）
+    int  rfidPushPerMinute() const;                     // 最近 1 分钟接收件数（滑动窗口）
+    int  rfidThroughputPerHour() const { return rfidPushPerMinute() * 60; }  // 折算件/时
+    int  peakPerMinuteToday() const;                    // 当日峰值（1 分钟窗口件数口径，UI ×60 显示件/时）
+    void persistDailyPeak();                            // 当日峰值落库（跨日结转/周期/退出/波次结束调用）
+    // 效率统计图数据（弹窗每~1秒拉取，内存由调用方复用缓冲）：
+    //   lastMinutes: 最近 N 个整分钟桶（旧→新，含当前进行中的桶；不足 N 个前补 0）
+    //   hourPeaks:   今日 0~23 时每小时峰值（1 分钟窗口件数口径；无数据=0）——折线图每小时记 1 个峰值点
+    void efficiencySeries(int lastMinutes, QVector<int>* pLastMinute,
+                          QVector<int>* pHourPeaks) const;
 
     // ──── 上一波次任务恢复 ────
     // 选中波次的恢复摘要（orderCode/status/orderQty/sorted/exception/H7H8状态/更新时间）
@@ -317,6 +329,15 @@ private:
     // ──── S7 格口分拣计数（T-S7-06：只记录落格已分拣件数，不做上限限制）────
     QMap<QString, int>      m_gridSortedCount;   // 格口号 → 已分拣件数
     std::mutex              m_gridCountMutex;     // 保护 m_gridSortedCount
+
+    // ──── RFID 推送吞吐/峰值统计（★ 2026-09-07 效率与峰值显示）────
+    //   滑动 1 分钟窗口（实时"效率"）用 deque；分桶（每分钟）与当日峰值用于
+    //   峰值显示与效率统计图；跨日自动结转并把前一天最终峰值落库
+    mutable std::deque<qint64> m_rfidPushTimes;       // 最近60秒有效推送时间戳(ms)
+    mutable QMap<qint64, int>  m_rfidMinuteCount;     // 分桶：epochMin(epochMs/60000) → 该分钟推送件数（仅保留当日）
+    mutable QString            m_peakDate;            // 当前统计日期 yyyy-MM-dd（跨日自动重置并落库前一日）
+    mutable int                m_peakPerMinuteToday = 0; // 当日峰值（1 分钟窗口件数口径）
+    mutable std::mutex         m_rfidPushMutex;       // 保护以上统计字段
 
     // ──── 回传耗时统计（H7/H8 网络请求慢排查）────
     QMap<QString, qint64>   m_msgSendTime;        // msgId → 发送时间戳（epoch ms）

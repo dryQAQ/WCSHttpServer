@@ -60,6 +60,11 @@ HttpServer::HttpServer(QObject* parent)
         }
     }
 
+    // ★ 2026-09-07 效率峰值统计初始化：加载数据库中的当日峰值（重启后延续当天显示）
+    m_peakDate = QDateTime::currentDateTime().toString("yyyy-MM-dd");
+    if (m_pSortingDb && m_pSortingDb->isOpen())
+        m_peakPerMinuteToday = m_pSortingDb->getDailyPeakPerMinute(m_peakDate);
+
     // ★ 设置格口查询回调：PLC/相机扫到识别码时 → 查 DoubleBuffer → 返回格口号
     // 识别码 = EPC（商品编码），客户已确认EPC（商品编码）即EPC编码（2026-08-10）
     m_pPlcMgr->setLookupCallback([this](const QString& code) -> QString {
@@ -812,6 +817,9 @@ void HttpServer::stopReceive()
 
 void HttpServer::stopDevices()
 {
+    // ★ 2026-09-07 退出前把当日峰值效率落库（当天最终最大值）
+    persistDailyPeak();
+
     // ★ 2026-09-07 防析构竞态：先断开设备 → 本对象的所有信号连接，
     //   避免 stop() 期间设备 emit（plcFeedbackBusinessBatch/plcConnected 等）打到正在析构的本对象 lambda
     if (m_pPlcMgr)   m_pPlcMgr->disconnect(this);
@@ -2537,6 +2545,9 @@ QJsonObject HttpServer::validateInsertWaveInfo(const QJsonObject& root)
 
 void HttpServer::logHealthStatus()
 {
+    // ★ 2026-09-07 周期（60s）把当日峰值效率落库（断电/崩溃兜底，最终值见退出/跨日结转）
+    persistDailyPeak();
+
     int64_t accept  = m_acceptCount.load();
     int64_t close   = m_closeCount.load();
     int64_t request = m_requestCount.load();
@@ -3230,6 +3241,103 @@ bool HttpServer::manualFullbox(const QString& grid)
     if (ok)
         emit logMessage(QString("[手动满箱] 格口%1 已按 H7 满箱回传上传（order=%2）").arg(grid).arg(orderCode));
     return ok;
+}
+
+// ============================================================================
+// RFID 推送吞吐/峰值统计（★ 2026-09-07 效率与峰值显示）
+// 口径：每收到一条含 EPC 的 RFID 推送记为 1 件；
+//   · recordRfidPush：滑动 60s 时间戳（实时"效率"）+ 每分钟分桶（统计图/当日峰值）
+//   · 跨日：日期变化时先把前一天最终峰值落库，再清零统计
+// ============================================================================
+void HttpServer::recordRfidPush()
+{
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    std::lock_guard<std::mutex> lock(m_rfidPushMutex);
+
+    // 跨日结转：日期变化 → 前一天最终峰值落库 + 清零
+    QString today = QDateTime::currentDateTime().toString("yyyy-MM-dd");
+    if (m_peakDate.isEmpty())
+        m_peakDate = today;
+    if (m_peakDate != today)
+    {
+        if (m_peakPerMinuteToday > 0 && m_pSortingDb && m_pSortingDb->isOpen())
+        {
+            m_pSortingDb->saveDailyPeak(m_peakDate, m_peakPerMinuteToday);
+            HTTP_LOG_INFO("效率统计 跨日结转 date=%s peakPerMinute=%d", m_peakDate.toLocal8Bit().data(), m_peakPerMinuteToday);
+        }
+        m_peakDate = today;
+        m_peakPerMinuteToday = 0;
+        m_rfidMinuteCount.clear();
+        m_rfidPushTimes.clear();
+    }
+
+    // 1) 滑动 60 秒窗口（实时效率）
+    m_rfidPushTimes.push_back(nowMs);
+    const qint64 cutoff = nowMs - 60 * 1000;
+    while (!m_rfidPushTimes.empty() && m_rfidPushTimes.front() < cutoff)
+        m_rfidPushTimes.pop_front();
+
+    // 2) 每分钟分桶（统计图 / 当日峰值）
+    const qint64 epochMin = nowMs / 60000;
+    int& bucket = m_rfidMinuteCount[epochMin];
+    ++bucket;
+    if (bucket > m_peakPerMinuteToday)
+        m_peakPerMinuteToday = bucket;
+}
+
+int HttpServer::rfidPushPerMinute() const
+{
+    std::lock_guard<std::mutex> lock(m_rfidPushMutex);
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 cutoff = now - 60 * 1000;
+    // 清理窗口外的时间戳（与写入侧都清理，窗口始终 ≤ 1 分钟数据）
+    while (!m_rfidPushTimes.empty() && m_rfidPushTimes.front() < cutoff)
+        m_rfidPushTimes.pop_front();
+    return (int)m_rfidPushTimes.size();
+}
+
+int HttpServer::peakPerMinuteToday() const
+{
+    std::lock_guard<std::mutex> lock(m_rfidPushMutex);
+    return m_peakPerMinuteToday;
+}
+
+void HttpServer::persistDailyPeak()
+{
+    std::lock_guard<std::mutex> lock(m_rfidPushMutex);
+    if (m_peakPerMinuteToday > 0 && m_pSortingDb && m_pSortingDb->isOpen())
+    {
+        m_pSortingDb->saveDailyPeak(m_peakDate, m_peakPerMinuteToday);
+        HTTP_LOG_INFO("效率统计 峰值落库 date=%s peakPerMinute=%d",
+            m_peakDate.toLocal8Bit().data(), m_peakPerMinuteToday);
+    }
+}
+
+void HttpServer::efficiencySeries(int lastMinutes, QVector<int>* pLastMinute,
+                                  QVector<int>* pHourPeaks) const
+{
+    std::lock_guard<std::mutex> lock(m_rfidPushMutex);
+
+    if (pLastMinute)
+    {
+        pLastMinute->clear();
+        const qint64 nowMin = QDateTime::currentMSecsSinceEpoch() / 60000;
+        // 不足 N 个桶（凌晨/开机初期）前补 0，保证 x 轴刻度稳定
+        for (qint64 m = nowMin - lastMinutes + 1; m <= nowMin; ++m)
+            pLastMinute->append(m_rfidMinuteCount.value(m, 0));
+    }
+
+    if (pHourPeaks)
+    {
+        pHourPeaks->fill(0, 24);
+        for (auto it = m_rfidMinuteCount.constBegin(); it != m_rfidMinuteCount.constEnd(); ++it)
+        {
+            int hour = QDateTime::fromMSecsSinceEpoch(it.key() * 60000).time().hour();  // 本地小时 0..23
+            if (hour < 0 || hour > 23) continue;
+            if (it.value() > (*pHourPeaks)[hour])
+                (*pHourPeaks)[hour] = it.value();
+        }
+    }
 }
 
 // ============================================================================
@@ -4146,6 +4254,9 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
         QString seq     = item["seq"].toString().trimmed();      // ★ 2026-09-05 RFID 推送流水号
 
         if (epc.isEmpty()) continue;
+        recordRfidPush();   // ★ 2026-09-07 效率统计：每收到一件(RFID含EPC推送)记一次，供 1 分钟滑动窗口吞吐显示
+        // ★ 2026-09-07 需求：把 RFID 推送数据帧实时显示到 UI 运行日志（逐帧一行）
+        emit logMessage(QString("RFID数据帧 seq=%1 car=%2 epc=%3").arg(seq).arg(carNum).arg(epc));
         if (!seq.isEmpty()) epcSeqMap[epc] = seq;   // ★ 2026-09-05 保存流水号（供日志/发送追溯）
 
         // ★ 纠正: 接受无 barcode 的 EPC+carNum（RFID 只推送 EPC+小车号时 barcode 为空）

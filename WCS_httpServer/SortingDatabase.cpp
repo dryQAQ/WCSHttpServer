@@ -420,11 +420,13 @@ void SortingDatabase::createTables()
     q.exec(SQL_CREATE_TABLE_EXCEPTION_RECORD);
     // H4 原始报文单独落库（数据量大，独立表）
     q.exec(SQL_CREATE_TABLE_WAVE_RAW);
+    // 每日峰值效率表（2026-09-07 波次面板峰值效率）
+    q.exec(SQL_CREATE_TABLE_DAILY_PEAK);
 
     if (q.lastError().isValid())
         qWarning() << "[SortingDB] 建表失败:" << q.lastError().text();
     else
-        Data_INFO("[SortingDB] createTables 建表完成（7张核心表 + wave_raw）");
+        Data_INFO("[SortingDB] createTables 建表完成（7张核心表 + wave_raw + daily_peak）");
 }
 
 // ============================================================================
@@ -967,6 +969,47 @@ QByteArray SortingDatabase::getWaveRawPayload(const QString& orderCode)
         if (q.exec() && q.next())
             result = q.value(0).toString().toUtf8();
         return result;
+    });
+}
+
+// ============================================================================
+// 每日峰值效率（2026-09-07）
+// ============================================================================
+
+bool SortingDatabase::saveDailyPeak(const QString& date, int peakPerMinute)
+{
+    return runOnDbThread([&]() -> bool {
+        if (!m_bOpened) return false;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return false;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_INSERT_DAILY_PEAK);
+        q.addBindValue(date);
+        q.addBindValue(peakPerMinute);
+        q.addBindValue(peakPerMinute * 60);   // peak_per_hour（展示口径）
+        q.addBindValue(currentTimeStr());
+        bool ok = q.exec();
+        if (!ok)
+            Data_ERROR("[SortingDB] saveDailyPeak 失败 date=%s peakPerMinute=%d err=%s",
+                date.toLocal8Bit().data(), peakPerMinute, q.lastError().text().toLocal8Bit().data());
+        return ok;
+    });
+}
+
+int SortingDatabase::getDailyPeakPerMinute(const QString& date)
+{
+    return runOnDbThread([&]() -> int {
+        if (!m_bOpened) return 0;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return 0;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_DAILY_PEAK);
+        q.addBindValue(date);
+        if (q.exec() && q.next())
+            return q.value(0).toInt();
+        return 0;
     });
 }
 
