@@ -15,3 +15,8 @@
 *.zip
 *.dmp
 
+
+*.dmp
+*.zip
+*.bak
+release_WcsHttpServer/crash.log
