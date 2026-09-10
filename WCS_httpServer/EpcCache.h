@@ -233,15 +233,26 @@ public:
                 // ★ 更新 carNum（RFID 推送的）
                 entry.carNum = it.value().second.isEmpty() ? DEFAULT_CAR_STR : it.value().second;
                 entry.expireTime = expire;
-                // ★ 记录 RFID 推送首次到达时间（用于 1s 超时判断，PLC_SEND_TIMEOUT_MS）
-                //   仅首次推送时记录并作为计时起点；重复推送不刷新，避免同一EPC因多次读到被延后计时起点
+                // ★ 记录 RFID 推送到达时间（1s 超时判断起点，PLC_SEND_TIMEOUT_MS）
+                //   重复推送分两类处理（★ 2026-09-09 需求7 按用户方案在"计时起点"处管理）：
+                //   ① 双读（同一件仍在轨道上、尚未发出指令 sentAt 空）→ 保留首次到达时间，
+                //      防止同一EPC多次读到被延后计时起点（超时永不触发）
+                //   ② 二次上传（上次已发出 PLC 指令 sentAt 有效，件回线重扫/再次推送）
+                //      → 计时起点归 0 重新单独计时：同一件的多次尝试各自计时、不叠加
                 if (!hasExisting)
                 {
                     entry.receivedAt = QDateTime::currentDateTime();
                 }
+                else if (existing->sentAt.isValid())
+                {
+                    entry.receivedAt = QDateTime::currentDateTime();  // 二次上传：重新起算（归0）
+                    entry.sentAt     = QDateTime();                    // 清上次发送时间，getHandleSendMs 重新起算
+                    EPC_WARN("setBatchWithCar 二次上传重新计时 epc=%s（上次已发送过，单独计时）",
+                        it.key().toLocal8Bit().data());
+                }
                 else
                 {
-                    entry.receivedAt = existing->receivedAt;   // 保留首次到达时间，防止重复推送重置计时
+                    entry.receivedAt = existing->receivedAt;   // 双读：保留首次到达时间
                 }
                 m_cache[it.key()] = entry;
                 writeCount++;
@@ -327,6 +338,19 @@ public:
         auto it = m_cache.find(epc);
         if (it == m_cache.end()) return;
         it->sentAt = QDateTime::currentDateTime();
+    }
+
+    // ★ 2026-09-09 需求7：件落入异常口后重置计时（elapsed 归 0）
+    //   receivedAt 置为当前时间（isSendTimeout/getElapsedMs 重新起算），sentAt 清空（重新发送时 markSent 重记）
+    //   效果：该 EPC 二次上传（RFID 重推）时不再因旧的 receivedAt 立即判定超时
+    void resetTiming(const QString& epc)
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return;
+        it->receivedAt = QDateTime::currentDateTime();
+        it->sentAt     = QDateTime();
+        EPC_WARN("resetTiming 异常件计时归0 epc=%s", epc.toLocal8Bit().data());
     }
 
     // ★ 获取 开始处理(RFID首次到达) → PLC发送 的耗时；未发送返回 -1

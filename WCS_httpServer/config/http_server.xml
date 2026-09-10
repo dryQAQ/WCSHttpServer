@@ -23,21 +23,61 @@
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 二、WMS 回传接口                                                 -->
-    <!--    波次完成/锁格时，WCS 主动向 WMS 发送回传报文                    -->
+    <!--    波次完成/锁格/满箱时，WCS 主动向 WMS 发送回传报文               -->
     <!--    useTestEnv 控制使用正式环境还是测试环境                         -->
-    <!--    AppKey 放在 HTTP Header: AppKey=xxx                          -->
+    <!--    ★ 2026-09-06：URL 由程序拼接（base + ?appkey=xxx&method=yyy）   -->
+    <!--      满箱/锁格/波次完成 → feedbackMethod（gwisSubProductClassifyOrder）-->
+    <!--      完结回传(H8)     → feedbackEndMethod（gwisSubProductClassifyEndOrder）-->
+    <!--    appkey 同时放入 HTTP Header: AppKey=xxx（与 URL 参数 appkey 同值） -->
     <!--    修改后立即生效                                                 -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 正式环境 -->
-    <feedbackUrl>http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs</feedbackUrl>
+    <feedbackUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackUrl>
     <appkey>dz_bxh_wcs_zs</appkey>
 
-    <!-- 测试环境 -->
-    <feedbackTestUrl>http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs</feedbackTestUrl>
-    <appkeyTest>dz_bxh_wcs_cs</appkeyTest>
+    <!-- 测试环境（gwms5 openapi 账号 dz_bxh_dmwcs_cs） -->
+    <feedbackTestUrl>https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackTestUrl>
+    <appkeyTest>dz_bxh_dmwcs_cs</appkeyTest>
+
+    <!-- H8 完结回传 base URL（WCS → WMS 波次完结通知） -->
+    <feedbackEndUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndUrl>
+    <feedbackEndTestUrl>https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndTestUrl>
+
+    <!-- WMS 网关 method 参数（满箱=Order，完结=EndOrder，按 WMS 实际接口调整） -->
+    <feedbackMethod>gwisSubProductClassifyOrder</feedbackMethod>
+    <feedbackEndMethod>gwisSubProductClassifyEndOrder</feedbackEndMethod>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- WMS 格口编码（2026-09-07）：对外格口号 = 前缀 + 格口号补零           -->
+    <!--   · H7 满箱回传 detailList[].num 输出该编码（格口号5 → 22005）      -->
+    <!--   · H4 下发 gridNum / H6 绑定 latticehole 入参兼容剥离该前缀        -->
+    <!--   gridCodePrefix: 前缀（默认 22；留空=关闭转换，回退现网）          -->
+    <!--   gridCodeWidth:  格口号补零宽度（默认 3，与内部/PLC 3 位一致）     -->
+    <!--   修改后需重启服务生效                                              -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <gridCodePrefix>22</gridCodePrefix>
+    <gridCodeWidth>3</gridCodeWidth>
 
     <!-- 环境切换: 1=测试环境, 0=正式环境 -->
     <useTestEnv>1</useTestEnv>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- 三、RFID 查询（WCS → RFID 服务，EPC→SKU 绑定，2026-09-04 补充）  -->
+    <!--    rfidQueryUrl: 查询服务地址                                      -->
+    <!--      测试: http://127.0.0.1:9100/open-api/rfid/query             -->
+    <!--      生产: http://172.31.10.201:9521/open-api/rfid/query        -->
+    <!--    rfidAppkey:   Authorization 请求头完整值（形如 APP_KEYS <key>，整串由此处提供；空=不发送）-->
+    <!--    修改后立即生效                                                 -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <rfidQueryUrl>http://172.31.10.201:9521/open-api/rfid/query</rfidQueryUrl>
+    <rfidAppkey>APP_KEYS e1235fda-029c-4270-913f-530342af2073</rfidAppkey>
+    <!-- RFID 推送服务端（WCS 作为 TCP 客户端主动连接，接收 EPC+carNum JSON，2026-09-04） -->
+    <rfidPushServerIp>192.168.100.125</rfidPushServerIp>
+    <rfidPushServerPort>2010</rfidPushServerPort>
+    <!-- 是否向 RFID 服务端发送心跳包 RFID{HEARTBEAT}0D（1=发送 0=不发送，默认1） -->
+    <rfidHeartbeatEnable>1</rfidHeartbeatEnable>
+    <!-- 心跳发送间隔（毫秒，默认2000=2秒） -->
+    <rfidHeartbeatIntervalMs>2000</rfidHeartbeatIntervalMs>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 三、WMS 业务参数（回传报文中使用）                                 -->
@@ -45,8 +85,10 @@
     <!--    goodsOwner:     货主编码                                       -->
     <!--    修改后立即生效                                                 -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <warehouseCode>A</warehouseCode>
-    <goodsOwner>BXH_ZS</goodsOwner>
+    <!-- 仓库编码（2026-09-06 客户样例确认 H） -->
+    <warehouseCode>H</warehouseCode>
+    <!-- 货主编码（2026-09-06 客户样例确认 BXH_CS） -->
+    <goodsOwner>BXH_CS</goodsOwner>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 四、波次管理                                                     -->
@@ -82,7 +124,8 @@
     <!--      修改后需重启服务                                               -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <plcListenPort>8192</plcListenPort>
-    <plcS7Ip>192.168.0.1</plcS7Ip>
+    <!-- S7 PLC IP（2026-09-04 现场确认 192.168.100.10） -->
+    <plcS7Ip>192.168.100.10</plcS7Ip>
     <plcS7Rack>0</plcS7Rack>
     <plcS7Slot>1</plcS7Slot>
 

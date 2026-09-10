@@ -66,6 +66,9 @@ bool WaveManager::restoreWave(const QString& orderCode, int orderQty, int skuCou
         m_setCodeException = exceptionSet;
         m_setCodeProcessing.clear();
         m_mapCodeRetry.clear();
+        // ★ 2026-09-09 需求8：恢复时计数=集合大小（DB 重建无重复反馈信息，按去重数起算）
+        m_sortedTotal    = sortedSet.size();
+        m_exceptionTotal = exceptionSet.size();
     }
     m_orderCode       = orderCode;
     m_orderQty        = orderQty;
@@ -128,6 +131,9 @@ void WaveManager::markSorted(const QString& code)
     {
         std::unique_lock<std::mutex> lock(m_lock);
 
+        // ★ 2026-09-09 需求8：分拣数量以 PLC 实时反馈为准——每次成功反馈累计 +1（含重复反馈）
+        m_sortedTotal++;
+
         // 快速路径：波次已回传，跳过所有检查，仅记录状态
         if (m_bReported.load(std::memory_order_relaxed))
         {
@@ -188,6 +194,9 @@ void WaveManager::markException(const QString& code)
 
     {
         std::unique_lock<std::mutex> lock(m_lock);
+
+        // ★ 2026-09-09 需求8：异常数量以 PLC 实时反馈为准——每次失败反馈(2/3)累计 +1（含重复反馈）
+        m_exceptionTotal++;
 
         // 快速路径：波次已回传，跳过所有检查，仅记录状态
         if (m_bReported.load(std::memory_order_relaxed))
@@ -299,8 +308,9 @@ WaveSnapshot WaveManager::snapshot() const
 
     {
         std::unique_lock<std::mutex> lock(m_lock);
-        snap.sortedCount    = m_setCodeSorted.size();
-        snap.exceptionCount = m_setCodeException.size();
+        // ★ 2026-09-09 需求8：面板已分拣/异常按 PLC 实时反馈累计数（以实时记录为准）
+        snap.sortedCount    = m_sortedTotal;
+        snap.exceptionCount = m_exceptionTotal;
         snap.totalRecv      = m_orderQty;  // ★ 总件数，非去重SKU数
     }
 
@@ -414,14 +424,16 @@ int WaveManager::totalRecv() const
 
 int WaveManager::sorted() const
 {
+    // ★ 2026-09-09 需求8：返回 PLC 实时反馈累计数（以实时记录为准），而非去重集合大小
     std::unique_lock<std::mutex> lock(m_lock);
-    return m_setCodeSorted.size();
+    return m_sortedTotal;
 }
 
 int WaveManager::exception() const
 {
+    // ★ 2026-09-09 需求8：返回 PLC 判定失败(2/3)反馈累计数
     std::unique_lock<std::mutex> lock(m_lock);
-    return m_setCodeException.size();
+    return m_exceptionTotal;
 }
 
 int WaveManager::sumLocation() const
@@ -446,6 +458,9 @@ void WaveManager::clearWave()
     m_setCodeException.clear();
     m_mapCodeRetry.clear();
     m_setCodeProcessing.clear();
+    // ★ 2026-09-09 需求8：清波次时累计计数一并清零
+    m_sortedTotal    = 0;
+    m_exceptionTotal = 0;
     // ★ 上波次记录：清空前把当前波次号保存为“上波次”（覆盖/新任务/切出场景 UI 显示用）
     if (!m_orderCode.isEmpty())
         m_lastOrderCode = m_orderCode;
@@ -523,13 +538,20 @@ bool WaveManager::triggerFullbox()
 // ============================================================================
 // resumeSorting — 满箱成功后恢复分拣（T-S5-05）
 // FULLBOX_SYNC→SORTING
+// ★ 2026-09-08 幂等化：满箱回传已解耦状态机（不再进入 FULLBOX_SYNC），
+//   当前状态已是 SORTING 时直接视为成功（多格口并发满箱时回执乱序安全），不再告警
 // ============================================================================
 bool WaveManager::resumeSorting()
 {
     int current = m_waveStatus.load();
+    if (current == WAVE_SORTING)
+    {
+        m_hasFullboxRecord.store(true);
+        return true;   // 幂等：状态已是分拣中（多格口并发满箱回执乱序/未进入同步态）
+    }
     if (current != WAVE_FULLBOX_SYNC)
     {
-        WCS_WARN("[WaveMgr] 恢复分拣失败 当前状态非FULLBOX_SYNC status=%d(%s)",
+        WCS_WARN("[WaveMgr] 恢复分拣失败 当前状态非SORTING/FULLBOX_SYNC status=%d(%s)",
             current, WaveSnapshot::statusToString(current).toLocal8Bit().data());
         return false;
     }

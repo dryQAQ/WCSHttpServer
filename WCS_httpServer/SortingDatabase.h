@@ -36,6 +36,7 @@ struct SortingRecord
     QString volu;
     QString sortTime;
     QString createTime;
+    QString boxcode;       // ★ 2026-09-09 需求6：落格时的容器号（行进中换容器按新绑定记录）
     QString status;         // 分拣状态：已分拣 / 待分拣
 };
 
@@ -47,6 +48,16 @@ struct SortingStatistics
     int totalWaves      = 0;
     int totalGrids      = 0;
     QString lastSortTime;
+};
+
+// ★ 2026-09-09 需求2：按格口汇总（每个格口一行：分拣数量等）
+struct GridSummaryRecord
+{
+    QString gridNum;
+    int     sortedCount  = 0;   // 分拣件数（sorting_records 行数）
+    int     skuCount     = 0;   // 涉及的 SKU 数
+    QString boxcode;            // 最近落格的容器号
+    QString lastSortTime;       // 最近分拣时间
 };
 
 // ──── 新增：退货波次头 ────
@@ -154,12 +165,15 @@ public:
                       const QString& sku,
                       const QString& gridNum, const QString& carNum,
                       const QString& firstCar, const QString& lastCar,
-                      int gridCount, const QString& volu);
+                      int gridCount, const QString& volu,
+                      const QString& boxcode = QString());  // ★ 2026-09-09 需求6：落格容器号（行进中换容器按新绑定记录）
     QVector<SortingRecord> queryByBarcode(const QString& barcode, int limit = 500);
     QVector<SortingRecord> queryByTime(const QDateTime& from, const QDateTime& to, int limit = 1000);
     QVector<SortingRecord> queryByOrderCode(const QString& orderCode, int limit = 1000);
     QVector<SortingRecord> queryAll(int limit = 1000);
     QVector<SortingRecord> queryAllWithPending(int limit = 1000);  // ★ 留空查全部：已分拣 + 待分拣
+    QVector<SortingRecord> queryByGrid(const QString& gridNum, int limit = 1000);   // ★ 2026-09-09 需求2：按格口查分拣明细
+    QVector<GridSummaryRecord> queryGridSummary();                                   // ★ 2026-09-09 需求2：全格口汇总（分拣数量）
     QVector<ReturnWaveItemRecord> querySkuGridMapping(const QString& sku, const QString& orderCode = "");  // ★ 按 SKU 查询格口分配
     SortingStatistics statistics();
     int recordCount();
@@ -294,6 +308,8 @@ public:
     QVector<ExceptionRecord> queryExceptions(const QString& orderCode, const QString& epc,
                                               const QString& type, const QString& startTime,
                                               const QString& endTime, int limit = 100);
+    // ★ 2026-09-09 需求3：批量取异常原因 epc → "type: reason"（EPC查询面板状态列显示异常原因）
+    QHash<QString, QString> queryExceptionReasons(const QString& orderCode = QString());
 
     // ──── 维护 ────
     QString databasePath() const { return m_dbPath; }

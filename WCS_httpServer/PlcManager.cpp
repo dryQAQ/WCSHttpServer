@@ -442,7 +442,10 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
             continue;
         }
 
-        // 锁格过滤
+        // ★ 2026-09-09 需求5：多格口锁格选格
+        //   - 无锁格 → 取首个匹配（unlocked[0] 即列表首个）
+        //   - 部分锁格 → 取首个未锁格
+        //   - 全部锁格 → 取首个匹配（照发，日志 WARN 便于追溯）
         if (vecGrid.size() > 1)
         {
             std::vector<int> unlocked;
@@ -451,11 +454,20 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                 if (!isGridLocked(g))
                     unlocked.push_back(g);
             }
-            if (!unlocked.empty())
-                vecGrid = { unlocked[0] };
+            if (unlocked.empty())
+            {
+                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 全部格口已锁格 code=%s grids=%s 按需求取首个匹配 grid=%d",
+                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(), vecGrid[0]);
+                vecGrid = { vecGrid[0] };
+            }
+            else
+            {
+                vecGrid = { unlocked[0] };   // 首个未锁格（无锁格时即首个匹配）
+            }
         }
 
         // ★ 禁用格口过滤（满箱锁格后禁用，WMS重新绑定H6前跳过）
+        //   ★ 需求5口径：全部禁用（=全部锁格）也取首个匹配照发，不再跳过丢件
         {
             std::vector<int> enabled;
             for (int g : vecGrid)
@@ -465,12 +477,14 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
             }
             if (enabled.empty())
             {
-                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 所有格口已禁用 code=%s grids=%s 跳过",
-                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
-                failCount++;
-                continue;
+                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 选中格口已禁用 code=%s grid=%d 按需求取首个匹配照发（全部锁格/禁用）",
+                    code.toLocal8Bit().data(), vecGrid[0]);
+                vecGrid = { vecGrid[0] };
             }
-            vecGrid = enabled;
+            else
+            {
+                vecGrid = enabled;
+            }
         }
 
         // ★ 从回调获取 RFID 小车号，默认 DEFAULT_CAR_NUM

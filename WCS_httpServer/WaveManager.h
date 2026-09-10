@@ -236,10 +236,15 @@ private:
 
     // ──── 分拣状态集（由 m_lock 保护）────
     QSet<QString>      m_setCodeRecv;        // 波次中包含的所有 inco
-    QSet<QString>      m_setCodeSorted;      // 已成功分拣的 inco
-    QSet<QString>      m_setCodeException;   // 异常的 inco
+    QSet<QString>      m_setCodeSorted;      // 已成功分拣的 inco（去重集合：防重判定/恢复/未分拣计算用）
+    QSet<QString>      m_setCodeException;   // 异常的 inco（去重集合）
     QSet<QString>      m_setCodeProcessing;  // 正在分拣中的 inco（防并发重复）
     QMap<QString, int> m_mapCodeRetry;       // 每个 inco 的已重试次数
+
+    // ★ 2026-09-09 需求8：分拣数量以 PLC 实时反馈为准——按 PLC 反馈行数累计（重复反馈也计件）
+    //   面板"已分拣/异常"与 H8 sumLocation 用此计数；上面集合仅用于去重判定/恢复/未分拣计算
+    int                 m_sortedTotal    = 0;   // 成功落格反馈累计（含重复反馈/no_match/no_bind/conflict）
+    int                 m_exceptionTotal = 0;   // PLC 判定失败(2/3)反馈累计
 
     // ──── 并发控制 ────
     mutable std::mutex m_lock;               // 保护所有分拣状态集（QSet/QMap）

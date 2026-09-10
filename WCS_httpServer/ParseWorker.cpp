@@ -72,8 +72,21 @@ void ParseWorker::run()
         // 构建新Map（key=Sku编码, value=格口分配信息）
         auto* newMap = new QMap<QString, GridEntry>();
         QSet<QString> recvSet;   // 跟踪接收到的SKU
+        int addCount = 0;        // 新增 SKU 计数
+        int mergeCount = 0;      // 同品多格口合并数
+        int duplicateCount = 0;  // 同品同格口重复行数（一SKU多行下发时的正常冗余，也需计数留痕）
+        // ★ 2026-09-09 超大波次(50000item)日志节流：
+        //   小波次(≤PARSE_SKU_FULL_LOG_MAX) 逐条全量输出——与原行为完全一致，现场核对无差异；
+        //   超大波次才节流（首 N 条 + 每步长一条 + 结尾三类计数汇总），避免日志IO拖慢解析。
+        //   全量依据：WAVE_ITEM 日志留有整条原始报文（含全部 inco/gridNum/sobi），可 grep 核对任一 SKU
+        const bool bFullSkuLog = (items.size() <= PARSE_SKU_FULL_LOG_MAX);
+        if (!bFullSkuLog)
+        {
+            WCS_INFO("[SKU映射] items=%lld 超过全量日志上限(%d)，本次节流输出（首%d条+每%d条一条，可调宏恢复全量）",
+                (qint64)items.size(), PARSE_SKU_FULL_LOG_MAX, PARSE_SKU_LOG_TAIL, PARSE_SKU_LOG_STEP);
+        }
 
-        // ★ 波次明细日志：只记录 WMS 原始报文，一行搞定
+        // ★ 波次明细日志：完整原始报文（大波次单条可达数MB，WAVE_ITEM 模块落盘；逐条映射日志的核对底稿）
         WAVE_ITEM_INFO("[原始报文] %s body=%s(%d字节)",
             task.fullUrl.toLocal8Bit().data(), task.rawBody.constData(), task.rawBody.size());
 
@@ -133,13 +146,22 @@ void ParseWorker::run()
                 if (!exist.contains(gridNum))
                 {
                     (*newMap)[inco].gridNum = exist + "," + gridNum;
-                    WCS_INFO("[SKU映射] 同品多格口合并 SKU=%s gridNum=%s (已有=%s)", 
-                        inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), exist.toLocal8Bit().data());
+                    mergeCount++;
+                    if (bFullSkuLog || mergeCount <= PARSE_SKU_LOG_TAIL || (mergeCount % PARSE_SKU_LOG_STEP) == 0)
+                    {
+                        WCS_INFO("[SKU映射] 同品多格口合并 SKU=%s gridNum=%s (已有=%s)", 
+                            inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), exist.toLocal8Bit().data());
+                    }
                 }
                 else
                 {
-                    WCS_INFO("[SKU映射] 重复格口跳过 SKU=%s gridNum=%s (已有=%s)", 
-                        inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), exist.toLocal8Bit().data());
+                    // ★ 同品同格口重复行（一SKU多行下发）：计数 + 节流输出（不逐条刷屏）
+                    duplicateCount++;
+                    if (bFullSkuLog || duplicateCount <= PARSE_SKU_LOG_TAIL || (duplicateCount % PARSE_SKU_LOG_STEP) == 0)
+                    {
+                        WCS_INFO("[SKU映射] 重复格口跳过 SKU=%s gridNum=%s (已有=%s)", 
+                            inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), exist.toLocal8Bit().data());
+                    }
                 }
             }
             else
@@ -155,11 +177,18 @@ void ParseWorker::run()
                 entry.orderQty  = orderQty;
                 entry.skuCount  = 0;  // 循环结束后统一回填
                 newMap->insert(inco, entry);
-                WCS_INFO("[SKU映射] 新增 SKU=%s gridNum=%s gridType=%s gridCount=%d sobi=%s", 
-                    inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), 
-                    entry.gridType.toLocal8Bit().data(), gridNumber, sobi.toLocal8Bit().data());
+                addCount++;
+                // ★ 超大波次节流：全量模式(小波次)输出每条；节流模式仅首尾若干条 + 每步长一条
+                if (bFullSkuLog || addCount <= PARSE_SKU_LOG_TAIL || (addCount % PARSE_SKU_LOG_STEP) == 0)
+                {
+                    WCS_INFO("[SKU映射] 新增 SKU=%s gridNum=%s gridType=%s gridCount=%d sobi=%s", 
+                        inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), 
+                        entry.gridType.toLocal8Bit().data(), gridNumber, sobi.toLocal8Bit().data());
+                }
             }
         }
+        WCS_INFO("[SKU映射] 解析完成 items=%lld 新增SKU=%d 合并=%d 重复行=%d",
+            (qint64)items.size(), addCount, mergeCount, duplicateCount);
 
         // 回填 SKU 种类数到每个条目（去重后的EPC编码种类数）
         int skuCount = newMap->size();

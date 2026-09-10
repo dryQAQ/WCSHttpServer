@@ -118,6 +118,12 @@ HttpServer::HttpServer(QObject* parent)
             //   （H8 成功/失败耗尽/会话超时兜底、H5 取消 全部经由此处触发，主线程串行安全）
             if (newStatus == WAVE_FINISHED || newStatus == WAVE_CANCELLED)
                 maybeStartPendingWave();
+
+            // ★ 2026-09-08 恢复分拣 → 补发挂起任务（RFID发送不阻塞保障）：
+            //   非分拣中已就绪（SKU+小车号齐）的 EPC → 补发 PLC 指令
+            //   （满箱回传已解耦：不再迁移状态，无需挂起重放）
+            if (newStatus == WAVE_SORTING)
+                replayPendingRfidPlcEpcs();
         });
 
     // 显式指定 Qt::QueuedConnection：ParseWorker::run() 在独立线程中运行，
@@ -338,6 +344,9 @@ HttpServer::HttpServer(QObject* parent)
                                 exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                                 m_pSortingDb->insertException(exRec);
                             }
+                            // ★ 2026-09-09 需求7：PLC 判定失败的件入异常，计时归0——二次上传重新计时
+                            if (m_pEpcCache)
+                                m_pEpcCache->resetTiming(e.code);
                             continue;
                         }
 
@@ -354,11 +363,14 @@ HttpServer::HttpServer(QObject* parent)
                         if (entry.gridNum.isEmpty())
                         {
                             // 识别码不在当前波次中 → 异常口
-                            HTTP_LOG_WARN("PLC反馈识别码无匹配 code=%s grid=%s sku=%s 记录为异常",
+                            // ★ 2026-09-09 口径调整（客户确认"以实时记录PLC分拣数量为准"）：
+                            //   PLC 报成功即计"已分拣"，不再因 WCS 侧未查到 SKU 而挪进异常；
+                            //   异常仅保留 PLC 主动报失败的（status=2/3）。本条仍写异常表留痕可查
+                            HTTP_LOG_WARN("PLC反馈识别码无匹配 code=%s grid=%s sku=%s 计为已分拣(PLC报成功)，异常表留痕",
                                 e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(), sku.toLocal8Bit().data());
                             if (m_pWaveMgr)
-                                m_pWaveMgr->markException(e.code);
-                            // 写入异常记录
+                                m_pWaveMgr->markSorted(e.code);
+                            // 写入异常记录（仅留痕，不增加面板异常计数）
                             if (m_pSortingDb)
                             {
                                 ExceptionRecord exRec;
@@ -366,7 +378,7 @@ HttpServer::HttpServer(QObject* parent)
                                 exRec.orderCode = m_pWaveMgr->orderCode();
                                 exRec.epc       = e.code;
                                 exRec.sku       = "";
-                                exRec.reason    = QString("格口%1：当前波次中不存在该识别码").arg(e.grid);
+                                exRec.reason    = QString("格口%1：当前波次中不存在该识别码（PLC报成功，计已分拣，仅留痕）").arg(e.grid);
                                 exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                                 m_pSortingDb->insertException(exRec);
                             }
@@ -378,11 +390,13 @@ HttpServer::HttpServer(QObject* parent)
                             std::lock_guard<std::mutex> lock(m_containerMutex);
                             if (!m_containerBindings.contains(e.grid))
                             {
-                                // 格口无绑定 → 异常口
-                                HTTP_LOG_WARN("PLC反馈格口无绑定 code=%s grid=%s",
+                                // 格口无绑定
+                                // ★ 2026-09-09 口径调整（客户确认"以实时记录PLC分拣数量为准"）：
+                                //   PLC 报成功即计"已分拣"；本条仍写异常表留痕（异常面板只计 PLC 报失败的 2/3）
+                                HTTP_LOG_WARN("PLC反馈格口无绑定 code=%s grid=%s 计为已分拣(PLC报成功)，异常表留痕",
                                     e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data());
                                 if (m_pWaveMgr)
-                                    m_pWaveMgr->markException(e.code);
+                                    m_pWaveMgr->markSorted(e.code);
                                 if (m_pSortingDb)
                                 {
                                     ExceptionRecord exRec;
@@ -390,7 +404,7 @@ HttpServer::HttpServer(QObject* parent)
                                     exRec.orderCode = m_pWaveMgr->orderCode();
                                     exRec.epc       = e.code;
                                     exRec.sku       = "";
-                                    exRec.reason    = QString("格口%1：格口未绑定容器").arg(e.grid);
+                                    exRec.reason    = QString("格口%1：格口未绑定容器（PLC报成功，计已分拣，仅留痕）").arg(e.grid);
                                     exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                                     m_pSortingDb->insertException(exRec);
                                 }
@@ -422,11 +436,13 @@ HttpServer::HttpServer(QObject* parent)
                                     QStringList typeList = otherTypes.values();
                                     if (QString(cfg.sortingConflictPolicy) == "STRICT_EXCEPTION")
                                     {
-                                        HTTP_LOG_WARN("分类vs发货冲突 code=%s grid=%s type=%s otherTypes=%s 入异常口",
+                                        // ★ 2026-09-09 口径调整（客户确认"以实时记录PLC分拣数量为准"）：
+                                        //   PLC 报成功即计"已分拣"；本条仍写异常表留痕
+                                        HTTP_LOG_WARN("分类vs发货冲突 code=%s grid=%s type=%s otherTypes=%s 计为已分拣(PLC报成功)，异常表留痕",
                                             e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(),
                                             currentGridType.toLocal8Bit().data(),
                                             typeList.join(",").toLocal8Bit().data());
-                                        m_pWaveMgr->markException(e.code);
+                                        m_pWaveMgr->markSorted(e.code);
                                         if (m_pSortingDb)
                                         {
                                             ExceptionRecord exRec;
@@ -434,7 +450,7 @@ HttpServer::HttpServer(QObject* parent)
                                             exRec.orderCode = m_pWaveMgr->orderCode();
                                             exRec.epc       = e.code;
                                             exRec.sku       = "";
-                                            exRec.reason    = QString("同品分类vs发货冲突 grid=%1 type=%2 otherTypes=%3")
+                                            exRec.reason    = QString("同品分类vs发货冲突 grid=%1 type=%2 otherTypes=%3（PLC报成功，计已分拣，仅留痕）")
                                                 .arg(e.grid).arg(currentGridType).arg(typeList.join(","));
                                             exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                                             m_pSortingDb->insertException(exRec);
@@ -451,14 +467,16 @@ HttpServer::HttpServer(QObject* parent)
                         }
 
                         // ──── EPC 任务内防重（orderCode+epc）────
-                        // 同一波次内同一 EPC 只计一次成功，防止重复落格双计
+                        // ★ 2026-09-09 需求8：计数以 PLC 实时反馈为准——重复反馈也计 1 件（markSorted 累计+1），
+                        //   但跳过明细写入（m_gridSortRecords/DB 仍防重，H7 不重复行）
                         if (cfg.sortingEpcDedup)
                         {
                             if (m_pWaveMgr->isCodeSorted(e.code))
                             {
-                                HTTP_LOG_WARN("EPC防重拦截 code=%s order=%s 已成功分拣，跳过",
+                                HTTP_LOG_WARN("EPC防重拦截 code=%s order=%s 重复反馈计件(不写明细)，跳过",
                                     e.code.toLocal8Bit().data(),
                                     m_pWaveMgr->orderCode().toLocal8Bit().data());
+                                m_pWaveMgr->markSorted(e.code); // 重复反馈也计 1 件（以PLC实时记录为准）
                                 continue;
                             }
                             // 数据库级防重：检查 sort_txn 表是否已有记录
@@ -467,7 +485,7 @@ HttpServer::HttpServer(QObject* parent)
                                 HTTP_LOG_WARN("EPC防重拦截(DB) code=%s order=%s 数据库已有记录，跳过",
                                     e.code.toLocal8Bit().data(),
                                     m_pWaveMgr->orderCode().toLocal8Bit().data());
-                                m_pWaveMgr->markSorted(e.code); // 同步内存状态
+                                m_pWaveMgr->markSorted(e.code); // 同步内存状态（该反馈计 1 件）
                                 continue;
                             }
                         }
@@ -496,6 +514,19 @@ HttpServer::HttpServer(QObject* parent)
                             rec.sku    = m_pEpcCache ? m_pEpcCache->get(e.code) : QString();  // ★ SKU（EPC→SKU 映射，落格时固化，供 WMS 报文 sku 字段）
                             rec.car    = e.car;
                             rec.timeMs = e.timestampMs;
+                            // ★ 2026-09-09 需求6：落格时固化当前容器号——物件行进中换绑，按落格时刻的新绑定记录
+                            {
+                                std::lock_guard<std::mutex> lockBind(m_containerMutex);
+                                rec.boxcode = m_containerBindings.value(e.grid);
+                                if (rec.boxcode.isEmpty())
+                                {
+                                    bool okN = false;
+                                    int gN = e.grid.toInt(&okN);
+                                    if (okN && gN >= 1)
+                                        rec.boxcode = m_containerBindings.value(
+                                            QString("%1").arg(gN, GRID_KEY_PADDING, 10, QChar('0')));
+                                }
+                            }
                             // ★ 2026-09-06 件数口径修复：一物一码，每条落格记录 = 1 件。
                             //   原值 entry.gridCount（该SKU计划件数）被灌进单条记录，导致
                             //   DB 明细"件数"列与报文 qty 按计划数虚高（例: 计划12实分3 → 3行×12=36）。
@@ -515,7 +546,8 @@ HttpServer::HttpServer(QObject* parent)
                                     e.code, sku, e.grid, e.car,
                                     e.firstCar, e.lastCar,
                                     1 /* ★ 2026-09-07 每条落格记录=1件（与 rec.gridCount 口径一致，不再写 SKU 计划数）*/,
-                                    entry.volu);
+                                    entry.volu,
+                                    rec.boxcode /* ★ 2026-09-09 需求6：落格容器号 */);
                             }
                         }
                     }
@@ -581,6 +613,32 @@ HttpServer::HttpServer(QObject* parent)
             }
 
             HTTP_LOG_INFO("[锁格→满箱] 完成 grid=%s order=%s", grid.toLocal8Bit().data(), orderCode.toLocal8Bit().data());
+        }, Qt::QueuedConnection);
+
+    // ★ 2026-09-09 需求1：PLC 解锁（S7 边沿）——货在进行中格口已锁格，工人绑定新容器号(H6)再解锁时，
+    //   后续落格/满箱使用新容器号。此处处理：刷新绑定面板 + 若锁格时因非执行态被跳过而遗留的记录，
+    //   解锁后按当前（新）绑定补发 H7（lookupGridBoxCode 现查新容器号）
+    connect(m_pPlcMgr, &PlcManager::gridUnlocked, this,
+        [this](const QString& grid) {
+            HTTP_LOG_INFO("[解锁] PLC解锁信号 grid=%s", grid.toLocal8Bit().data());
+            emit logMessage(QString("[S7] 解锁 grid=%1——后续按当前绑定容器号记录/回传").arg(grid));
+            emit bindingUpdated();
+
+            // 该格仍留有未上传分拣记录（锁格时波次非执行态被跳过）→ 解锁后补发 H7
+            bool hasRecords = false;
+            {
+                std::lock_guard<std::mutex> lock(m_gridRecordMutex);
+                hasRecords = m_gridSortRecords.contains(grid) && !m_gridSortRecords.value(grid).isEmpty();
+            }
+            if (hasRecords)
+            {
+                int st = m_pWaveMgr ? m_pWaveMgr->status() : -1;
+                if (st == WAVE_SORTING || st == WAVE_FULLBOX_SYNC)
+                {
+                    HTTP_LOG_INFO("[解锁] 格口%1 有未上传记录，解锁后补发满箱回传（容器号=当前绑定）", grid.toLocal8Bit().data());
+                    sendFullbox(grid);
+                }
+            }
         }, Qt::QueuedConnection);
 
     // PLC连接状态日志（使用 QueuedConnection 确保跨线程安全）
@@ -2862,13 +2920,15 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
 // ============================================================================
 // sendFullbox — 满箱触发入口（T-S5-01）
 // 流程：
-//   1. 校验波次状态为 SORTING
-//   2. 状态迁移 SORTING→FULLBOX_SYNC
-//   3. 锁容器明细（获取当前容器绑定和分拣记录）
-//   4. 构建满箱回传报文（H7）
-//   5. 生成 msgId（UUID 幂等键）
-//   6. 插入 Outbox 出站表
-//   7. 发送到 WMS
+//   1. 校验波次处于执行态（SORTING/FULLBOX_SYNC；非执行态不发送，记录保留由兜底补发处理）
+//   2. 锁容器明细（获取当前容器绑定和分拣记录）
+//   3. 构建满箱回传报文（H7）
+//   4. 生成 msgId（UUID 幂等键）
+//   5. 插入 Outbox 出站表
+//   6. 发送到 WMS（异步，失败由 Outbox 定时器重试）
+// ★ 2026-09-08 解耦（客户确认）：满箱回传不再迁移波次状态（取消 SORTING→FULLBOX_SYNC 单例限制）。
+//   多格口同时/先后满箱互不阻塞——每个锁格各自直接入 Outbox 队列异步发送，
+//   与分拣落格、RFID 绑定查询天然并行（满箱回传走 WMS 地址，查询走 RFID 地址，端口不同互不影响）
 // ============================================================================
 void HttpServer::sendFullbox(const QString& grid)
 {
@@ -2883,14 +2943,15 @@ void HttpServer::sendFullbox(const QString& grid)
         return;
     }
 
-    // ── 步骤1-2: 触发满箱状态迁移 ──
-    if (!m_pWaveMgr->triggerFullbox())
+    // ── 步骤1: 执行态校验（不做状态迁移，满箱回传与分拣并行）──
     {
-        HTTP_LOG_WARN("满箱回传触发失败（H7） 状态迁移拒绝 grid=%s status=%d",
-            grid.toLocal8Bit().data(), m_pWaveMgr->status());
-        emit logMessage(QString("[满箱回传] 触发失败: 状态迁移拒绝 grid=%1 status=%2")
-            .arg(grid).arg(m_pWaveMgr->status()), true);
-        return;
+        int st = m_pWaveMgr->status();
+        if (st != WAVE_SORTING && st != WAVE_FULLBOX_SYNC)
+        {
+            HTTP_LOG_INFO("满箱回传（H7）跳过 波次非执行态 grid=%s status=%d(%s)——记录保留内存，由完结前兜底补发/人工处理",
+                grid.toLocal8Bit().data(), st, WaveSnapshot::statusToString(st).toLocal8Bit().data());
+            return;
+        }
     }
 
     // ── 步骤3: 获取容器绑定（内存快速路径 → 数据库现查兜底）──
@@ -2900,8 +2961,7 @@ void HttpServer::sendFullbox(const QString& grid)
     {
         HTTP_LOG_WARN("满箱回传触发失败（H7） 格口 %s 无容器绑定", grid.toLocal8Bit().data());
         emit logMessage(QString("[满箱回传] 触发失败: 格口%1 无容器绑定").arg(grid), true);
-        m_pWaveMgr->resumeSorting();  // 回退状态
-        return;
+        return;   // 记录保留内存，由完结前兜底补发/人工处理（不迁移状态）
     }
 
     // ── 步骤3: 获取分拣记录 ──
@@ -2918,8 +2978,7 @@ void HttpServer::sendFullbox(const QString& grid)
     {
         HTTP_LOG_WARN("满箱回传触发（H7） grid=%s 无分拣记录 跳过", grid.toLocal8Bit().data());
         emit logMessage(QString("[满箱回传] 格口%1 无分拣记录，跳过").arg(grid));
-        m_pWaveMgr->resumeSorting();  // 回退状态
-        return;
+        return;   // 无可发送内容（不迁移状态）
     }
 
     // ★ 2026-09-06 客户确认：报文 sku 字段必须是 SKU 编码——不能是 EPC 码，也不能发"未找到sku"占位串。
@@ -2956,8 +3015,7 @@ void HttpServer::sendFullbox(const QString& grid)
                 ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                 m_pSortingDb->insertException(ex);
             }
-            m_pWaveMgr->resumeSorting();  // 回退 FULLBOX_SYNC → SORTING
-            return;
+            return;   // 缺SKU已写异常表+保留记录（兜底补发/人工重锁格重发；不迁移状态）
         }
     }
 
@@ -3033,6 +3091,47 @@ void HttpServer::sendFullbox(const QString& grid)
         t1, t2 - t1, t3 - t2, t4 - t3, t4);
     HTTP_LOG_INFO("满箱回传耗时（H7） grid=%s 前置校验=%lldms payload构建=%lldms Outbox=%lldms 信号发送=%lldms 总计=%lldms",
         grid.toLocal8Bit().data(), t1, t2 - t1, t3 - t2, t4 - t3, t4);
+}
+
+// ============================================================================
+// replayPendingRfidPlcEpcs — 恢复分拣(SORTING)后重放挂起的 RFID EPC（2026-09-08）
+// 场景：RFID 推送到达时处于非分拣中状态（如满箱同步中），EPC 已存储+已查绑定但未发送 PLC；
+//       状态恢复 SORTING 后自动补发 PLC 指令，杜绝"扫了但不分拣"
+// 仅主线程调用（waveStatusChanged 钩子）；集合受 m_pendingRfidMutex 保护
+//   （handleRfidCarNumReport 在业务线程池/主线程两条路径均可能入队）
+// ============================================================================
+void HttpServer::replayPendingRfidPlcEpcs()
+{
+    QList<QString> epcs;
+    {
+        std::lock_guard<std::mutex> lock(m_pendingRfidMutex);
+        if (m_pendingRfidPlcEpcs.isEmpty())
+            return;
+        epcs = m_pendingRfidPlcEpcs.values();
+        m_pendingRfidPlcEpcs.clear();   // 先清空：逐条补发，成功的即完成
+    }
+    HTTP_LOG_INFO("RFID挂起EPC补发 恢复分拣 count=%d", epcs.size());
+    emit logMessage(QString("[RFID] 恢复分拣——自动补发挂起的 EPC %1 条").arg(epcs.size()));
+    for (const QString& epc : epcs)
+    {
+        // 缓存已过期/未就绪（如 carNum 未到、TTL 清理）→ 跳过（未就绪路径有独立重试）
+        if (!m_pEpcCache || !m_pEpcCache->isReadyForPlc(epc))
+        {
+            HTTP_LOG_INFO("RFID挂起补发跳过（缓存过期/未就绪） epc=%s", epc.toLocal8Bit().data());
+            continue;
+        }
+        // 已成功发送过 → 跳过（防重复投递）
+        if (m_sentEpcs.contains(epc))
+        {
+            HTTP_LOG_INFO("RFID挂起补发跳过（已发送过） epc=%s", epc.toLocal8Bit().data());
+            continue;
+        }
+        if (trySendToPlcForEpc(epc))
+            HTTP_LOG_INFO("RFID挂起补发成功 epc=%s", epc.toLocal8Bit().data());
+        else
+            HTTP_LOG_WARN("RFID挂起补发失败（格口禁用/无映射/PLC未连接） epc=%s——由异常/未就绪链路跟踪",
+                epc.toLocal8Bit().data());
+    }
 }
 
 // ============================================================================
@@ -3430,6 +3529,8 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
         }
 
         // 4. 状态恢复：FULLBOX_SYNC → SORTING（T-S5-05）—— 仅当前波次
+        //    ★ 2026-09-08 幂等：满箱回传已解耦状态机（不再进入 FULLBOX_SYNC），
+        //      多格口并发满箱时回执乱序到达也安全（状态已是 SORTING 时直接成功）
         if (bIsCurrent && m_pWaveMgr)
         {
             m_pWaveMgr->resumeSorting();
@@ -3472,12 +3573,12 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
             }
 
             // ★ 状态回 SORTING（FULLBOX_SYNC→SORTING 合法迁移），满箱失败不阻塞分拣
-            //   （原 setState(WAVE_IDLE) 被状态机白名单拒绝，属无效调用）
             // ★ 2026-09-06 归属防护：该波次已非当前内存波次时不动状态（切回时按 DB 状态恢复）
+            // ★ 2026-09-08 解耦后使用幂等 resumeSorting()：多格口并发满箱时状态可能已是 SORTING
             bool bIsCurrent = m_pWaveMgr && m_pWaveMgr->orderCode() == outMsg.orderCode;
             if (bIsCurrent && m_pWaveMgr)
             {
-                if (m_pWaveMgr->setState(WAVE_SORTING))
+                if (m_pWaveMgr->resumeSorting())
                     HTTP_LOG_INFO("满箱回传失败（H7） 状态回SORTING order=%s 分拣继续（failed报文可重传补发）",
                         outMsg.orderCode.toLocal8Bit().data());
                 else
@@ -4228,14 +4329,18 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
     //   - 分拣中(WAVE_SORTING)：存储 + 查询 + 发送 PLC（正常处理）
     //   - 其他状态：存储 + 查询绑定（提前备好 SKU），仅不发送 PLC（发送限分拣中）
     int waveStatus = m_pWaveMgr ? m_pWaveMgr->status() : -1;
-    bool bSorting = (waveStatus == WAVE_SORTING);
+    // ★ 2026-09-08 可发送执行态：SORTING 或 FULLBOX_SYNC（满箱同步期间分拣/下发照常，与落格反馈口径一致）
+    bool bSorting = (waveStatus == WAVE_SORTING || waveStatus == WAVE_FULLBOX_SYNC);
     if (!bSorting)
     {
-        HTTP_LOG_WARN("RFID推送 已接收但非SORTING状态，仅存储不处理 status=%d(%s) orderCode=%s",
+        // ★ 2026-09-08 说明：RFID 接收/存储/SKU 绑定查询不受任何状态影响（一直接收、一直通畅）；
+        //   仅"向 PLC 发送指令"限分拣中（安全设计：非分拣状态无格口映射/格口禁用，下发会错乱）。
+        //   已就绪的 EPC 将挂起，恢复分拣后自动补发 PLC——不会不处理、不会丢数据
+        HTTP_LOG_INFO("RFID推送 已接收(非SORTING) status=%d(%s) orderCode=%s——已存储+已查绑定，未发送PLC(恢复分拣后自动补发)",
             waveStatus, WaveSnapshot::statusToString(waveStatus).toLocal8Bit().data(),
             m_pWaveMgr ? m_pWaveMgr->orderCode().toLocal8Bit().data() : "(null)");
-        emit logMessage(QString("[RFID] 非分拣中状态(status=%1)，数据已接收并存储，暂不处理")
-            .arg(WaveSnapshot::statusToString(waveStatus)), true);
+        emit logMessage(QString("[RFID] 非分拣中(status=%1)：已接收并存储、绑定查询已提交；未发送PLC（恢复分拣后自动补发）")
+            .arg(WaveSnapshot::statusToString(waveStatus)));
     }
 
     // 解析每条 EPC→barcode+carNum 映射，存入 EpcCache（T-S4-04 TTL缓存）
@@ -4311,13 +4416,13 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
                 seq.toLocal8Bit().data());
         }
 
-        // ★ 非分拣中状态：仅存储 + 查询，不发送 PLC（保留逐条日志便于核对「收到但未发送」）
+        // ★ 非分拣中状态：仅存储 + 查询，不发送 PLC（已就绪 EPC 挂起，恢复分拣后自动补发）
         if (!bSorting)
         {
-            HTTP_LOG_INFO("RFID推送 仅存储不处理(非分拣中) epc=%s carNum=%s seq=%s status=%d %s",
+            HTTP_LOG_INFO("RFID推送 已存储未发送(非分拣中) epc=%s carNum=%s seq=%s status=%d %s",
                 epc.toLocal8Bit().data(), carNum.toLocal8Bit().data(),
                 seq.toLocal8Bit().data(), waveStatus,
-                needSkuQuery ? "(SKU绑定查询已提交/排队)" : "(SKU已绑定，待开始分拣后发送)");
+                needSkuQuery ? "(SKU绑定查询已提交/排队)" : "(SKU已绑定，恢复分拣后自动补发)");
         }
     }
 
@@ -4356,9 +4461,18 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
     for (auto it = batchMap.constBegin(); it != batchMap.constEnd(); ++it)
     {
         QString epc = it.key();
-        // ★ 非分拣中状态不做处理（仅存储 + 日志）
+        // ★ 非分拣中状态：已就绪（SKU+carNum 齐）的 EPC 挂起，恢复分拣后自动补发；不发送 PLC
         if (!bSorting)
+        {
+            if (m_pEpcCache && m_pEpcCache->isReadyForPlc(epc))
+            {
+                std::lock_guard<std::mutex> lock(m_pendingRfidMutex);
+                m_pendingRfidPlcEpcs.insert(epc);
+                HTTP_LOG_INFO("RFID推送 非分拣中已就绪→挂起待补发 epc=%s status=%d pending=%d",
+                    epc.toLocal8Bit().data(), waveStatus, m_pendingRfidPlcEpcs.size());
+            }
             continue;
+        }
 
         bool isReady = m_pEpcCache && m_pEpcCache->isReadyForPlc(epc);
         
@@ -4745,15 +4859,26 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
         return false;
     }
 
-    // ★ 2026-09-05：发送 PLC 仅限「分拣中」状态（与主线一致）；
-    //   SKU 绑定查询不受此限（接收即查已提前完成），此处兜底所有调用路径（含异步查询回调）
+    // ★ 2026-09-05：发送 PLC 仅限执行态（与主线一致）；SKU 绑定查询不受此限（接收即查已提前完成），
+    //   此处兜底所有调用路径（含异步查询回调）。
+    // ★ 2026-09-08 口径统一：SORTING 与 FULLBOX_SYNC 均可发送——满箱同步期间其他格口落格照常，
+    //   向 PLC 下发指令同样照常（与落格反馈处理口径一致），满箱上传与分拣互不阻塞
     {
         int st = m_pWaveMgr ? m_pWaveMgr->status() : -1;
-        if (st != WAVE_SORTING)
+        if (st != WAVE_SORTING && st != WAVE_FULLBOX_SYNC)
         {
-            HTTP_LOG_INFO("trySendToPlcForEpc 非分拣中不发送 epc=%s status=%d(%s)",
+            // ★ 2026-09-08 不丢弃保障：已就绪（SKU+carNum 齐）仅因非执行态未发送 → 挂起，
+            //   恢复分拣后由 replayPendingRfidPlcEpcs 自动补发；未就绪的走既有未就绪重试链路
+            bool readyNow = m_pEpcCache && m_pEpcCache->isReadyForPlc(epc);
+            if (readyNow)
+            {
+                std::lock_guard<std::mutex> lock(m_pendingRfidMutex);
+                m_pendingRfidPlcEpcs.insert(epc);
+            }
+            HTTP_LOG_INFO("trySendToPlcForEpc 非执行态不发送 epc=%s status=%d(%s) %s",
                 epc.toLocal8Bit().data(), st,
-                st >= 0 ? WaveSnapshot::statusToString(st).toLocal8Bit().data() : "?");
+                st >= 0 ? WaveSnapshot::statusToString(st).toLocal8Bit().data() : "?",
+                readyNow ? "(已就绪→挂起，恢复分拣后自动补发)" : "(未就绪，走正常重试)");
             return false;
         }
     }
@@ -4850,6 +4975,9 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
                 .arg(elapsed).arg(PLC_SEND_TIMEOUT_MS);
             m_pSortingDb->insertException(ex);
         }
+        // ★ 2026-09-09 需求7：入异常口后计时归0——二次上传（RFID重推）重新计时，不再立即超时
+        if (m_pEpcCache)
+            m_pEpcCache->resetTiming(epc);
         return false;
     }
 
@@ -4868,6 +4996,9 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
             seq.toLocal8Bit().data(), sendElapsed);
         emit logMessage(QString("[PLC] 发送失败 epc=%1 sku=%2 格口%3 小车%4 seq=%5 耗时%6ms")
             .arg(epc).arg(sku).arg(entry.gridNum).arg(carNum).arg(seq).arg(sendElapsed), true);
+        // ★ 2026-09-09 需求7：发送失败入异常，计时归0——二次上传重新计时
+        if (m_pEpcCache)
+            m_pEpcCache->resetTiming(epc);
         return false;
     }
 

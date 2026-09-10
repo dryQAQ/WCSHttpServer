@@ -42,6 +42,7 @@ struct GridSortRecord
     QString sku;           // ★ 2026-09-06 SKU 编码（EPC→SKU 绑定查询结果，落格时固化；
                            //   WMS 报文中 sku 字段必须是它——不能是 EPC 或占位串）
     QString car;           // 小车号
+    QString boxcode;       // ★ 2026-09-09 需求6：落格时的容器号（物件行进中换绑，按落格时刻的新绑定记录）
     int     gridCount = 0; // 配货件数
     QString volu;          // 来源库位（=WMS下发 items[].sobi；满箱回传报文 head.fromLocation 来源）
     qint64  timeMs   = 0;  // 分拣时间
@@ -266,6 +267,14 @@ private:
     QMap<QString, int> m_skuQueryRetryCount; // ★ 重试计数：每个 EPC 的 SKU 查询重试次数（key=epc, value=已重试次数）
     QMap<QString, int> m_notReadyRetryCount; // ★ 未就绪重试计数：SKU已绑定但carNum未到时的重试次数
     QSet<QString>  m_sentEpcs;               // ★ 已发送PLC的EPC集合（防重复发送）
+
+    // ──── ★ 2026-09-08 RFID 发送"不阻塞"保障 ────
+    //   RFID 挂起集合：EPC 已就绪（SKU+carNum 齐）但处于非执行态（未开工/完结中等）→ 挂起，
+    //   恢复分拣后自动补发 PLC 指令。
+    //   （满箱回传 H7 已解耦状态机：锁格即直接入 Outbox 队列异步发送，无需挂起）
+    QSet<QString>           m_pendingRfidPlcEpcs;    // RFID 挂起 EPC（线程池/主线程共用，需锁）
+    std::mutex              m_pendingRfidMutex;      // 保护 m_pendingRfidPlcEpcs
+    void                    replayPendingRfidPlcEpcs();   // 状态回 SORTING：重放挂起的 RFID EPC→PLC 发送
 
     // ──── API 路由（从 XML 配置读取，可动态修改）────
     QString m_apiInsertWaveInfo     = API_INSERT_WAVE_INFO;

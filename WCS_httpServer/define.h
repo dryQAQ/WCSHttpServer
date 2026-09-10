@@ -124,6 +124,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 #define HEALTH_CHECK_INTERVAL_MS 60*1000  // 健康检查定时器周期(ms)
 #define WORKER_WAIT_MS           3000   // 等待 ParseWorker 线程退出超时(ms)
+#define PARSE_SKU_LOG_TAIL       30     // ★ 2026-09-09 超大波次日志节流：前N条逐条输出
+#define PARSE_SKU_LOG_STEP       500    // ★ 2026-09-09 超大波次日志节流：此后每N条输出一条
+#define PARSE_SKU_FULL_LOG_MAX   2000   // ★ 2026-09-09 item 数≤此值时逐条全量输出（小波次行为与原来完全一致）
+#define WAVE_ITEM_PREP_REBUILD   2000   // ★ 2026-09-09 50000item落库：prepared 每N行重建（规避Qt绑值累积）
 #define CONN_LONG_DURATION_MS   10000   // 连接持续超过此值视为"长连接"(ms)
 #define DOUBLE_BUFFER_CLEANUP_S     5   // DoubleBuffer 旧 Map 延迟清理时间(秒)
 
@@ -298,8 +302,13 @@
     "  grid_count  INTEGER NOT NULL DEFAULT 0," \
     "  volu        TEXT    NOT NULL DEFAULT ''," \
     "  sort_time   TEXT    NOT NULL DEFAULT ''," \
-    "  create_time TEXT    NOT NULL DEFAULT ''" \
+    "  create_time TEXT    NOT NULL DEFAULT ''," \
+    "  boxcode     TEXT    NOT NULL DEFAULT ''" \
     ")"
+
+// ★ 2026-09-09 需求6：旧库兼容——启动时检测缺 boxcode 列则补加（行进中换容器的记录容器号）
+#define SQL_ALTER_SORTING_ADD_BOXCODE \
+    "ALTER TABLE sorting_records ADD COLUMN boxcode TEXT NOT NULL DEFAULT ''"
 
 // ──── 索引：加速常用查询 ────
 // 按EPC编码查询索引 — 加速按EPC编码搜索历史分拣记录
@@ -311,14 +320,15 @@
 
 // ──── 公共查询字段列表（SELECT 子句复用）────
 // 查询所有字段，用于各种 SELECT 语句拼接，避免重复书写字段列表
-#define SQL_SELECT_FIELDS  "SELECT id, order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time "
+// ★ 2026-09-09 需求6：末尾新增 boxcode（容器号）——保持既有字段序号不变，解析处只需追加读取
+#define SQL_SELECT_FIELDS  "SELECT id, order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time, boxcode "
 
 // ──── 插入记录：PLC 落格反馈时写入一条分拣记录 ────
 // 使用参数化查询（?占位符），防止 SQL 注入，字段顺序与建表语句一致
 #define SQL_INSERT_RECORD \
     "INSERT INTO sorting_records " \
-    "(order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time) " \
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "(order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time, boxcode) " \
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 // ──── 查询：按不同条件检索分拣记录 ────
 // 按EPC编码查询 — 输入EPC编码，返回该EPC编码的所有分拣历史（按时间倒序）→ 状态=已分拣
@@ -327,6 +337,15 @@
 #define SQL_QUERY_BY_TIME          SQL_SELECT_FIELDS "FROM sorting_records WHERE sort_time >= ? AND sort_time <= ? ORDER BY id DESC LIMIT ?"
 // 按波次号查询 — 输入波次号，返回该波次下的所有分拣记录（按时间倒序）→ 状态=已分拣
 #define SQL_QUERY_BY_ORDER         SQL_SELECT_FIELDS "FROM sorting_records WHERE order_code = ? ORDER BY id DESC LIMIT ?"
+// ★ 2026-09-09 需求2：按格口查询分拣明细（输入格口号，返回该格所有分拣记录）
+#define SQL_QUERY_BY_GRID          SQL_SELECT_FIELDS "FROM sorting_records WHERE grid_num = ? ORDER BY id DESC LIMIT ?"
+// ★ 2026-09-09 需求2：全格口汇总（每格一行：格口号/分拣件数/SKU数/最近容器号/最近分拣时间）
+#define SQL_QUERY_GRID_SUMMARY \
+    "SELECT s.grid_num, COUNT(*) AS cnt, COUNT(DISTINCT s.sku) AS sku_cnt, " \
+    "  (SELECT s2.boxcode FROM sorting_records s2 WHERE s2.grid_num = s.grid_num " \
+    "   ORDER BY s2.id DESC LIMIT 1) AS box, " \
+    "  MAX(s.sort_time) AS last_t " \
+    "FROM sorting_records s GROUP BY s.grid_num ORDER BY s.grid_num"
 // 查询全部记录 — 不设条件，返回最新的分拣记录（按时间倒序）→ 状态=已分拣
 #define SQL_QUERY_ALL              SQL_SELECT_FIELDS "FROM sorting_records ORDER BY id DESC LIMIT ?"
 

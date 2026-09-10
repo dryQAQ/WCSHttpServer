@@ -2,6 +2,7 @@
 #include "LogService.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QSqlRecord>
@@ -44,6 +45,7 @@ QVector<SortingRecord> queryByBarcodeImpl(const QSqlDatabase& db, const QString&
             rec.volu = q.value(9).toString();
             rec.sortTime = q.value(10).toString();
             rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();   // ★ 2026-09-09 需求6：容器号
             rec.status = QString::fromUtf8("已分拣");  // 来自 sorting_records 表，PLC 已落格
             result.append(rec);
         }
@@ -114,6 +116,7 @@ QVector<SortingRecord> queryAllWithPendingImpl(const QSqlDatabase& db, int limit
                 rec.volu = q.value(9).toString();
                 rec.sortTime = q.value(10).toString();
                 rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();   // ★ 2026-09-09 需求6：容器号
                 rec.status = QString::fromUtf8("已分拣");
                 result.append(rec);
             }
@@ -384,6 +387,8 @@ void SortingDatabase::createTables()
     q.exec(SQL_ALTER_ADD_FIRST_CAR);
     q.exec(SQL_ALTER_ADD_LAST_CAR);
     q.exec(SQL_ALTER_ADD_SKU);
+    // ★ 2026-09-09 需求6：旧库加 boxcode 列（行进中换容器的记录容器号），重复列错误忽略
+    q.exec(SQL_ALTER_SORTING_ADD_BOXCODE);
 
     // ──── S0 新增表 ────
     // 退货波次头
@@ -437,7 +442,8 @@ bool SortingDatabase::insertRecord(const QString& orderCode, const QString& barc
                                     const QString& sku,
                                     const QString& gridNum, const QString& carNum,
                                     const QString& firstCar, const QString& lastCar,
-                                    int gridCount, const QString& volu)
+                                    int gridCount, const QString& volu,
+                                    const QString& boxcode)
 {
     return runOnDbThread([&]() -> bool {
         if (!m_bOpened) return false;
@@ -462,14 +468,16 @@ bool SortingDatabase::insertRecord(const QString& orderCode, const QString& barc
         q.addBindValue(volu.isEmpty() ? "--" : volu);
         q.addBindValue(now);
         q.addBindValue(now);
+        q.addBindValue(boxcode);   // ★ 2026-09-09 需求6：落格容器号
 
-        Data_INFO("[SortingDB] insertRecord barcode=%s sku=%s grid=%s carNum=%s firstCar=%s lastCar=%s gridCount=%d sobi=%s orderCode=%s",
+        Data_INFO("[SortingDB] insertRecord barcode=%s sku=%s grid=%s carNum=%s firstCar=%s lastCar=%s gridCount=%d sobi=%s box=%s orderCode=%s",
             barcode.toLocal8Bit().data(), sku.toLocal8Bit().data(),
             gridNum.toLocal8Bit().data(),
             carNum.toLocal8Bit().data(),
             firstCar.isEmpty() ? "(空)" : firstCar.toLocal8Bit().data(),
             lastCar.isEmpty()  ? "(空)" : lastCar.toLocal8Bit().data(),
-            gridCount, volu.toLocal8Bit().data(), orderCode.toLocal8Bit().data());
+            gridCount, volu.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
+            orderCode.toLocal8Bit().data());
         if (!q.exec()) {
             Data_ERROR("[SortingDB] 插入失败: %s barcode=%s",
                 q.lastError().text().toLocal8Bit().data(), barcode.toLocal8Bit().data());
@@ -523,6 +531,7 @@ QVector<SortingRecord> SortingDatabase::queryByTime(const QDateTime& from, const
             rec.volu = q.value(9).toString();
             rec.sortTime = q.value(10).toString();
             rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();   // ★ 2026-09-09 需求6：容器号
             result.append(rec);
         }
         Data_INFO("[SortingDB] queryByTime from=%s to=%s limit=%d resultCount=%d",
@@ -559,6 +568,7 @@ QVector<SortingRecord> SortingDatabase::queryByOrderCode(const QString& orderCod
             rec.volu = q.value(9).toString();
             rec.sortTime = q.value(10).toString();
             rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();   // ★ 2026-09-09 需求6：容器号
             result.append(rec);
         }
         Data_INFO("[SortingDB] queryByOrderCode orderCode=%s limit=%d resultCount=%d",
@@ -593,9 +603,74 @@ QVector<SortingRecord> SortingDatabase::queryAll(int limit)
             rec.volu = q.value(9).toString();
             rec.sortTime = q.value(10).toString();
             rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();   // ★ 2026-09-09 需求6：容器号
             result.append(rec);
         }
         Data_INFO("[SortingDB] queryAll limit=%d resultCount=%d", limit, result.size());
+        return result;
+    });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-09 需求2：按格口查询分拣明细 / 全格口分拣数量汇总
+// ═════════════════════════════════════════════════════════════════════════════
+QVector<SortingRecord> SortingDatabase::queryByGrid(const QString& gridNum, int limit)
+{
+    return runOnDbThread([&]() -> QVector<SortingRecord> {
+        QVector<SortingRecord> result;
+        if (!m_bOpened || gridNum.isEmpty()) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_QUERY_BY_GRID);
+        q.addBindValue(gridNum);
+        q.addBindValue(limit);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            SortingRecord rec;
+            rec.id = q.value(0).toInt();
+            rec.orderCode = q.value(1).toString();
+            rec.barcode = q.value(2).toString();
+            rec.sku = q.value(3).toString();
+            rec.gridNum = q.value(4).toString();
+            rec.carNum = q.value(5).toString();
+            rec.firstCar = q.value(6).toString();
+            rec.lastCar  = q.value(7).toString();
+            rec.gridCount = q.value(8).toInt();
+            rec.volu = q.value(9).toString();
+            rec.sortTime = q.value(10).toString();
+            rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();
+            result.append(rec);
+        }
+        Data_INFO("[SortingDB] queryByGrid grid=%s limit=%d resultCount=%d",
+            gridNum.toLocal8Bit().data(), limit, result.size());
+        return result;
+    });
+}
+
+QVector<GridSummaryRecord> SortingDatabase::queryGridSummary()
+{
+    return runOnDbThread([&]() -> QVector<GridSummaryRecord> {
+        QVector<GridSummaryRecord> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_QUERY_GRID_SUMMARY);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            GridSummaryRecord g;
+            g.gridNum      = q.value(0).toString();
+            g.sortedCount  = q.value(1).toInt();
+            g.skuCount     = q.value(2).toInt();
+            g.boxcode      = q.value(3).toString();
+            g.lastSortTime = q.value(4).toString();
+            result.append(g);
+        }
+        Data_INFO("[SortingDB] queryGridSummary gridCount=%d", result.size());
         return result;
     });
 }
@@ -1020,7 +1095,11 @@ bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<Re
         QSqlDatabase db = QSqlDatabase::database("SortingDB");
         if (!db.isOpen()) return false;
 
-        // ★ 使用事务包裹，保证原子性 + 性能
+        // ★ 2026-09-09 需求4（修正）：波次明细落库使用【原子单事务】——
+        //   ① 少量数据（<1000）与大量数据（30000）行为一致：DELETE+全部 INSERT 一次性 commit；
+        //   ② 中途任一行失败 → 整体 rollback，不会出现"旧明细已删+新明细只写一半"的半截数据；
+        //   ③ DB 写入本就在 SortingDB 专用线程串行执行（runOnDbThread 队列），分批提交并不能让
+        //      并发的落格 insertRecord 插队，只会牺牲原子性——故不做分批
         db.transaction();
 
         // 先删除旧明细（覆盖重下）
@@ -1037,30 +1116,38 @@ bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<Re
             }
         }
 
-        // 批量插入新明细（使用事务包裹）
-        // ★ 使用直接SQL构造替代 prepare/bindValue，彻底避开 Qt 绑值累积问题
-        //   转义单引号防止 SQL 注入（数据来自 ParseWorker 解析的 JSON，可信但做防御）
+        // 批量插入新明细（单事务内循环插入）
+        // ★ 2026-09-09 性能：50000 item 大波次——prepared 语句复用执行（每 WAVE_ITEM_PREP_REBUILD 行
+        //   重建一次 QSqlQuery，规避历史 Qt 绑值累积问题），比"每条全新 exec 整串 SQL"快约 3~10 倍
         {
             auto esc = [](const QString& s) -> QString {
                 QString r = s;
                 return r.replace(QLatin1Char('\''), QLatin1String("''"));
             };
+            const QString insertSql =
+                "INSERT INTO return_wave_item "
+                "(order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?, ?)";
+            int execCount = 0;
+            QSqlQuery q(db);
+            q.prepare(insertSql);
             for (const auto& item : items)
             {
-                QString sql = QString(
-                    "INSERT INTO return_wave_item "
-                    "(order_code, inco, grid_num, grid_type, plan_qty, sorted_qty, volu, obx_code) "
-                    "VALUES ('%1', '%2', '%3', '%4', %5, 0, '%6', '%7')")
-                    .arg(esc(item.orderCode),
-                         esc(item.inco),
-                         esc(item.gridNum),
-                         esc(item.gridType.isEmpty() ? QString("0") : item.gridType),  // 0=分类, 1=异常, 2=发货
-                         QString::number(item.planQty),
-                         esc(item.volu.isNull() ? QString("") : item.volu),
-                         esc(item.obxCode.isNull() ? QString("") : item.obxCode));
+                // 每批重建 prepared（规避 Qt 绑值累积，历史踩坑点）
+                if (execCount > 0 && (execCount % WAVE_ITEM_PREP_REBUILD) == 0)
+                {
+                    q = QSqlQuery(db);
+                    q.prepare(insertSql);
+                }
+                q.addBindValue(item.orderCode);
+                q.addBindValue(esc(item.inco));
+                q.addBindValue(esc(item.gridNum));
+                q.addBindValue(item.gridType.isEmpty() ? QString("0") : item.gridType);  // 0=分类, 1=异常, 2=发货
+                q.addBindValue(item.planQty);
+                q.addBindValue(esc(item.volu.isNull() ? QString("") : item.volu));
+                q.addBindValue(esc(item.obxCode.isNull() ? QString("") : item.obxCode));
 
-                QSqlQuery q(db);
-                if (!q.exec(sql))
+                if (!q.exec())
                 {
                     Data_WARN("[SortingDB] 插入明细失败 orderCode=%s inco=%s grid=%s err=%s",
                         item.orderCode.toLocal8Bit().data(),
@@ -1070,6 +1157,7 @@ bool SortingDatabase::insertWaveItems(const QString& orderCode, const QVector<Re
                     db.rollback();
                     return false;
                 }
+                execCount++;
             }
         }
 
@@ -1851,6 +1939,38 @@ QVector<ExceptionRecord> SortingDatabase::queryExceptions(
             rec.reason = q.value(5).toString();
             rec.time = q.value(6).toString();
             result.append(rec);
+        }
+        return result;
+    });
+}
+
+// ============================================================================
+// ★ 2026-09-09 需求3：批量取异常原因（epc → "type: reason"）
+//   EPC 查询面板状态列对异常件显示原因用；一次查询构建 map 避免逐条 SQL
+// ============================================================================
+QHash<QString, QString> SortingDatabase::queryExceptionReasons(const QString& orderCode)
+{
+    return runOnDbThread([&]() -> QHash<QString, QString> {
+        QHash<QString, QString> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QString sql = "SELECT epc, type, reason FROM exception_record";
+        if (!orderCode.isEmpty())
+            sql += " WHERE order_code = ?";
+        QSqlQuery q(db);
+        q.prepare(sql);
+        if (!orderCode.isEmpty())
+            q.addBindValue(orderCode);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            QString epc    = q.value(0).toString();
+            QString type   = q.value(1).toString();
+            QString reason = q.value(2).toString();
+            QString text   = type.isEmpty() ? reason : QString("%1: %2").arg(type, reason);
+            if (!result.contains(epc))
+                result.insert(epc, text);
         }
         return result;
     });

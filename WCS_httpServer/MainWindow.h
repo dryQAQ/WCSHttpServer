@@ -2,19 +2,11 @@
 // ============================================================================
 // MainWindow.h — WMS退货HTTP服务主窗口
 //
-// 界面布局：
-//   ┌─ 服务控制区 ─┐ ┌─ 波次信息面板 ────────────────────────────────────┐
-//   │ 启动/停止     │ │ 波次号 / 状态 / SKU数 / 已分拣 / 异常 / 格口数   │
-//   │ 端口 / PLC状态│ │ 耗时 / 上波次                                      │
-//   ├─ PLC综合状态 ─┤ └──────────────────────────────────────────────────┘
-//   │ TCP/S7连接统计 │
-//   ├─ 容器绑定状态 ┤
-//   │ 66格口→容器   │
-//   ├─ 配置区 ─────┤
-//   │ 端口/URL/AppKey│
-//   ├─ 运行日志 ───┤
-//   │ QTextEdit     │
-//   └──────────────┘
+// 界面布局（★ 2026-09-08 UI看板调整：默认启动最大化全屏）：
+//   第一行：任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息
+//   第二行：运行日志      ｜ 容器绑定状态
+//   第三行：分拣记录查询  ｜ 波次数据记录（全部已传输波次）
+//   第四行：RFID推送数据（实时滚动） ｜ PLC落格反馈数据（实时滚动）
 //
 // 定时刷新：QTimer 每秒查询 HttpServer 状态并更新 UI
 // ============================================================================
@@ -39,6 +31,7 @@
 #include "SortingDatabase.h"
 
 class QDialog;   // ★ 2026-09-07 效率统计弹窗指针（仅在 .cpp 中定义具体类）
+class QSplitter; // ★ 2026-09-08 各行水平分隔条（默认宽度分配用，完整类型在 .cpp 中使用）
 
 class MainWindow : public QMainWindow
 {
@@ -49,6 +42,12 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;  // 窗口关闭时结束任务
+    // ★ 2026-09-08 UI调整：默认最大化后按"各行两大部分各占一半"布置一次列宽
+    void changeEvent(QEvent* event) override;
+
+private:
+    // ★ 2026-09-08 UI调整：水平分隔条默认等分（波次信息占首行一半）
+    void applyDefaultColumnWidths();
 
 private slots:
     void onStartStop();       // 启动/结束任务按钮
@@ -169,6 +168,20 @@ private:
 
     // ──── 日志区 ────
     QTextEdit*   m_txtLog = nullptr;           // 运行日志文本框
+
+    // ──── ★ 2026-09-08 第四行：实时滚动数据面板 UI ────
+    QTableWidget* m_tblRfidPush      = nullptr;  // RFID推送数据实时表（序号/时间/EPC编码/小车号）
+    QTableWidget* m_tblPlcFeedback   = nullptr;  // PLC落格反馈数据实时表（序号/时间/EPC编码/格口号/小车号(首车/尾车)/状态码）
+    quint32       m_rfidPushSeq      = 0;        // RFID表序号（本会话从1递增）
+    quint32       m_plcFeedbackSeq   = 0;        // PLC表序号（本会话从1递增）
+
+    // ──── ★ 2026-09-08 水平分隔条（默认宽度分配：波次信息占首行一半，其余两栏行各占一半）────
+    QSplitter* m_rowTopInner    = nullptr;   // 第一行左半内部：任务接收控制 | 设备状态
+    QSplitter* m_rowTopSplit    = nullptr;   // 第一行：左半 | 波次信息（默认 1:1）
+    QSplitter* m_rowLogSplit    = nullptr;   // 第二行：运行日志 | 容器绑定状态
+    QSplitter* m_rowQuerySplit  = nullptr;   // 第三行：分拣记录查询 | 波次数据记录
+    QSplitter* m_rowLiveSplit   = nullptr;   // 第四行：RFID推送数据 | PLC落格反馈数据
+    bool       m_defaultColSplitApplied = false;  // 默认列宽是否已按最大化宽度等分过一次
 
     // ──── 日志缓冲（防高频卡死） ────
     QStringList  m_logBuffer;                  // 日志消息缓冲队列
