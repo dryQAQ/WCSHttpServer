@@ -417,6 +417,8 @@ void SortingDatabase::createTables()
     q.exec(SQL_CREATE_INDEX_SORT_TXN_EPC);
     // 满箱回传出站（H7）
     q.exec(SQL_CREATE_TABLE_OUTBOX_FULLBOX);
+    // ★ 2026-09-08 保险：outbox_fullbox 旧库缺 grid 列迁移（失败格口下拉读取用；重复列错误忽略）
+    q.exec(SQL_ALTER_ADD_OB_GRID);
     q.exec(SQL_CREATE_INDEX_OUTBOX_ORDER);
     q.exec(SQL_CREATE_INDEX_OUTBOX_RETRY);
     // 完结回传出站（H8）
@@ -1460,6 +1462,7 @@ bool SortingDatabase::insertOutboxFullbox(const OutboxRecord& msg)
         q.addBindValue(msg.msgId);
         q.addBindValue(msg.orderCode);
         q.addBindValue(msg.boxcode);
+        q.addBindValue(msg.grid);        // ★ 2026-09-08 满箱报文对应格口号（失败格口下拉直接读取）
         q.addBindValue(msg.payload);
         q.addBindValue(msg.nextRetry);
         q.addBindValue(msg.createdAt.isEmpty() ? currentTimeStr() : msg.createdAt);
@@ -1646,10 +1649,11 @@ QVector<OutboxRecord> SortingDatabase::getOutboxFullboxByOrder(const QString& or
             rec.msgId = q.value(0).toString();
             rec.orderCode = q.value(1).toString();
             rec.boxcode = q.value(2).toString();
-            rec.payload = q.value(3).toString();
-            rec.status = q.value(4).toString();
-            rec.retryCount = q.value(5).toInt();
-            rec.createdAt = q.value(6).toString();
+            rec.grid = q.value(3).toString();       // ★ 2026-09-08 格口号
+            rec.payload = q.value(4).toString();
+            rec.status = q.value(5).toString();
+            rec.retryCount = q.value(6).toInt();
+            rec.createdAt = q.value(7).toString();
             result.append(rec);
         }
         return result;
@@ -1691,17 +1695,78 @@ OutboxRecord SortingDatabase::getOutboxFullboxByMsgId(const QString& msgId)
         if (!db.isOpen()) return rec;
 
         QSqlQuery q(db);
-        // SELECT msg_id, order_code, boxcode, payload, retry_count FROM outbox_fullbox WHERE msg_id = ?
+        // SELECT msg_id, order_code, boxcode, grid, payload, retry_count FROM outbox_fullbox WHERE msg_id = ?
         q.prepare(SQL_SELECT_OUTBOX_BY_MSGID);
         q.addBindValue(msgId);
         if (q.exec() && q.next()) {
             rec.msgId = q.value(0).toString();
             rec.orderCode = q.value(1).toString();
             rec.boxcode = q.value(2).toString();
-            rec.payload = q.value(3).toString();
-            rec.retryCount = q.value(4).toInt();
+            rec.grid = q.value(3).toString();       // ★ 2026-09-08 格口号
+            rec.payload = q.value(4).toString();
+            rec.retryCount = q.value(5).toInt();
         }
         return rec;
+    });
+}
+
+// ============================================================================
+// ★ 2026-09-08 UI 失败重传下拉：全部历史"重试耗尽失败 / 已取消重试"的满箱（H7）报文
+//   说明：cancelled 是波次被切出后 pollOutboxFullbox 主动取消重试产生的，
+//         同样属于"待人工重传"的消息，必须一并列出，否则会从界面消失
+// ============================================================================
+QVector<OutboxRecord> SortingDatabase::getFailedOutboxFullbox(int limit)
+{
+    return runOnDbThread([&]() -> QVector<OutboxRecord> {
+        QVector<OutboxRecord> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_FAILED_OUTBOX_FULLBOX);
+        q.addBindValue(limit);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            OutboxRecord rec;
+            rec.msgId = q.value(0).toString();
+            rec.orderCode = q.value(1).toString();
+            rec.boxcode = q.value(2).toString();
+            rec.grid = q.value(3).toString();
+            rec.payload = q.value(4).toString();
+            rec.status = q.value(5).toString();
+            rec.retryCount = q.value(6).toInt();
+            rec.createdAt = q.value(7).toString();
+            result.append(rec);
+        }
+        return result;
+    });
+}
+
+// ★ 2026-09-08 UI 失败重传下拉：全部历史"重试耗尽失败 / 已取消重试"的完结（H8）报文
+QVector<OutboxRecord> SortingDatabase::getFailedOutboxEnd(int limit)
+{
+    return runOnDbThread([&]() -> QVector<OutboxRecord> {
+        QVector<OutboxRecord> result;
+        if (!m_bOpened) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_FAILED_OUTBOX_END);
+        q.addBindValue(limit);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            OutboxRecord rec;
+            rec.msgId = q.value(0).toString();
+            rec.orderCode = q.value(1).toString();
+            rec.payload = q.value(2).toString();
+            rec.status = q.value(3).toString();
+            rec.retryCount = q.value(4).toInt();
+            rec.createdAt = q.value(5).toString();
+            result.append(rec);
+        }
+        return result;
     });
 }
 

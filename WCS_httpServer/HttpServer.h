@@ -15,6 +15,7 @@
 #include <QMap>
 #include <QSet>
 #include <QByteArray>
+#include <QStringList>   // ★ 2026-09-08 失败重传下拉（失败报文 msgId 列表）
 #include <QTimer>
 #include <atomic>
 #include <mutex>
@@ -185,6 +186,66 @@ public:
     // ★ 2026-09-06 新任务：当前波次进度/数据保留于 DB（可切换回来），内存清空回到空闲等待接收
     bool startNewWaveTask();
 
+    // ════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-08 波次待执行队列（UI「查看接收波次队列」只读访问）
+    //   当前波次执行中收到的新 H4 在队列中排队，不覆盖当前波次数据；
+    //   出队时机：开始接收时自动重放队首 / 人工「切换选中波次」接管 / 新任务不再消费队列
+    // ════════════════════════════════════════════════════════════════════
+    struct PendingWave {
+        QString    orderCode;
+        int        orderQty  = 0;      // ★ 波次总件数（队列弹窗展示用）
+        QByteArray rawBody;            // H4 原始报文（重放时交 ParseWorker 重新解析）
+        QString    fullUrl;
+        qint64     recvTime  = 0;
+    };
+    // ★ 只读元数据（不含 rawBody）：避免把大报文整份拷贝给 UI（队列可能驻留数 MB 报文）
+    struct PendingWaveInfo {
+        QString orderCode;
+        int     orderQty = 0;
+        qint64  recvTime = 0;
+    };
+    QVector<PendingWaveInfo> pendingWaves() const
+    {
+        QVector<PendingWaveInfo> out;
+        out.reserve(m_pendingWaveQueue.size());
+        for (const PendingWave& pw : m_pendingWaveQueue)
+        {
+            PendingWaveInfo info;
+            info.orderCode = pw.orderCode;
+            info.orderQty  = pw.orderQty;
+            info.recvTime  = pw.recvTime;
+            out.append(info);
+        }
+        return out;
+    }   // 仅主线程读写
+    int pendingWaveCount() const { return m_pendingWaveQueue.size(); }
+
+    // ════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-08 失败重传下拉数据源（H7 失败格口 / H8 失败波次）
+    //   范围：outbox 表中 status='failed'（重试耗尽）与 'cancelled'（波次切出后取消重试）——
+    //   两者都属于"待人工重传"，必须一并可见，否则会从界面消失
+    // ════════════════════════════════════════════════════════════════════
+    struct FailedFullboxItem {
+        QString     orderCode;
+        QString     grid;          // 格口号（内部号；老数据缺失时为 "?"）
+        QStringList msgIds;        // 该(波次,格口)下全部失败报文
+        int         failCount = 0;
+        QString     lastTime;
+        QString     status;        // failed / cancelled（含两者时为空）
+    };
+    struct FailedEndItem {
+        QString     orderCode;
+        QStringList msgIds;
+        int         failCount = 0;
+        QString     lastTime;
+        QString     status;
+    };
+    QVector<FailedFullboxItem> getFailedFullboxItems(int limit = 200);  // 按(波次,格口)聚合
+    QVector<FailedEndItem>     getFailedEndItems(int limit = 200);      // 按波次聚合
+    // 精确重传：只重发失败/已取消报文，不改波次状态、不影响主流程
+    bool resendFailedFullboxGrid(const QString& orderCode, const QString& grid);
+    bool resendFailedEnd(const QString& orderCode);
+
 signals:
     void serverStarted(int port);
     void serverStopped();
@@ -207,6 +268,10 @@ signals:
     void outboxResendResult(const QString& orderCode, const QString& kind, const QString& msgId, bool success);
     // waveResumed: 上一波次恢复完成（UI 刷新波次面板）
     void waveResumed(const QString& orderCode, int status);
+    // ★ 2026-09-08 待执行波次队列变化（入队/出队/人工接管）→ UI 刷新波次列表与队列弹窗
+    void pendingWavesChanged();
+    // ★ 2026-09-08 失败重传记录变化（重试耗尽标记失败 / 手动重传成功后清除）→ UI 刷新两个失败下拉
+    void outboxFailedChanged();
 
 protected:
     // CHttpServerListener 回调
@@ -308,8 +373,7 @@ private:
     void                    onEndSessionTimeout();          // ★ H8 会话超时兜底（内部方法，定时器回调）
     void                    switchAwayCurrentWave();        // ★ 2026-09-06 挂起切出当前波次（清内存；状态/进度保留 DB）
 
-    // ──── ★ 2026-09-07 波次待执行队列（当前波次执行中收到的新 H4 排队，结束后自动执行）────
-    struct PendingWave { QString orderCode; QByteArray rawBody; QString fullUrl; qint64 recvTime = 0; };
+    // ──── ★ 2026-09-07 波次待执行队列（当前波次执行中收到的新 H4 排队；结构体定义见 public 区）────
     QVector<PendingWave>    m_pendingWaveQueue;             // FIFO（仅主线程读写）
     std::atomic<bool>       m_replayingPending{false};      // 队列重放标志（放行接收闸门）
     void                    maybeStartPendingWave();        // 空闲时取队首重放（由 ParseWorker 重新解析注册）

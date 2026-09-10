@@ -209,6 +209,14 @@
 #define LOG_FLUSH_MAX_BATCH_SIZE  100     // 单次日志刷新最大条数（防止一次刷太多卡UI）
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-08 开机自动接收任务
+//   1 = 程序启动后自动执行一次「开始接收任务」（等价于人工点击一次按钮，
+//       省去开机首点；仅本会话执行一次，之后的停止/再次开始照常由按钮控制）
+//   0 = 保持原行为（启动后需人工点击才开始接收）
+// ═══════════════════════════════════════════════════════════════════════════
+#define AUTO_START_RECEIVE_ON_BOOT 1
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RFID 缓存配置（RFID 主动推送模式，不再主动查询）
 // ═══════════════════════════════════════════════════════════════════════════
 #define RFID_CACHE_TTL_SEC         300      // EPC 本地缓存 TTL（秒，默认5分钟）
@@ -419,6 +427,9 @@
 #define SQL_ALTER_ADD_WI_SORTED_QTY "ALTER TABLE return_wave_item ADD COLUMN sorted_qty INTEGER NOT NULL DEFAULT 0"
 #define SQL_ALTER_ADD_WI_VOLU       "ALTER TABLE return_wave_item ADD COLUMN volu TEXT NOT NULL DEFAULT ''"
 #define SQL_ALTER_ADD_WI_OBX_CODE   "ALTER TABLE return_wave_item ADD COLUMN obx_code TEXT NOT NULL DEFAULT ''"
+// ★ 2026-09-08 保险：outbox_fullbox 旧库缺 grid 列（满箱回传对应格口号，供"失败格口下拉"直接读取，
+//   免去运行时解析 payload JSON）；重复执行报 duplicate column，忽略即可
+#define SQL_ALTER_ADD_OB_GRID       "ALTER TABLE outbox_fullbox ADD COLUMN grid TEXT NOT NULL DEFAULT ''"
 // ★ 2026-09-06 保险：return_wave 波次头旧库缺列迁移
 #define SQL_ALTER_ADD_RW_ORDER_QTY  "ALTER TABLE return_wave ADD COLUMN order_qty INTEGER NOT NULL DEFAULT 0"
 #define SQL_ALTER_ADD_RW_STATUS     "ALTER TABLE return_wave ADD COLUMN status INTEGER NOT NULL DEFAULT 0"
@@ -549,6 +560,7 @@
     "  msg_id      TEXT PRIMARY KEY," \
     "  order_code  TEXT    NOT NULL DEFAULT ''," \
     "  boxcode     TEXT    NOT NULL DEFAULT ''," \
+    "  grid        TEXT    NOT NULL DEFAULT ''," \
     "  payload     TEXT    NOT NULL DEFAULT ''," \
     "  status      TEXT    NOT NULL DEFAULT 'pending'," \
     "  retry_count INTEGER NOT NULL DEFAULT 0," \
@@ -746,7 +758,7 @@
 // ──── Outbox 出站操作 ────
 // 插入出站消息（满箱回传（H7））
 #define SQL_INSERT_OUTBOX_FULLBOX \
-    "INSERT INTO outbox_fullbox (msg_id, order_code, boxcode, payload, status, retry_count, next_retry, created_at) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)"
+    "INSERT INTO outbox_fullbox (msg_id, order_code, boxcode, grid, payload, status, retry_count, next_retry, created_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)"
 // 插入出站消息（完结回传（H8））
 #define SQL_INSERT_OUTBOX_END \
     "INSERT INTO outbox_end (msg_id, order_code, payload, status, retry_count, next_retry, created_at) VALUES (?, ?, ?, 'pending', 0, ?, ?)"
@@ -773,13 +785,19 @@
     "SELECT msg_id, order_code, boxcode, payload, retry_count FROM outbox_fullbox WHERE order_code = ? AND status = 'pending'"
 // 按 msgId 查询单条出站消息（人工重发用）
 #define SQL_SELECT_OUTBOX_BY_MSGID \
-    "SELECT msg_id, order_code, boxcode, payload, retry_count FROM outbox_fullbox WHERE msg_id = ?"
+    "SELECT msg_id, order_code, boxcode, grid, payload, retry_count FROM outbox_fullbox WHERE msg_id = ?"
 // 按 msgId 查询单条 完结回传（H8 完结出站消息（S6 人工重发用））
 #define SQL_SELECT_OUTBOX_END_BY_MSGID \
     "SELECT msg_id, order_code, payload, retry_count FROM outbox_end WHERE msg_id = ?"
 // 查询某波次全部 满箱回传（H7）出站消息（含状态，供未完成波次面板展示/重传）
 #define SQL_SELECT_OUTBOX_FULLBOX_BY_ORDER_ALL \
-    "SELECT msg_id, order_code, boxcode, payload, status, retry_count, created_at FROM outbox_fullbox WHERE order_code = ? ORDER BY created_at DESC"
+    "SELECT msg_id, order_code, boxcode, grid, payload, status, retry_count, created_at FROM outbox_fullbox WHERE order_code = ? ORDER BY created_at DESC"
+// ★ 2026-09-08 UI「重传满箱切换(H7)」失败格口下拉：全部历史失败/已取消重试的满箱报文（含格口号）
+#define SQL_SELECT_FAILED_OUTBOX_FULLBOX \
+    "SELECT msg_id, order_code, boxcode, grid, payload, status, retry_count, created_at FROM outbox_fullbox WHERE status IN ('failed','cancelled') ORDER BY created_at DESC LIMIT ?"
+// ★ 2026-09-08 UI「重传任务完结(H8)」失败波次下拉：全部历史失败/已取消重试的完结报文
+#define SQL_SELECT_FAILED_OUTBOX_END \
+    "SELECT msg_id, order_code, payload, status, retry_count, created_at FROM outbox_end WHERE status IN ('failed','cancelled') ORDER BY created_at DESC LIMIT ?"
 // 查询某波次全部 完结回传（H8）出站消息（含状态，供未完成波次面板展示/重传）
 #define SQL_SELECT_OUTBOX_END_BY_ORDER_ALL \
     "SELECT msg_id, order_code, payload, status, retry_count, created_at FROM outbox_end WHERE order_code = ? ORDER BY created_at DESC"

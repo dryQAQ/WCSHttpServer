@@ -220,7 +220,8 @@ int main(int argc, char* argv[])
 
     MainWindow mainWindow;
     mainWindow.showMaximized();   // ★ 2026-09-08 UI调整：默认打开为最大化全屏
-    LOG_INFO("[启动] 主窗口已显示（最大化）；设备(PLC/RFID)自动连接中，点击\"开始接收任务\"后 WMS 推送才被接收");
+    LOG_INFO("[启动] 主窗口已显示（最大化）；设备(PLC/RFID)自动连接中，任务接收由界面按钮控制"
+             "（开机自动开始接收任务一次，见 define.h AUTO_START_RECEIVE_ON_BOOT）");
 
     return app.exec();
 }

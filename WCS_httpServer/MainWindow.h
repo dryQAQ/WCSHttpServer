@@ -54,6 +54,7 @@ private slots:
     void onRefreshBindings(); // 刷新容器绑定状态
     void onClearAllGridBinds();  // ★ 2026-09-07 清空格口容器绑定（人工重置，DB归档留史）
     void onRefreshWaveRecords(); // ★ 手动刷新「波次数据记录」列表
+    void onViewWaveQueue();      // ★ 2026-09-08 查看接收波次队列（弹窗：接收新任务 + 剩余待执行波次）
     void onResendSelectedH7();     // ★ 重传满箱切换(H7)（服务控制区；选中行优先，否则当前波次）
     void onResendSelectedH8();     // ★ 重传任务完结(H8)（服务控制区；选中行优先，否则当前波次）
     void onResumeSelectedWave();   // ★ 切换选中波次（恢复其进度继续 / 终态载入查看）
@@ -85,6 +86,8 @@ private:
     void updatePlcPanel();    // 刷新PLC状态面板（连接数/收发统计/运行时间）
     void updateRfidStatus();  // ★ 刷新RFID连接状态标签（连接状态变化时记录日志）
     void updateBindingPanel();// 刷新容器绑定面板（66格口×容器号）
+    void refreshFailedCombos(); // ★ 2026-09-08 刷新 H7 失败格口 / H8 失败波次两个下拉
+    static QString formatTimeFirst(const QString& dbTime); // ★ 2026-09-08 「更新时间」时间在前（HH:mm:ss yyyy-MM-dd）
     QString selectedOrCurrentWaveOrder(); // ★ 重传目标解析：列表选中行优先，否则当前内存波次
     void openConfigEditor();  // ★ 2026-09-07 设置按钮：XML 配置编辑对话框（保存即热生效）
     void applyLiveConfig();   // ★ 2026-09-07 应用可热生效配置项（回传URL/AppKey/method等）
@@ -164,7 +167,12 @@ private:
     // ──── 服务控制区：重传保障按钮（★ 2026-09-06 自波次面板移入）────
     QPushButton*  m_btnResendH7         = nullptr;  // 重传满箱切换(H7)
     QPushButton*  m_btnResendH8         = nullptr;  // 重传任务完结(H8)
-    QLineEdit*    m_editFullboxGrid     = nullptr;  // ★ 2026-09-07 手动满箱格口号输入框（点击重传满箱时读取）
+    // ★ 2026-09-08：原"格口号输入框"改为失败格口下拉（可编辑：既能选失败记录，也能手输任意格口）
+    QComboBox*    m_cmbFailedH7         = nullptr;  // H7 失败格口下拉（全部历史 失败/已取消重试）
+    QComboBox*    m_cmbFailedH8         = nullptr;  // H8 失败波次下拉（全部历史 失败/已取消重试）
+    QPushButton*  m_btnViewWaveQueue    = nullptr;  // ★ 查看接收波次队列（弹窗，含"接收新任务"选项）
+    QVector<HttpServer::FailedFullboxItem> m_failedH7Items;  // 下拉数据快照（与下拉行一一对应）
+    QVector<HttpServer::FailedEndItem>     m_failedH8Items;
 
     // ──── 日志区 ────
     QTextEdit*   m_txtLog = nullptr;           // 运行日志文本框

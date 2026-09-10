@@ -128,6 +128,7 @@ struct OutboxRecord
     QString msgId;
     QString orderCode;
     QString boxcode;        // 仅满箱回传（H7）使用
+    QString grid;           // ★ 2026-09-08 满箱回传（H7）对应格口号（失败格口下拉直接读取，免解析 payload）
     QString payload;
     QString status          = "pending";
     int     retryCount      = 0;
@@ -295,6 +296,10 @@ public:
     // 按 msgId 查询单条出站消息（人工重发用）
     OutboxRecord getOutboxFullboxByMsgId(const QString& msgId);
     OutboxRecord getOutboxEndByMsgId(const QString& msgId);     // ★ S6 完结回传按 msgId 查询（H8）
+    // ★ 2026-09-08 UI 失败重传下拉：查询全部"重试耗尽失败/已取消重试"的满箱（H7）出站消息
+    QVector<OutboxRecord> getFailedOutboxFullbox(int limit = 200);
+    // ★ 2026-09-08 UI 失败重传下拉：查询全部"重试耗尽失败/已取消重试"的完结（H8）出站消息
+    QVector<OutboxRecord> getFailedOutboxEnd(int limit = 200);
 
     // ═══════════════════════════════════════════════════════════════
     // S0 新增：异常记录（T-S0-02）

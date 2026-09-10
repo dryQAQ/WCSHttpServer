@@ -231,8 +231,13 @@ MainWindow::MainWindow(QWidget* parent)
     setupConnections();
     setupCore();   // ★ 2026-09-06 解耦：常驻实例 + 一次性配置/信号 + 设备(PLC/RFID)自动连接
 
+#if AUTO_START_RECEIVE_ON_BOOT
+    appendLog("程序已启动：PLC/RFID 设备自动连接中；即将自动开始接收任务"
+              "（开机自动执行一次，之后的启停仍由按钮控制）");
+#else
     appendLog("程序已启动：PLC/RFID 设备自动连接中；任务接收未开始——"
               "点击「开始接收任务」后 WMS 才可下发任务");
+#endif
 
     // ★ 创建日志刷新定时器（100ms，防高频场景下 QTextEdit 卡死）
     m_logFlushTimer = new QTimer(this);
@@ -240,8 +245,21 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_logFlushTimer, &QTimer::timeout, this, &MainWindow::flushLogBuffer);
     m_logFlushTimer->start();
 
-    // ★ 2026-09-06 解耦设计：设备(PLC/RFID)已在 setupCore() 自动连接；
-    //   任务接收默认不开始，等待用户点击"开始接收任务"（WMS 推送才被接受）
+    // ★ 2026-09-08 开机自动接收（AUTO_START_RECEIVE_ON_BOOT=1）：
+    //   程序启动后自动执行一次「开始接收任务」= 等价人工点击一次（省去开机首点）；
+    //   仅本会话执行一次，之后的「结束任务/再次开始」仍完全由按钮照常控制。
+    //   用 singleShot(0) 投递到事件循环：窗口已显示、setupCore() 设备层已启动后才执行。
+#if AUTO_START_RECEIVE_ON_BOOT
+    QTimer::singleShot(0, this, [this]() {
+        if (m_bRunning || m_stopPhase != StopNone) return;   // 防御：已在接收/停止流程中不重复触发
+        appendLog("[启动] 开机自动接收：自动执行一次「开始接收任务」（后续启停仍由按钮控制）");
+        onStartStop();
+    });
+#endif
+
+    // ★ 2026-09-06 解耦设计：设备(PLC/RFID)已在 setupCore() 自动连接并常驻；
+    //   ★ 2026-09-08：接收层在开机时自动开始一次（AUTO_START_RECEIVE_ON_BOOT=1），
+    //   之后「结束任务 / 再次开始接收」照常由按钮控制，设备层不受影响。
 }
 
 MainWindow::~MainWindow()
@@ -364,6 +382,8 @@ void MainWindow::setupUI()
     m_lblPort->setAlignment(Qt::AlignCenter);
 
     // ★ 期望绑定数量输入（默认66，每批次可配置不同数量）
+    //   ★ 2026-09-08 UI需求1：该组控件**界面上不再显示**（值仍由 XML expectedBindCount 生效）；
+    //   控件保留创建与配置同步逻辑，便于后续需要时一行恢复显示
     QHBoxLayout* bindCountRow = new QHBoxLayout();
     m_lblBindCountHint = new QLabel(QCoreApplication::translate("MainWindow", "期望绑定数量:"));
     m_lblBindCountHint->setStyleSheet("font-size: 13px;");
@@ -389,10 +409,11 @@ void MainWindow::setupUI()
     statusPortRow->addStretch();
     serverLayout->addLayout(statusPortRow);
 
-    serverLayout->addLayout(bindCountRow);
+    // ★ 2026-09-08 UI需求1：期望绑定数量行不加入布局（隐藏显示，配置项照常生效）
+    // serverLayout->addLayout(bindCountRow);
 
     // ★ 2026-09-07 设置按钮：弹出 XML 配置编辑，保存即热生效（无需重启程序）
-    //   布局：与「重传满箱切换/重传任务完结」同处一行（见下方 resendRow）
+    //   ★ 2026-09-08 UI更新：布局改为与「查看接收波次队列」同一水平行（见下方 viewQueueRow）
     QPushButton* btnSettings = new QPushButton(QCoreApplication::translate("MainWindow", "设置配置"));
     btnSettings->setMinimumHeight(30);
     btnSettings->setStyleSheet(
@@ -408,10 +429,26 @@ void MainWindow::setupUI()
     // ★ 2026-09-07 布局纠正：H8 在上与「设置配置」同一行；H7 在下（带格口号输入框）
     m_btnResendH7 = new QPushButton(QCoreApplication::translate("MainWindow", "重传满箱切换(H7)"));
     m_btnResendH8 = new QPushButton(QCoreApplication::translate("MainWindow", "重传任务完结(H8)"));
-    m_editFullboxGrid = new QLineEdit();
-    m_editFullboxGrid->setPlaceholderText(QCoreApplication::translate("MainWindow", "格口号(手动满箱)"));
-    m_editFullboxGrid->setFixedWidth(130);
-    m_editFullboxGrid->setStyleSheet("font-size: 12px; padding: 3px 6px;");
+    // ★ 2026-09-08 UI需求2/3：格口号输入框 → 失败格口下拉（可编辑：可手输任意格口）；
+    //   H8 旁边新增失败波次下拉；两者数据来自 outbox 表中 failed/cancelled 报文
+    m_cmbFailedH7 = new QComboBox();
+    m_cmbFailedH7->setEditable(true);
+    m_cmbFailedH7->setInsertPolicy(QComboBox::NoInsert);
+    m_cmbFailedH7->setMinimumWidth(240);
+    m_cmbFailedH7->setStyleSheet("QComboBox { font-size: 12px; padding: 2px 4px; }");
+    if (m_cmbFailedH7->lineEdit())
+        m_cmbFailedH7->lineEdit()->setPlaceholderText(
+            QCoreApplication::translate("MainWindow", "选择失败格口，或手输格口号"));
+    m_cmbFailedH7->setToolTip(QCoreApplication::translate("MainWindow",
+        "下拉=全部历史失败/已取消重试的满箱报文（格口·波次·失败条数）：选中后点按钮按该格口精确重传；\n"
+        "也可直接手输格口号：对当前波次该格口的分拣记录生成新的 H7 满箱回传并上传"));
+    m_cmbFailedH8 = new QComboBox();
+    m_cmbFailedH8->setInsertPolicy(QComboBox::NoInsert);
+    m_cmbFailedH8->setMinimumWidth(200);
+    m_cmbFailedH8->setStyleSheet("QComboBox { font-size: 12px; padding: 2px 4px; }");
+    m_cmbFailedH8->setToolTip(QCoreApplication::translate("MainWindow",
+        "下拉=全部历史失败/已取消重试的完结回传报文（波次·失败条数）：\n"
+        "选中后点按钮只重传该波次的失败 H8，不影响主流程"));
     m_btnResendH7->setMinimumHeight(30);
     m_btnResendH8->setMinimumHeight(30);
     m_btnResendH7->setStyleSheet(
@@ -422,26 +459,44 @@ void MainWindow::setupUI()
         "QPushButton { background-color: #8E24AA; color: white; font-size: 12px; font-weight: bold; "
         "border-radius: 4px; padding: 4px 12px; }"
         "QPushButton:hover { background-color: #7B1FA2; }");
-    // ── 上行：重传任务完结(H8) + 设置配置（同一水平行）──
+    // ── 第1行：查看接收波次队列（★ 2026-09-08 UI需求7：位于「重传任务完结」上方）──
+    m_btnViewWaveQueue = new QPushButton(QCoreApplication::translate("MainWindow", "查看接收波次队列"));
+    m_btnViewWaveQueue->setMinimumHeight(30);
+    m_btnViewWaveQueue->setStyleSheet(
+        "QPushButton { background-color: #0097A7; color: white; font-size: 12px; font-weight: bold; "
+        "border-radius: 4px; padding: 4px 12px; }"
+        "QPushButton:hover { background-color: #00838F; }");
+    m_btnViewWaveQueue->setToolTip(QCoreApplication::translate("MainWindow",
+        "查看剩余待执行波次队列（含「接收新任务」选项：不处理排队波次，直接开始新任务）"));
+    // ── 第1行：查看接收波次队列 + 设置配置（★ 2026-09-08 UI更新：两者同一水平行）──
+    QHBoxLayout* viewQueueRow = new QHBoxLayout();
+    viewQueueRow->addStretch();
+    viewQueueRow->addWidget(m_btnViewWaveQueue);
+    viewQueueRow->addWidget(btnSettings);   // ★ 2026-09-08「设置配置」移到与「查看接收波次队列」同一行
+    viewQueueRow->addStretch();
+    serverLayout->addLayout(viewQueueRow);
+
+    // ── 第2行：重传任务完结(H8) + 失败波次下拉（同一水平行）──
     QHBoxLayout* resendRowH8 = new QHBoxLayout();
     resendRowH8->addStretch();
     resendRowH8->addWidget(m_btnResendH8);
-    resendRowH8->addWidget(btnSettings);   // ★ 2026-09-07「设置配置」与「重传任务完结(H8)」同一水平行
+    resendRowH8->addWidget(m_cmbFailedH8);   // ★ 2026-09-08 失败波次下拉
     resendRowH8->addStretch();
     serverLayout->addLayout(resendRowH8);
 
-    // ── 下行：重传满箱切换(H7) + 格口号输入框（H7 在 H8 下方）──
+    // ── 第3行：重传满箱切换(H7) + 失败格口下拉（H7 在 H8 下方）──
     QHBoxLayout* resendRowH7 = new QHBoxLayout();
     resendRowH7->addStretch();
     resendRowH7->addWidget(m_btnResendH7);
-    resendRowH7->addWidget(m_editFullboxGrid);
+    resendRowH7->addWidget(m_cmbFailedH7);   // ★ 2026-09-08 失败格口下拉（可编辑）
     resendRowH7->addStretch();
     serverLayout->addLayout(resendRowH7);
 
     // ★ 重传目标说明（选中行优先，否则当前内存波次——在 onResendSelectedH7/H8 中解析；
-    //   格口号输入框非空时 H7 按钮执行手动满箱切换）
+    //   下拉选中失败记录时按所选格口/波次精确重传；H7 下拉手输文本时执行手动满箱切换）
     connect(m_btnResendH7, &QPushButton::clicked, this, &MainWindow::onResendSelectedH7);
     connect(m_btnResendH8, &QPushButton::clicked, this, &MainWindow::onResendSelectedH8);
+    connect(m_btnViewWaveQueue, &QPushButton::clicked, this, &MainWindow::onViewWaveQueue);
 
     // ═══════════════════════════════════════════
     // 第一行（中栏）：设备状态面板（PLC TCP / S7 / RFID，★ 2026-09-06 设备随程序启动常驻）
@@ -1449,6 +1504,16 @@ void MainWindow::setupCore()
                 .arg(WaveSnapshot::statusToString(status)));
         });
 
+    // ★ 2026-09-08 UI需求5/7：待执行波次队列变化 → 刷新波次数据记录列表（含「排队待执行」标注与按钮计数）
+    connect(m_pServer, &HttpServer::pendingWavesChanged, this, [this]() {
+        onRefreshWaveRecords();
+    });
+
+    // ★ 2026-09-08 UI需求2/3：失败重传记录变化（重试耗尽/手动重传成功/切出取消重试）→ 刷新两个下拉
+    connect(m_pServer, &HttpServer::outboxFailedChanged, this, [this]() {
+        refreshFailedCombos();
+    });
+
     // ★ H8完结回传处理完毕 → 停止接收收尾
     //   ★ 2026-09-06 解耦：Outbox(H8)补传跨接收会话继续执行（设备/实例常驻），
     //     回传的最终结果可能在「下一轮开始接收」之后才到达——仅当本窗口正处于
@@ -1643,6 +1708,7 @@ void MainWindow::setupCore()
 
     // ★ 初始化完成（设备连接状态由每秒定时器刷新显示；波次记录列表初始填充一次，后续手动刷新）
     onRefreshWaveRecords();
+    refreshFailedCombos();   // ★ 2026-09-08 初始化 H7 失败格口 / H8 失败波次两个下拉
     appendLog("[初始化] 设备层已启动（PLC/RFID 常驻）；任务接收未开始，请点击「开始接收任务」");
 }
 
@@ -2272,6 +2338,13 @@ void MainWindow::onRefreshWaveRecords()
 
     QVector<WaveRecordProgress> waves = m_pServer->getAllWaves();
 
+    // ★ 2026-09-08：待执行队列快照（内存元数据，无 DB 开销、不含大报文）——用于状态列标注与按钮计数
+    const QVector<HttpServer::PendingWaveInfo> pendingWaves = m_pServer->pendingWaves();
+    if (m_btnViewWaveQueue)
+        m_btnViewWaveQueue->setText(pendingWaves.isEmpty()
+            ? QString::fromUtf8("查看接收波次队列")
+            : QString::fromUtf8("查看接收波次队列(%1)").arg(pendingWaves.size()));
+
     // ★ 当前在内存中运行的波次：状态列显示实时状态（DB 状态可能滞后）
     WaveManager* wm = m_pServer->waveManager();
     QString liveOrder = wm ? wm->orderCode() : QString();
@@ -2301,6 +2374,7 @@ void MainWindow::onRefreshWaveRecords()
 
         // H8 完结状态汇总
         QString h8Status = QString::fromUtf8("无");
+        bool    h8Failed = false;   // ★ 2026-09-08 是否存在失败/已取消的完结报文（状态列标注用）
         {
             QVector<OutboxRecord> eb = m_pServer->getWaveEndOutbox(w.orderCode);
             if (!eb.isEmpty())
@@ -2313,15 +2387,27 @@ void MainWindow::onRefreshWaveRecords()
                     else ++pend;
                 }
                 h8Status = QString("成功%1/待发%2/失败%3").arg(succ).arg(pend).arg(fail);
+                h8Failed = (fail > 0);
             }
         }
 
         // 状态列：当前运行波次显示实时状态 + 「（当前）」标记
+        // ★ 2026-09-08：处于待执行队列的波次显示「排队待执行」；H8 存在失败报文时追加「（回传失败·待重传）」
         QString statusText;
+        bool inPendingQueue = false;
+        for (const HttpServer::PendingWaveInfo& pw : pendingWaves)
+        {
+            if (pw.orderCode == w.orderCode) { inPendingQueue = true; break; }
+        }
         if (!liveOrder.isEmpty() && w.orderCode == liveOrder)
             statusText = WaveSnapshot::statusToString(liveStatus) + QString::fromUtf8("（当前）");
+        else if (inPendingQueue)
+            statusText = QString::fromUtf8("已下发（排队待执行）");
         else
             statusText = WaveSnapshot::statusToString(w.status);
+
+        if (h8Failed && w.status != WAVE_FINISHED)
+            statusText += QString::fromUtf8("（回传失败·待重传）");
 
         auto setCell = [&](int col, const QString& text) {
             QTableWidgetItem* item = new QTableWidgetItem(text);
@@ -2342,7 +2428,7 @@ void MainWindow::onRefreshWaveRecords()
         setCell(4, QString::number(excCnt));
         setCell(5, h7Status);
         setCell(6, h8Status);
-        setCell(7, w.updatedAt);
+        setCell(7, formatTimeFirst(w.updatedAt));   // ★ 2026-09-08 时间在前、年月在后
     }
 }
 
@@ -2372,15 +2458,41 @@ void MainWindow::onResendSelectedH7()
 {
     if (!m_pServer) return;
 
-    // ★ 2026-09-07 手动满箱切换：输入框填了格口号 → 读取该格口当前记录+容器号，立即按 H7 上传
-    //   输入兼容 WMS 编码(22005)与内部号(5/005)，统一归一为内部 3 位 key
-    if (m_editFullboxGrid && !m_editFullboxGrid->text().trimmed().isEmpty())
+    // ★ 2026-09-08 UI需求2：H7 按钮读取「失败格口下拉」
+    //   ① 选中失败记录 → 按该(波次,格口)精确重传失败/已取消的 H7 报文（不影响主流程）
+    //   ② 未选中但手输了格口号 → 对当前波次该格口的分拣记录生成新的 H7 手动满箱上传
+    //   ③ 下拉为"暂无失败记录"/空 → 沿用原行为（按选中波次/当前波次重发全部未成功 H7）
+    if (m_cmbFailedH7)
     {
-        QString grid = parseWmsGridCodeToStr(m_editFullboxGrid->text());
-        appendLog(QString("[手动满箱] 格口%1 开始满箱切换上传 ...").arg(m_editFullboxGrid->text().trimmed()));
-        m_pServer->manualFullbox(grid);
-        onRefreshWaveRecords();
-        return;
+        const QString text = m_cmbFailedH7->currentText().trimmed();
+        const bool noFailItem = text.isEmpty() || text == QString::fromUtf8("暂无失败记录");
+
+        if (!noFailItem)
+        {
+            const int idx = m_cmbFailedH7->currentIndex();
+            if (idx >= 0 && idx < m_failedH7Items.size() && m_cmbFailedH7->itemData(idx).isValid())
+            {
+                const HttpServer::FailedFullboxItem& item = m_failedH7Items.at(idx);
+                appendLog(QString("[重传] 按失败格口精确补发 order=%1 grid=%2 报文数=%3（不影响主流程）")
+                    .arg(item.orderCode).arg(item.grid).arg(item.failCount));
+                m_pServer->resendFailedFullboxGrid(item.orderCode, item.grid);
+                onRefreshWaveRecords();
+                refreshFailedCombos();
+                return;
+            }
+
+            // 手输格口（兼容 5 / 005 / 22005 三种写法）→ 手动满箱（生成新 H7 并上传）
+            const QString grid = parseWmsGridCodeToStr(text);
+            if (!grid.isEmpty())
+            {
+                appendLog(QString("[手动满箱] 格口%1 开始满箱切换上传 ...").arg(text));
+                m_pServer->manualFullbox(grid);
+                onRefreshWaveRecords();
+                return;
+            }
+            appendLog(QString("[重传] 格口号无法识别：%1（支持 5 / 005 / 22005 形式）").arg(text), true);
+            return;
+        }
     }
 
     QString orderCode = selectedOrCurrentWaveOrder();
@@ -2397,6 +2509,23 @@ void MainWindow::onResendSelectedH7()
 void MainWindow::onResendSelectedH8()
 {
     if (!m_pServer) return;
+
+    // ★ 2026-09-08 UI需求3：H8 按钮优先读取「失败波次下拉」——选中后只重传该波次的失败 H8
+    if (m_cmbFailedH8)
+    {
+        const int idx = m_cmbFailedH8->currentIndex();
+        if (idx >= 0 && idx < m_failedH8Items.size() && m_cmbFailedH8->itemData(idx).isValid())
+        {
+            const HttpServer::FailedEndItem& item = m_failedH8Items.at(idx);
+            appendLog(QString("[重传] 按失败波次精确补发 order=%1 报文数=%2（不影响主流程）")
+                .arg(item.orderCode).arg(item.failCount));
+            m_pServer->resendFailedEnd(item.orderCode);
+            onRefreshWaveRecords();
+            refreshFailedCombos();
+            return;
+        }
+    }
+
     QString orderCode = selectedOrCurrentWaveOrder();
     if (orderCode.isEmpty())
     {
@@ -2406,6 +2535,238 @@ void MainWindow::onResendSelectedH8()
     appendLog(QString("[重传] 任务完结(H8) 主动补发 order=%1（不影响主工作流）").arg(orderCode));
     m_pServer->resendOutbox(orderCode, false, true);
     onRefreshWaveRecords();
+}
+
+// ============================================================================
+// ★ 2026-09-08 UI需求2/3：刷新「H7 失败格口 / H8 失败波次」两个下拉
+//   数据源 = outbox 表中 status IN ('failed','cancelled') 的历史报文（上限200条）
+//   无记录时显示「暂无失败记录」（灰色提示项），并清空可编辑框方便直接手输格口
+// ============================================================================
+void MainWindow::refreshFailedCombos()
+{
+    if (!m_pServer) return;
+
+    // ── H7 失败格口下拉 ──
+    if (m_cmbFailedH7)
+    {
+        const QString keepText = m_cmbFailedH7->currentText().trimmed();
+        {
+            QSignalBlocker blocker(m_cmbFailedH7);
+            m_cmbFailedH7->clear();
+            m_failedH7Items = m_pServer->getFailedFullboxItems(200);
+            for (const HttpServer::FailedFullboxItem& it : m_failedH7Items)
+            {
+                const QString st = (it.status == "failed")    ? QString::fromUtf8("失败")
+                                 : (it.status == "cancelled") ? QString::fromUtf8("已取消重试")
+                                                              : QString::fromUtf8("失败/已取消");
+                m_cmbFailedH7->addItem(QString::fromUtf8("格口%1 · 波次%2 · %3%4条")
+                        .arg(it.grid).arg(it.orderCode).arg(st).arg(it.failCount),
+                    it.orderCode + "|" + it.grid);
+            }
+            if (m_cmbFailedH7->count() == 0)
+            {
+                m_failedH7Items.clear();
+                m_cmbFailedH7->addItem(QString::fromUtf8("暂无失败记录"));
+                m_cmbFailedH7->setCurrentIndex(0);
+                if (m_cmbFailedH7->lineEdit()) m_cmbFailedH7->lineEdit()->clear();   // 便于直接手输格口
+            }
+            else
+            {
+                int k = m_cmbFailedH7->findText(keepText);
+                m_cmbFailedH7->setCurrentIndex(k >= 0 ? k : 0);
+            }
+        }
+    }
+
+    // ── H8 失败波次下拉 ──
+    if (m_cmbFailedH8)
+    {
+        const QString keepText = m_cmbFailedH8->currentText().trimmed();
+        {
+            QSignalBlocker blocker(m_cmbFailedH8);
+            m_cmbFailedH8->clear();
+            m_failedH8Items = m_pServer->getFailedEndItems(200);
+            for (const HttpServer::FailedEndItem& it : m_failedH8Items)
+            {
+                const QString st = (it.status == "failed")    ? QString::fromUtf8("失败")
+                                 : (it.status == "cancelled") ? QString::fromUtf8("已取消重试")
+                                                              : QString::fromUtf8("失败/已取消");
+                m_cmbFailedH8->addItem(QString::fromUtf8("波次%1 · %2%3条")
+                        .arg(it.orderCode).arg(st).arg(it.failCount),
+                    it.orderCode);
+            }
+            if (m_cmbFailedH8->count() == 0)
+            {
+                m_failedH8Items.clear();
+                m_cmbFailedH8->addItem(QString::fromUtf8("暂无失败记录"));
+                m_cmbFailedH8->setCurrentIndex(0);
+            }
+            else
+            {
+                int k = m_cmbFailedH8->findText(keepText);
+                m_cmbFailedH8->setCurrentIndex(k >= 0 ? k : 0);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// ★ 2026-09-08 UI需求6：「波次数据记录」更新时间显示
+//   DB 存的是 "yyyy-MM-dd HH:mm:ss[.zzz]" → 显示为 "HH:mm:ss yyyy-MM-dd"（时间在前、年月在后）
+//   解析失败时原样返回（不隐藏问题数据）
+// ============================================================================
+QString MainWindow::formatTimeFirst(const QString& dbTime)
+{
+    const QString t = dbTime.trimmed();
+    if (t.isEmpty()) return t;
+
+    QDateTime dt = QDateTime::fromString(t, "yyyy-MM-dd HH:mm:ss");
+    if (!dt.isValid()) dt = QDateTime::fromString(t, "yyyy-MM-dd HH:mm:ss.zzz");
+    if (!dt.isValid()) dt = QDateTime::fromString(t.left(19), "yyyy-MM-dd HH:mm:ss");
+    if (!dt.isValid()) return t;
+
+    return dt.toString("HH:mm:ss yyyy-MM-dd");
+}
+
+// ============================================================================
+// ★ 2026-09-08 UI需求7：查看接收波次队列（弹窗）
+//   列表里同时放两样东西：
+//     ① 首行操作项「接收新任务」——点击即**不处理排队波次，直接开始新任务**
+//        （当前波次仍在作业中时拒绝并提示先点「结束任务」，避免打断现场分拣）
+//     ② 其余行 = 剩余待执行波次（FIFO：序号/波次号/件数/接收时间）
+//   队列执行入口说明：当前波次结束后自动开始 / 点「开始接收任务」时执行队首 /
+//   在「波次数据记录」中用「切换选中波次」立即接管
+// ============================================================================
+void MainWindow::onViewWaveQueue()
+{
+    if (!m_pServer) return;
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QString::fromUtf8("接收波次队列（剩余待执行波次）"));
+    dlg.resize(780, 440);
+
+    QVBoxLayout* lay = new QVBoxLayout(&dlg);
+
+    QLabel* tip = new QLabel(QString::fromUtf8(
+        "列表首行「接收新任务」= 不处理排队波次，直接开始新任务（切出当前波次并等待 WMS 下发新波次）。\n"
+        "排队波次的执行：当前波次结束后自动开始；点「开始接收任务」时自动执行队首；"
+        "也可在「波次数据记录」中用「切换选中波次」立即接管。"), &dlg);
+    tip->setStyleSheet("font-size: 12px; color: #555;");
+    tip->setWordWrap(true);
+    lay->addWidget(tip);
+
+    QTableWidget* tbl = new QTableWidget(&dlg);
+    tbl->setColumnCount(4);
+    tbl->setHorizontalHeaderLabels(QStringList()
+        << QString::fromUtf8("操作 / 序号") << QString::fromUtf8("波次号")
+        << QString::fromUtf8("件数") << QString::fromUtf8("接收时间"));
+    tbl->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tbl->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tbl->setSelectionMode(QAbstractItemView::SingleSelection);
+    tbl->verticalHeader()->setVisible(false);
+    tbl->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    tbl->horizontalHeader()->setStretchLastSection(true);
+    tbl->setMinimumHeight(250);
+    tbl->setStyleSheet(
+        "QTableWidget { font-size: 12px; }"
+        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 4px; }");
+    lay->addWidget(tbl);
+
+    // 当前波次是否处于作业态（作业中不允许直接开始新任务——按现场要求先点「结束任务」）
+    auto isWaveWorking = [this](QString* statusText) -> bool {
+        if (!m_pServer || !m_pServer->waveManager()) return false;
+        int st = m_pServer->waveManager()->status();
+        bool working = (st == WAVE_CREATED || st == WAVE_BOUND ||
+                        st == WAVE_SORTING || st == WAVE_FULLBOX_SYNC);
+        if (statusText) *statusText = WaveSnapshot::statusToString(st);
+        return working;
+    };
+
+    bool startNewTask = false;   // 「接收新任务」被点击（关闭弹窗后执行，避免在弹窗回调里切 UI）
+
+    auto rebuild = [this, tbl, &startNewTask, &dlg, isWaveWorking]() {
+        const QVector<HttpServer::PendingWaveInfo> list =
+            m_pServer ? m_pServer->pendingWaves() : QVector<HttpServer::PendingWaveInfo>();
+
+        tbl->setRowCount(0);
+
+        // ── 首行：操作项「接收新任务」（与剩余波次放在同一个列表里）──
+        tbl->insertRow(0);
+        {
+            QPushButton* btnNew = new QPushButton(QString::fromUtf8("接收新任务"), tbl);
+            btnNew->setMinimumHeight(26);
+            btnNew->setStyleSheet(
+                "QPushButton { background-color: #FF5722; color: white; font-size: 12px; font-weight: bold; "
+                "border-radius: 4px; padding: 3px 10px; }"
+                "QPushButton:hover { background-color: #E64A19; }");
+            connect(btnNew, &QPushButton::clicked, &dlg, [this, &startNewTask, &dlg, isWaveWorking]() {
+                QString stText;
+                if (isWaveWorking(&stText))
+                {
+                    QMessageBox::information(this, QString::fromUtf8("接收新任务"),
+                        QString::fromUtf8("当前波次仍在作业中（%1）。\n\n请先点击「结束任务」，"
+                                          "再开始新任务。").arg(stText));
+                    return;
+                }
+                startNewTask = true;
+                dlg.accept();
+            });
+            tbl->setCellWidget(0, 0, btnNew);
+
+            QTableWidgetItem* hint = new QTableWidgetItem(QString::fromUtf8(
+                "不处理排队波次，直接开始新任务（等待 WMS 下发新波次）"));
+            hint->setForeground(QColor("#FF5722"));
+            tbl->setItem(0, 1, hint);
+            tbl->setItem(0, 2, new QTableWidgetItem("--"));
+            tbl->setItem(0, 3, new QTableWidgetItem("--"));
+        }
+
+        // ── 其余行：剩余待执行波次（FIFO）──
+        int no = 0;
+        for (const HttpServer::PendingWaveInfo& pw : list)
+        {
+            const int r = tbl->rowCount();
+            tbl->insertRow(r);
+            ++no;
+            tbl->setItem(r, 0, new QTableWidgetItem(QString::number(no)));
+            tbl->setItem(r, 1, new QTableWidgetItem(pw.orderCode));
+            tbl->setItem(r, 2, new QTableWidgetItem(QString::number(pw.orderQty)));
+            tbl->setItem(r, 3, new QTableWidgetItem(
+                QDateTime::fromMSecsSinceEpoch(pw.recvTime).toString("HH:mm:ss yyyy-MM-dd")));
+        }
+        if (list.isEmpty())
+        {
+            const int r = tbl->rowCount();
+            tbl->insertRow(r);
+            QTableWidgetItem* empty = new QTableWidgetItem(
+                QString::fromUtf8("（当前没有待执行波次——若 WMS 下发新波次而当前波次仍在执行，会自动排队显示在这里）"));
+            empty->setForeground(QColor("#888"));
+            tbl->setItem(r, 0, empty);
+            tbl->setSpan(r, 0, 1, 4);
+        }
+    };
+
+    // 队列变化时自动刷新（弹窗打开期间）
+    connect(m_pServer, &HttpServer::pendingWavesChanged, &dlg, [rebuild]() { rebuild(); });
+
+    rebuild();
+
+    // ── 底部：刷新 / 关闭 ──
+    QHBoxLayout* btnRow = new QHBoxLayout();
+    btnRow->addStretch();
+    QPushButton* btnRefresh = new QPushButton(QString::fromUtf8("刷新"), &dlg);
+    QPushButton* btnClose   = new QPushButton(QString::fromUtf8("关闭"), &dlg);
+    connect(btnRefresh, &QPushButton::clicked, &dlg, [rebuild]() { rebuild(); });
+    connect(btnClose,   &QPushButton::clicked, &dlg, [&dlg]() { dlg.accept(); });
+    btnRow->addWidget(btnRefresh);
+    btnRow->addWidget(btnClose);
+    lay->addLayout(btnRow);
+
+    dlg.exec();
+
+    // ★ 点击「接收新任务」→ 弹窗已关闭，此处执行（复用「新任务」既有确认与 UI 复位流程；队列原样保留）
+    if (startNewTask)
+        onStartNewWaveTask();
 }
 
 // ★ 切换选中波次：未完成→按 DB 进度恢复到内存继续；已完成/已取消→载入查看
@@ -2552,7 +2913,13 @@ void MainWindow::onStartNewWaveTask()
     updateWavePanel();
     updateBindingPanel();
     onRefreshWaveRecords();
-    appendLog("[新任务] 已回到空闲（初始全新状态）：等待 WMS 下发新波次；旧波次可随时从「波次数据记录」切换回来");
+    // ★ 2026-09-08 需求7a：「新任务」不读取/执行剩余队列——队列原样保留，仅回到空闲等 WMS 下发新波次
+    const int pendingCnt = m_pServer->pendingWaveCount();
+    if (pendingCnt > 0)
+        appendLog(QString("[新任务] 已回到空闲：等待 WMS 下发新波次；剩余待执行波次 %1 个已保留"
+                          "（不自动执行，可点「查看接收波次队列」查看）").arg(pendingCnt));
+    else
+        appendLog("[新任务] 已回到空闲（初始全新状态）：等待 WMS 下发新波次；旧波次可随时从「波次数据记录」切换回来");
 }
 
 void MainWindow::onClearLog()
