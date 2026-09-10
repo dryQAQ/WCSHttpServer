@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <!-- 配置文件版本号，与软件版本匹配检查 -->
+    <configVersion>1</configVersion>
+    <!-- WMS 推送监听端口（WMS → WCS，修改后需重启服务） -->
+    <wmsListenPort>8191</wmsListenPort>
+    <!-- 正式环境满箱回传 URL（H7 满箱同步到WMS） -->
+    <feedbackUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms?appkey=dz_bxh_dmwcs_zs</feedbackUrl>
+    <!-- 测试环境满箱回传 URL（H7） -->
+    <feedbackTestUrl>https://idstest.pelliot.com.cn:9090/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms?appkey=dz_bxh_dmwcs_cs</feedbackTestUrl>
+    <!-- 正式环境完结回传 URL（H8 波次完结通知WMS） -->
+    <feedbackEndUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms?appkey=dz_bxh_dmwcs_zs</feedbackEndUrl>
+    <!-- 测试环境完结回传 URL（H8） -->
+    <feedbackEndTestUrl>https://idstest.pelliot.com.cn:9090/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms?appkey=dz_bxh_dmwcs_cs</feedbackEndTestUrl>
+    <!-- ★ 满箱/锁格/波次完成回传 method（URL 参数 method，WMS 网关接口标识） -->
+    <feedbackMethod>gwisSubProductClassifyOrder</feedbackMethod>
+    <!-- ★ 完结回传(H8) method（URL 参数 method，WMS 网关接口标识） -->
+    <feedbackEndMethod>gwisSubProductClassifyEndOrder</feedbackEndMethod>
+    <!-- 正式环境 AppKey（HTTP Header + URL 参数 appkey） -->
+    <appkey>dz_bxh_dmwcs_zs</appkey>
+    <!-- 测试环境 AppKey -->
+    <appkeyTest>dz_bxh_dmwcs_cs</appkeyTest>
+    <!-- 是否使用测试环境（1=测试, 0=正式） -->
+    <useTestEnv>0</useTestEnv>
+    <!-- RFID SKU-EPC 绑定查询 URL（WCS 查询 RFID 获取 EPC→barcode 映射） -->
+    <rfidQueryUrl>http://172.31.10.201:9521/open-api/rfid/query</rfidQueryUrl>
+    <!-- RFID 查询 Authorization 头完整值（形如 APP_KEYS <key>，整串使用；空=不发送） -->
+    <rfidAppkey>APP_KEYS e1235fda-029c-4270-913f-530342af2073</rfidAppkey>
+    <!-- RFID 推送服务端地址（WCS 作为 TCP 客户端主动连接接收 EPC+carNum） -->
+    <rfidPushServerIp>192.168.100.125</rfidPushServerIp>
+    <rfidPushServerPort>2010</rfidPushServerPort>
+    <!-- 是否向 RFID 服务端发送心跳包（1=发送 0=不发送，默认1） -->
+    <rfidHeartbeatEnable>0</rfidHeartbeatEnable>
+    <!-- 心跳发送间隔（毫秒，默认2000=2秒） -->
+    <rfidHeartbeatIntervalMs>4000</rfidHeartbeatIntervalMs>
+    <!-- 仓库编码 -->
+    <warehouseCode>H</warehouseCode>
+    <!-- 货主编码 -->
+    <goodsOwner>BXH_CS</goodsOwner>
+    <!-- 波次超时时间（分钟，0=不超时） -->
+    <waveTimeoutMin>0</waveTimeoutMin>
+    <!-- 异常 SKU 最大重试次数 -->
+    <maxRetryCount>3</maxRetryCount>
+    <!-- 期望绑定数量（波次下发校验用，默认66） -->
+    <expectedBindCount>1</expectedBindCount>
+    <!-- HTTP 回传请求超时（毫秒） -->
+    <httpTimeoutMs>3000</httpTimeoutMs>
+    <!-- 波次完成回传超时（毫秒） -->
+    <waveCompleteTimeoutMs>2000</waveCompleteTimeoutMs>
+    <!-- PLC TCP 监听端口（PLC 主动连接此端口，修改后需重启服务） -->
+    <plcListenPort>2000</plcListenPort>
+    <!-- S7 PLC IP 地址 -->
+    <plcS7Ip>192.168.100.10</plcS7Ip>
+    <!-- S7 机架号 -->
+    <plcS7Rack>0</plcS7Rack>
+    <!-- S7 槽位号 -->
+    <plcS7Slot>1</plcS7Slot>
+    <!-- 业务线程池大小 -->
+    <businessPoolSize>90</businessPoolSize>
+    <!-- PLC 发送线程池大小 -->
+    <plcSendPoolSize>8</plcSendPoolSize>
+    <!-- PLC 反馈接收线程池大小 -->
+    <plcRecvPoolSize>4</plcRecvPoolSize>
+    <!-- 日志保留天数 -->
+    <logRetainDays>30</logRetainDays>
+    <!-- fromLocation 取值来源（config=使用固定值, sobi=使用波次明细 sobi 来源库位） -->
+    <h7FromLocationSource>sobi</h7FromLocationSource>
+    <!-- 来源库位默认值（config 模式时使用） -->
+    <h7DefaultFromLocation>A-01-02</h7DefaultFromLocation>
+    <!-- 目标库位默认值（无容器号时兜底） -->
+    <h7DefaultTargetLocation>66</h7DefaultTargetLocation>
+    <!-- WMS 格口编码：对外格口号 = 前缀 + 格口号补零（默认 22+3位：格口号5 → 22005）；前缀留空=关闭转换 -->
+    <gridCodePrefix>22</gridCodePrefix>
+    <!-- 格口号补零宽度（默认 3，与内部/PLC 3位一致） -->
+    <gridCodeWidth>3</gridCodeWidth>
+    <!-- EPC 任务内防重（true/false） -->
+    <sortingEpcDedup>true</sortingEpcDedup>
+    <!-- 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） -->
+    <sortingGridCapPolicy>exception</sortingGridCapPolicy>
+    <!-- orderQty 校验模式（strict=严格, loose=宽松） -->
+    <sortingOrderQtyValidate>loose</sortingOrderQtyValidate>
+    <!-- 冲突策略（STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配） -->
+    <sortingConflictPolicy>LOOSE_FIRST</sortingConflictPolicy>
+    <!-- 是否允许超收（true/false） -->
+    <sortingAllowOverrecv>false</sortingAllowOverrecv>
+    <!-- ① 波次下发（WMS → WCS，H4 推送波次数据） -->
+    <apiInsertWaveInfo>/api/DispatchSortingCommand/InsertWaveInfo</apiInsertWaveInfo>
+    <!-- ② 容器绑定（WMS → WCS，H6 格口容器绑定） -->
+    <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
+    <!-- ③ 波次取消（WMS → WCS，H5 退货任务取消） -->
+    <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
+</config>

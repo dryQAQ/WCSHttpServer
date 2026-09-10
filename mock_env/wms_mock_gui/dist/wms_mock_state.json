@@ -1,0 +1,221 @@
+{
+ "config": {
+  "appkey_expected": "dz_bxh_dmwcs_cs",
+  "method_h7": "gwisSubProductClassifyOrder",
+  "method_h8": "gwisSubProductClassifyEndOrder",
+  "grid_prefix": "22",
+  "grid_width": 3,
+  "grid_max": 66,
+  "warehouse": "H",
+  "goods_owner": "BXH_CS",
+  "order_type": "01",
+  "operuser_code": "admin",
+  "operuser_name": "管理员",
+  "from_location_default": "A-01-02",
+  "gw_host": "127.0.0.1",
+  "gw_port": 8099,
+  "gui_port": 8765,
+  "send_timeout_s": 15
+ },
+ "rules": [
+  [
+   "r_structure",
+   "报文结构与必填字段",
+   true,
+   "head/orderCode/detailList(或sumLocation)缺失、sku为空、qty非正整数等 → 拒绝"
+  ],
+  [
+   "r_method",
+   "接口方法 method 校验",
+   true,
+   "URL 查询参数 method 必须与 H7/H8 期望值一致"
+  ],
+  [
+   "r_appkey",
+   "身份鉴权 AppKey",
+   true,
+   "URL 参数与 Header 的 AppKey 必须都存在且等于「期望AppKey」"
+  ],
+  [
+   "r_wave",
+   "波次计划校验",
+   true,
+   "orderCode 必须是本模拟WMS已下发过的波次（计划库中存在，H4 下发或手工导入）"
+  ],
+  [
+   "r_grid",
+   "格口号校验",
+   true,
+   "格口号须在 1~66 内且属于该波次明细（H4 格口号自动记录）"
+  ],
+  [
+   "r_bind",
+   "容器绑定校验",
+   true,
+   "格口已绑定容器，且明细 targetLocation = 绑定容器号（H6 绑定或手工维护）"
+  ],
+  [
+   "r_sku",
+   "SKU 计划校验",
+   true,
+   "明细 SKU 必须在该格口的波次计划中"
+  ],
+  [
+   "r_cap",
+   "数量上限校验",
+   true,
+   "明细 qty 不得超过该格口该 SKU 的计划数量（模拟生产拒超收）"
+  ],
+  [
+   "r_skumaster",
+   "SKU 主档校验",
+   false,
+   "明细 SKU 必须在自动汇总的 SKU 主档中（默认关闭）"
+  ]
+ ],
+ "gateway_mode": "auto",
+ "bindings": [
+  {
+   "grid": 1,
+   "box": "H-01-2001"
+  },
+  {
+   "grid": 2,
+   "box": "H-01-2002"
+  },
+  {
+   "grid": 3,
+   "box": "H-01-2003"
+  },
+  {
+   "grid": 4,
+   "box": "H-01-2004"
+  },
+  {
+   "grid": 5,
+   "box": "H-01-2005"
+  },
+  {
+   "grid": 6,
+   "box": "H-01-2006"
+  }
+ ],
+ "waves": [
+  {
+   "orderCode": "PP202600000099",
+   "sobi": "H-01-AB",
+   "items": [
+    {
+     "inco": "SK0000000001001",
+     "gridNum": "1",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000001002",
+     "gridNum": "1",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000002001",
+     "gridNum": "2",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000002002",
+     "gridNum": "2",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000003001",
+     "gridNum": "3",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000003002",
+     "gridNum": "3",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000004001",
+     "gridNum": "4",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000004002",
+     "gridNum": "4",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000005001",
+     "gridNum": "5",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000005002",
+     "gridNum": "5",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000006001",
+     "gridNum": "6",
+     "gridNumber": 1,
+     "gridType": "0"
+    },
+    {
+     "inco": "SK0000000006002",
+     "gridNum": "6",
+     "gridNumber": 1,
+     "gridType": "0"
+    }
+   ],
+   "pushed_at": ""
+  }
+ ],
+ "presets": [
+  {
+   "name": "本机模拟WMS网关(默认8099)",
+   "base": "http://127.0.0.1:8099",
+   "role": "wms",
+   "appkey": "dz_bxh_dmwcs_cs",
+   "env": "本地模拟"
+  },
+  {
+   "name": "WMS测试环境 wmstest.pelliot.com.cn:9090",
+   "base": "https://wmstest.pelliot.com.cn:9090",
+   "role": "wms",
+   "appkey": "dz_bxh_dmwcs_cs",
+   "env": "测试"
+  },
+  {
+   "name": "WMS正式环境 wms.pelliot.com.cn",
+   "base": "https://wms.pelliot.com.cn",
+   "role": "wms",
+   "appkey": "dz_bxh_wcs_zs",
+   "env": "正式"
+  },
+  {
+   "name": "本机WCS服务(8191)",
+   "base": "http://127.0.0.1:8191",
+   "role": "wcs",
+   "appkey": "",
+   "env": "本地WCS"
+  },
+  {
+   "name": "自定义",
+   "base": "http://127.0.0.1:8099",
+   "role": "wms",
+   "appkey": "dz_bxh_dmwcs_cs",
+   "env": "自定义"
+  }
+ ]
+}

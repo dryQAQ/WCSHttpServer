@@ -4,3 +4,14 @@
 /doc
 /.git
 /WCS_httpServer/doc
+/release_WcsHttpServer/*.dmp
+/release_WcsHttpServer/crash.log
+/release_WcsHttpServer/log_bak
+/test
+/check_db_schema.py
+/.dshignore
+/dsh.config.json
+/*.zip
+*.zip
+*.dmp
+

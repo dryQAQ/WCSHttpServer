@@ -51,6 +51,124 @@ def url_host_port(url, def_port):
     return m.group(1), (int(m.group(2)) if m.group(2) else def_port)
 
 
+# ── run_mock.bat 传入的“预期端口”（仅供『配置』页对照参考，
+#    仿真台实际仍按 http_server.xml 工作，绝不自动改写配置文件） ──
+EXPECTED_PORT_ENV = {
+    "wms": "MOCK_WMS_PORT", "plc": "MOCK_PLC_PORT", "rfid": "MOCK_RFID_PORT",
+    "gw": "MOCK_GW_PORT", "query": "MOCK_QUERY_PORT",
+}
+PORT_REF_ROWS = [
+    # (说明, xml 节点/位置, 端口key)
+    ("WMS 软件下发", "wmsListenPort", "wms"),
+    ("PLC 指令通道", "plcListenPort", "plc"),
+    ("RFID 推送服务端", "rfidPushServerPort", "rfid"),
+    ("H7/H8 回传网关", "URL feedbackTestUrl / feedbackEndTestUrl", "gw"),
+    ("RFID 查询服务", "URL rfidQueryUrl", "query"),
+    ("S7 锁格", "snap7 协议固定", None),
+]
+
+
+def env_expected_ports(env=None):
+    """读取外部环境给出的预期端口（key: wms/plc/rfid/gw/query）；无效/缺省项忽略"""
+    env = os.environ if env is None else env
+    out = {}
+    for key, var in EXPECTED_PORT_ENV.items():
+        raw = (env.get(var) or "").strip()
+        try:
+            n = int(raw)
+        except Exception:
+            continue
+        if 1 <= n <= 65535:
+            out[key] = n
+    return out
+
+
+def argv_expected_ports(argv=None):
+    """解析 run_mock.bat 命令行参数: wms=9001 plc=2500 ...（大小写不敏感，无效值忽略）"""
+    argv = sys.argv[1:] if argv is None else argv
+    out = {}
+    for raw in argv:
+        if "=" not in raw:
+            continue
+        k, _, v = raw.partition("=")
+        k = k.strip().lower()
+        if k not in EXPECTED_PORT_ENV:
+            continue
+        try:
+            n = int(v.strip())
+        except Exception:
+            continue
+        if 1 <= n <= 65535:
+            out[k] = n
+    return out
+
+
+# 远程拓扑参数（键 → 环境变量）: wcs=WCS所在IP, bind=仿真台监听绑定地址
+NET_ARG_ENV = {"wcs": "MOCK_WCS_IP", "bind": "MOCK_BIND_IP"}
+
+# 通道停用开关（run_mock.bat 直接传，如: run_mock.bat noplc nos7 nogw noquery）
+CHANNEL_SWITCHES = ("norfid", "noplc", "nos7", "nogw", "noquery")
+CHANNEL_SWITCH_BY_NAME = {"RFID推送服务端": "norfid", "PLC客户端": "noplc",
+                          "S7锁格模拟": "nos7", "WMS网关接收": "nogw",
+                          "RFID查询服务": "noquery"}
+
+
+def disabled_channels(argv=None):
+    """解析停用通道开关（大小写不敏感）"""
+    argv = sys.argv[1:] if argv is None else argv
+    return {a.strip().lower() for a in argv if a.strip().lower() in CHANNEL_SWITCHES}
+
+
+def net_args(argv=None, env=None):
+    """解析远程拓扑参数: wcs=目标WCS的IP / bind=监听绑定地址(如0.0.0.0)。
+    命令行优先于环境变量；无效(空)值忽略。"""
+    argv = sys.argv[1:] if argv is None else argv
+    env = os.environ if env is None else env
+    out = {}
+    for key, var in NET_ARG_ENV.items():
+        v = (env.get(var) or "").strip()
+        if v:
+            out[key] = v
+    for raw in argv:
+        if "=" in raw:
+            k, _, v = raw.partition("=")
+            k = k.strip().lower()
+            if k in NET_ARG_ENV and v.strip():
+                out[k] = v.strip()
+    return out
+
+
+def resolve_expected_ports():
+    """期望端口最终值 = 环境变量 ∪ 命令行参数（run_mock.bat 传入）"""
+    out = env_expected_ports()
+    out.update(argv_expected_ports())
+    return out
+
+
+def port_reference_lines(cfg, expected=None):
+    """『配置』页端口对照行: [(tag, line)]，tag ∈ head/ok/bad/gray"""
+    expected = dict(expected or {})
+    cur = cfg.port_summary() if cfg.ok else {}
+    lines = [("head", "端口预期参考 —— run_mock.bat 指定 vs http_server.xml 当前值（手工改文件用，本台不自动改配置）"),
+             ("gray", "注: WCS 监听项改后须重启 WCS_httpServer.exe；仿真台监听项改后重启本台即生效；S7=102 固定")]
+    marks = "①②③④⑤⑥"
+    for i, (name, node, key) in enumerate(PORT_REF_ROWS):
+        if key is None:
+            lines.append(("gray", f"  {marks[i]} {name}   {node}  → 固定 102"))
+            continue
+        cur_v = cur.get(key, "-")
+        if key in expected:
+            exp_v = expected[key]
+            same = (exp_v == cur_v)
+            lines.append((("ok" if same else "bad"),
+                          f"  {marks[i]} {name}   {node}   期望 {exp_v}   当前 {cur_v}   "
+                          f"{'✓ 一致' if same else '✗ 不一致'}{'' if same else '（改 xml）'}"))
+        else:
+            lines.append(("gray",
+                          f"  {marks[i]} {name}   {node}   期望 —   当前 {cur_v}"))
+    return lines
+
+
 class MockConsole(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -73,22 +191,36 @@ class MockConsole(tk.Tk):
         self.cfg = mock_cfg.WcsConfig().load()
         if not self.cfg.ok:
             self.store.add_event(f"配置加载失败: {self.cfg.error}")
+        # run_mock.bat 指定的“预期端口”（仅配置页对照展示，不影响运行行为）
+        self.expected_ports = resolve_expected_ports()
 
         # ── 服务实例（地址全部取自配置文件） ──
-        rfid_host = local_bind_host(self.cfg.rfid_server_ip, self.store)
-        plc_host = "127.0.0.1"
+        # 远程拓扑覆盖参数（run_mock.bat 传 wcs=/bind= 或环境变量）:
+        #   wcs=WCS所在IP   -> PLC客户端 / WMS下发客户端 的连接目标（默认127.0.0.1）
+        #   bind=监听地址    -> RFID推送/S7/网关/查询 等监听服务的绑定地址（默认按配置=回环；
+        #                       仿真台与WCS异机时填 0.0.0.0 或本机网卡IP）
+        net = net_args()
+        wcs_ip = net.get("wcs") or "127.0.0.1"
+        bind_host = net.get("bind") or ""
+        self.wcs_ip = wcs_ip
+        self.bind_host = bind_host
+        rfid_host = bind_host or local_bind_host(self.cfg.rfid_server_ip, self.store)
+        plc_host = wcs_ip
         qhost, qport = url_host_port(self.cfg.rfid_query_url, 9100)
         gwhost, gwport = url_host_port(self.cfg.feedback_url_h7, 8099)
-        s7host = local_bind_host(self.cfg.plc_s7_ip, self.store)
-        qhost = "127.0.0.1" if qhost not in ("127.0.0.1", "localhost", "0.0.0.0") else qhost
-        gwhost = "127.0.0.1" if gwhost not in ("127.0.0.1", "localhost", "0.0.0.0") else gwhost
+        s7host = bind_host or local_bind_host(self.cfg.plc_s7_ip, self.store)
+        if bind_host:
+            qhost = gwhost = bind_host
+        else:
+            qhost = "127.0.0.1" if qhost not in ("127.0.0.1", "localhost", "0.0.0.0") else qhost
+            gwhost = "127.0.0.1" if gwhost not in ("127.0.0.1", "localhost", "0.0.0.0") else gwhost
 
         self.rfid = mock_channels.RfidServer(rfid_host, self.cfg.rfid_server_port, self.store)
         self.plc = mock_channels.PlcClient(plc_host, self.cfg.plc_listen_port, self.store)
         self.gw = mock_channels.HttpGatewayServer(gwhost, gwport, self.store, self.cfg)
         self.query = mock_channels.RfidQueryServer(qhost, qport, self.store, self.cfg)
         self.s7 = mock_s7comm.S7Server(s7host, 102, self.store)
-        self.push = mock_channels.HttpWmsPush(f"http://127.0.0.1:{self.cfg.wms_listen_port}",
+        self.push = mock_channels.HttpWmsPush(f"http://{wcs_ip}:{self.cfg.wms_listen_port}",
                                               self.store)
 
         self.services = [("RFID推送服务端", self.rfid), ("PLC客户端", self.plc),
@@ -100,6 +232,7 @@ class MockConsole(tk.Tk):
         self.auto_ack_status = "1"
         self.auto_ack_5field = True
         self.auto_ack_scenario = False   # ★ 场景控制标志：不受界面刷新覆盖（修复:场景中途自动回执被UI tick关闭）
+        self.auto_ack_delay_ms = 0       # ★ PLC 自动回执延迟(ms)，模拟 PLC 响应耗时
         self.plc_seen = collections.deque(maxlen=8000)   # (epc, time, text)
         self.piece_grid = {}                             # epc -> grid（场景登记）
         self.plc.on_cmd = self._plc_on_cmd
@@ -122,12 +255,19 @@ class MockConsole(tk.Tk):
         self._ov_at = 0.0
         self._refresh_cfg_view()
 
-        # 启动服务
+        # 启动服务（可用 noplc/nos7/nogw/noquery/norfid 停用个别通道：
+        # 如现场真 PLC 已连 WCS 时用 noplc，仿真台只作注入源、不冒充 PLC）
+        self.disabled_channels = disabled_channels()
         for name, svc in self.services:
+            if name in CHANNEL_SWITCH_BY_NAME and CHANNEL_SWITCH_BY_NAME[name] in self.disabled_channels:
+                self.store.add_event(f"{name} 已按启动参数停用（{CHANNEL_SWITCH_BY_NAME[name]}），不在本次启动之列")
+                continue
             try:
                 svc.start()
             except Exception as e:
                 self.store.add_event(f"{name} 启动异常: {e}")
+        if self.disabled_channels:
+            self.store.add_event("本次停用通道: " + " ".join(sorted(self.disabled_channels)))
         self.store.add_event("仿真台已启动。当前配置文件: " + self.cfg.path)
         self.store.add_event("提示：请先确认 WCS 已启用 MOCK 配置并启动 WCS_httpServer.exe（本台信息见 状态总览 页）")
 
@@ -541,6 +681,10 @@ class MockConsole(tk.Tk):
         self.plc_5field = tk.BooleanVar(value=True)
         ttk.Checkbutton(f, text="5字段", variable=self.plc_5field,
                         command=self._plc_apply_auto).pack(side="left", padx=6)
+        ttk.Label(f, text="回执延迟ms:").pack(side="left", padx=(10, 2))
+        self.plc_delay = ttk.Entry(f, width=6)
+        self.plc_delay.insert(0, "0")
+        self.plc_delay.pack(side="left")
         f2 = ttk.Frame(mid)
         f2.pack(fill="x", pady=2)
         ttk.Button(f2, text="{start}", command=lambda: self.plc.send_text("{start}", "发PLC")).pack(side="left")
@@ -579,6 +723,10 @@ class MockConsole(tk.Tk):
         # 界面勾选 OR 场景控制（场景期间不被界面刷新覆盖）
         ui_on = self.auto_ack_var.get()
         self.auto_ack_on = bool(ui_on or self.auto_ack_scenario)
+        try:
+            self.auto_ack_delay_ms = max(int(self.plc_delay.get()), 0)
+        except Exception:
+            self.auto_ack_delay_ms = 0
         if self.auto_ack_scenario:
             # 场景控制时状态码以场景设定为准（不覆盖界面下拉）
             s = self.auto_ack_status
@@ -588,8 +736,9 @@ class MockConsole(tk.Tk):
             self.auto_ack_status = s
             tag = "手动勾选" if ui_on else "关"
         self.auto_ack_5field = self.plc_5field.get()
+        delay_txt = f" 延迟{self.auto_ack_delay_ms}ms" if self.auto_ack_delay_ms else ""
         self.lbl_plc_ack_now.config(
-            text=f"自动回执当前: {tag + '-开(状态=' + s + ')' if (ui_on or self.auto_ack_scenario) else '关'}")
+            text=f"自动回执当前: {tag + '-开(状态=' + s + ')' + delay_txt if (ui_on or self.auto_ack_scenario) else '关'}")
 
     def _plc_status_from_cb(self):
         return self.plc_status_cb.get().split(" ")[0] if self.plc_status_cb.get() else "1"
@@ -608,6 +757,8 @@ class MockConsole(tk.Tk):
                 replies.append(mock_proto.make_plc_feedback(fields[0], fields[1], fields[2], status).decode("ascii"))
             else:
                 replies.append("{%s|%s|%s}" % (fields[0], fields[1], fields[2]))
+        if replies and self.auto_ack_delay_ms:
+            time.sleep(self.auto_ack_delay_ms / 1000.0)   # ★ 模拟 PLC 响应延迟(界面可调)
         return replies
 
     def _plc_reply(self, status):
@@ -763,9 +914,10 @@ class MockConsole(tk.Tk):
                 qty = None
             if qty is not None and total != qty:
                 warns.append(f"⚠orderQty={qty} ≠ ΣgridNumber={total}（strict模式将500拒收）")
-            bad = [it.get("gridNum") for it in items if int(str(it.get("gridNum", 0))) not in range(1, 67)]
+            bad = [it.get("gridNum") for it in items
+                   if mock_proto.grid_code_parse(it.get("gridNum")) is None]
             if bad:
-                warns.append(f"⚠gridNum 越界: {bad}（该条将被跳过）")
+                warns.append(f"⚠gridNum 越界/非法: {bad}（应为 22001~22066 或 1~66）")
             if not items:
                 warns.append("⚠items 为空")
             if not warns:
@@ -1174,7 +1326,7 @@ class MockConsole(tk.Tk):
                 return False
 
             def http_post(self, path, obj):
-                url = f"http://127.0.0.1:{app.cfg.wms_listen_port}{path}"
+                url = f"http://{app.wcs_ip}:{app.cfg.wms_listen_port}{path}"
                 req = urllib.request.Request(url, data=json.dumps(obj, ensure_ascii=False).encode("utf-8"),
                                              headers={"Content-Type": "application/json"}, method="POST")
                 app.store.add("WMS下发", "发", f"POST {path} (场景)", raw_text=json.dumps(obj, ensure_ascii=False, indent=1))
@@ -1309,22 +1461,43 @@ class MockConsole(tk.Tk):
         ttk.Button(f2, text="② 还原正式配置", command=self._cfg_restore).pack(side="left", padx=8)
         tk.Label(f2, text="操作后需重启 WCS_httpServer.exe", fg="#b26a00").pack(side="left")
 
+        ref = ttk.LabelFrame(left, text="端口预期参考（run_mock.bat 指定 vs 当前配置文件 —— 手工改 http_server.xml 对照用）",
+                             padding=6)
+        ref.pack(fill="x", pady=(8, 0))
+        self.ref_txt = tk.Text(ref, height=10, state="disabled", font=("Consolas", 9), wrap="none")
+        self.ref_txt.pack(fill="x")
+        self.ref_txt.tag_configure("head", foreground="#1b5e20",
+                                   font=("Microsoft YaHei UI", 9, "bold"))
+        self.ref_txt.tag_configure("ok", foreground="#0a7d32")
+        self.ref_txt.tag_configure("bad", foreground="#b00020")
+        self.ref_txt.tag_configure("gray", foreground="#777777")
+        self.ref_note = tk.Label(ref, text="", fg="#888", justify="left", anchor="w",
+                                 wraplength=760)
+        self.ref_note.pack(anchor="w", pady=(3, 0))
+
         right = ttk.LabelFrame(parent, text="说明", padding=6)
         right.pack(side="left", fill="both", expand=True, padx=4, pady=4)
         info = (
-            "地址均按 release_WcsHttpServer\\config\\http_server.xml 生效值工作。\n\n"
-            "切换后仿真台各服务监听/连接的目标不变（仍按配置值），仅需：\n"
-            "  1) 本页『重新检测』确认显示 127.0.0.1\n"
-            "  2) 重启 WCS_httpServer.exe\n"
-            "  3) 在 WCS 界面点「开始接收任务」\n\n"
-            "mock 配置差异（对照正式配置）：\n"
-            "  rfidPushServerIp=127.0.0.1:2010（仿真台监听）\n"
-            "  rfidQueryUrl=http://127.0.0.1:9100/...\n"
-            "  feedback(Test)Url=http://127.0.0.1:8099/... (H7/H8)\n"
-            "  plcS7Ip=127.0.0.1（S7 端口102）\n"
-            "  rfidHeartbeatEnable=1（现场为0，便于观察心跳；还原即恢复）\n"
-            "  其余（端口8191/2000、策略、仓库/货主、appkey、method）与正式一致\n\n"
-            "备份位置：release_WcsHttpServer\\config\\config_backup\\*.bak（脚本自动产生，不删任何原文件）")
+            "地址均按 release_WcsHttpServer\\config\\http_server.xml 生效值工作；\n"
+            "『① 一键启用 Mock 配置』= 把 mock_env\\config_mock\\http_server.xml（可自定义）\n"
+            "备份当前文件后原样复制过去，内容以你自己维护的这份配置为准。\n\n"
+            "模板当前指向本机仿真台的地址类节点（以实际文件为准）：\n"
+            "  rfidPushServerIp=127.0.0.1:rfidPushServerPort(当前2010) ← 仿真台监听\n"
+            "  rfidQueryUrl=http://127.0.0.1:9100/... ← 仿真台监听\n"
+            "  feedbackTestUrl/EndTestUrl=http://127.0.0.1:8099/... (H7/H8) ← 仿真台监听\n"
+            "  plcS7Ip=127.0.0.1（S7 端口固定 102，两侧不可配）\n"
+            "  wmsListenPort(当前8191)/plcListenPort(当前102) ← WCS 监听\n"
+            "  rfidHeartbeatEnable 与配置一致（当前0）；useTestEnv=1\n"
+            "  binding 预绑定 001~065 随模板原样写入（WCS 启动即按此绑格口容器）\n\n"
+            "⚠ plcListenPort 若与 S7 同为 102，会与仿真台 S7 监听互斥，联调建议改非 102\n\n"
+            "备份位置：release_WcsHttpServer\\config\\config_backup\\*.bak（脚本自动产生，不删任何原文件）\n\n"
+            "【调试换端口（仿真台绝不自动改写配置）】\n"
+            "  1) 用 run_mock.bat 指定本次端口，如: run_mock.bat wms=9191 plc=2500 rfid=3010 gw=9099 query=9100\n"
+            "  2) 看左侧『端口预期参考』表格（期望 vs 配置文件当前值）\n"
+            "  3) 按表格手工修改 http_server.xml 对应节点（先备份），重启 WCS 与本台后生效\n"
+            "  4) WCS 在另一台机器时加网络参数: run_mock.bat wcs=<WCS机IP> bind=0.0.0.0\n"
+            "     (wcs=PLC/软件下发出站目标; bind=监听绑定地址, 跨机必填 0.0.0.0)\n"
+            "  S7 锁格端口固定 102（snap7 协议），两侧均不可配")
         tk.Label(right, text=info, justify="left", fg="#333",
                  font=("Microsoft YaHei UI", 9)).pack(anchor="nw", fill="x")
 
@@ -1354,6 +1527,34 @@ class MockConsole(tk.Tk):
         if self.cfg.ok:
             self._txt(self.cfg_addr, self.cfg.addresses_summary() +
                       "\n\n全部地址是否指向本机: " + ("是 ✓" if self.cfg.all_local() else "否 ✗（请先『一键启用Mock配置』）"))
+        # 端口预期参考（run_mock.bat 环境变量 → 对照当前配置文件）
+        exp = self.expected_ports
+        self.ref_txt.config(state="normal")
+        self.ref_txt.delete("1.0", "end")
+        for tag, line in port_reference_lines(self.cfg, exp):
+            self.ref_txt.insert("end", line + "\n", tag)
+        self.ref_txt.config(state="disabled")
+        cur = self.cfg.port_summary() if self.cfg.ok else {}
+        diffs = [k for k in exp if cur.get(k) != exp[k]]
+        exp_txt = "  ".join("%s=%s" % (k, v) for k, v in exp.items()) or "（未指定）"
+        remote = []
+        if self.wcs_ip != "127.0.0.1":
+            remote.append("wcs(目标WCS/PLC通道连它)=" + self.wcs_ip)
+        if self.bind_host:
+            remote.append("bind(监听绑定)=" + self.bind_host)
+        net_txt = ("；远程: " + "  ".join(remote)) if remote else ""
+        if diffs:
+            self.ref_note.config(
+                text=f"本次指定: {exp_txt}{net_txt} —— 与配置文件不一致项: {'、'.join(diffs)}。"
+                     "仿真台仍按当前配置文件运行：如需按本次期望联调，请停止 WCS 后手工修改 "
+                     "release_WcsHttpServer\\config\\http_server.xml 对应节点（备份留档），再重启 WCS 与本台。"
+                     "S7=102 固定。",
+                fg="#b00020")
+        else:
+            self.ref_note.config(
+                text=f"本次指定: {exp_txt}{net_txt}。修改 http_server.xml 后需重启 WCS_httpServer.exe 才生效；"
+                     "S7=102 固定。本台绝不自动改写配置文件，全部端口请手工修改。",
+                fg="#888")
 
     # ======================================================================
     # 工具方法
@@ -1674,6 +1875,16 @@ class MockConsole(tk.Tk):
 
 
 def main():
+    if any(a in ("check", "--check") for a in sys.argv[1:]):
+        # 无界面模式: 打印端口预期 vs 当前配置文件 对照（供 run_mock.bat check 使用）
+        cfg = mock_cfg.WcsConfig().load()
+        for _tag, line in port_reference_lines(cfg, resolve_expected_ports()):
+            print(line)
+        return
+    exp = resolve_expected_ports()
+    if exp:
+        print("[run_mock] 端口参数: %s  （仅对照参考，见『配置』页；配置文件请手工修改）"
+              % "  ".join("%s=%s" % (k, exp[k]) for k in ("wms", "plc", "rfid", "gw", "query") if k in exp))
     app = MockConsole()
     app.mainloop()
 

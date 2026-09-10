@@ -4,9 +4,9 @@
   moc WCS_httpServer.h
   moc ConfigManager.h
   moc LifecycleLogger.h
+   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   moc log_center.h
   moc OutboxManager.h
-   RCC: Warning: No resources in 'D:\WCS\WCSApp\WCS_httpServer\WCS_httpServer\WCS_httpServer.qrc'.
   moc WaveManager.h
   moc ParseWorker.h
   moc PlcManager.h
@@ -14,6 +14,7 @@
   moc MainWindow.h
   moc HttpServer.h
   moc HttpClient.h
+  moc qcustomplot.h
   ConfigManager.cpp
   HttpClient.cpp
   HttpServer.cpp
@@ -22,6 +23,7 @@
   OutboxManager.cpp
   ParseWorker.cpp
   PlcManager.cpp
+  qcustomplot.cpp
   RfidPushClient.cpp
   SiemensPLC.cpp
   snap7.cpp
@@ -43,5 +45,6 @@
   moc_MainWindow.cpp
   moc_HttpServer.cpp
   moc_HttpClient.cpp
+  moc_qcustomplot.cpp
   WCS_httpServer.vcxproj -> D:\WCS\WCSApp\WCS_httpServer\release_WcsHttpServer\WCS_httpServer.exe
   WCS_httpServer.vcxproj -> ..\release_WcsHttpServer\WCS_httpServer.pdb (完整 PDB)

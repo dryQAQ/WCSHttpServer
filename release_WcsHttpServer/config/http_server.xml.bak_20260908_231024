@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ★★★ 本文件 = 本机 Mock 联调配置（由 mock_env/启用Mock配置.bat 复制到
+     release_WcsHttpServer/config/http_server.xml 使用）★★★
+     仅修改地址类节点指向 127.0.0.1 本机仿真台，其余与正式配置逐字一致。
+     正式环境配置已由脚本备份至 release_WcsHttpServer/config/config_backup/，
+     用 还原正式配置.bat 一键还原。 -->
+<config>
+    <!-- 配置文件版本号，与软件版本匹配检查 -->
+    <configVersion>1</configVersion>
+    <!-- WMS 推送监听端口（WMS → WCS，修改后需重启服务） -->
+    <wmsListenPort>8191</wmsListenPort>
+    <!-- ★正式环境满箱回传 URL（H7 满箱同步到WMS；useTestEnv=1 时不使用）
+         现网2026-09-07 起: base = https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms
+         WCS 自动追加 ?appkey=&method=，此处只填 base（不带参数，避免重复拼接） -->
+    <feedbackUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms</feedbackUrl>
+    <!-- ★Mock 测试环境满箱回传 URL（H7）：指向本机仿真台网关 8099 -->
+    <feedbackTestUrl>http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackTestUrl>
+    <!-- ★正式环境完结回传 URL（H8；useTestEnv=1 时不使用，同 H7 base，靠 method 区分） -->
+    <feedbackEndUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms</feedbackEndUrl>
+    <!-- ★Mock 测试环境完结回传 URL（H8）：指向本机仿真台网关 8099 -->
+    <feedbackEndTestUrl>http://127.0.0.1:8099/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndTestUrl>
+    <!-- ★ 满箱/锁格/波次完成回传 method（URL 参数 method，WMS 网关接口标识） -->
+    <feedbackMethod>gwisSubProductClassifyOrder</feedbackMethod>
+    <!-- ★ 完结回传(H8) method（URL 参数 method，WMS 网关接口标识） -->
+    <feedbackEndMethod>gwisSubProductClassifyEndOrder</feedbackEndMethod>
+    <!-- ★正式环境 AppKey（HTTP Header + URL 参数 appkey；现网 dmwcs 正式账号） -->
+    <appkey>dz_bxh_dmwcs_zs</appkey>
+    <!-- 测试环境 AppKey -->
+    <appkeyTest>dz_bxh_dmwcs_cs</appkeyTest>
+    <!-- 是否使用测试环境（1=测试, 0=正式） -->
+    <useTestEnv>1</useTestEnv>
+    <!-- RFID SKU-EPC 绑定查询 URL（★Mock：指向本机仿真台 RFID 查询服务 9100） -->
+    <rfidQueryUrl>http://127.0.0.1:9100/open-api/rfid/query</rfidQueryUrl>
+    <!-- RFID 查询 Authorization 头完整值（形如 APP_KEYS <key>，整串使用；空=不发送） -->
+    <rfidAppkey>APP_KEYS e1235fda-029c-4270-913f-530342af2073</rfidAppkey>
+    <!-- ★Mock RFID 推送服务端地址（127.0.0.1 = 仿真台；WCS 作为 TCP 客户端连入） -->
+    <rfidPushServerIp>127.0.0.1</rfidPushServerIp>
+    <rfidPushServerPort>2010</rfidPushServerPort>
+    <!-- 是否向 RFID 服务端发送心跳包（1=发送 0=不发送；现场=0，★Mock 建议=1 以观察心跳通道） -->
+    <rfidHeartbeatEnable>1</rfidHeartbeatEnable>
+    <!-- 心跳发送间隔（毫秒，默认2000=2秒） -->
+    <rfidHeartbeatIntervalMs>2000</rfidHeartbeatIntervalMs>
+    <!-- 仓库编码 -->
+    <warehouseCode>H</warehouseCode>
+    <!-- 货主编码 -->
+    <goodsOwner>BXH_CS</goodsOwner>
+    <!-- 波次超时时间（分钟，0=不超时） -->
+    <waveTimeoutMin>0</waveTimeoutMin>
+    <!-- 异常 SKU 最大重试次数 -->
+    <maxRetryCount>3</maxRetryCount>
+    <!-- 期望绑定数量（波次下发校验用，默认66；当前代码版本已不拦截） -->
+    <expectedBindCount>1</expectedBindCount>
+    <!-- HTTP 回传请求超时（毫秒） -->
+    <httpTimeoutMs>3000</httpTimeoutMs>
+    <!-- 波次完成回传超时（毫秒） -->
+    <waveCompleteTimeoutMs>2000</waveCompleteTimeoutMs>
+    <!-- PLC TCP 监听端口（PLC 主动连接此端口；仿真台 PLC 客户端连入） -->
+    <plcListenPort>2000</plcListenPort>
+    <!-- ★Mock S7 PLC IP（127.0.0.1 = 仿真台；S7 端口固定 102） -->
+    <plcS7Ip>127.0.0.1</plcS7Ip>
+    <!-- S7 机架号 -->
+    <plcS7Rack>0</plcS7Rack>
+    <!-- S7 槽位号 -->
+    <plcS7Slot>1</plcS7Slot>
+    <!-- 业务线程池大小 -->
+    <businessPoolSize>90</businessPoolSize>
+    <!-- PLC 发送线程池大小 -->
+    <plcSendPoolSize>8</plcSendPoolSize>
+    <!-- PLC 反馈接收线程池大小 -->
+    <plcRecvPoolSize>4</plcRecvPoolSize>
+    <!-- 日志保留天数 -->
+    <logRetainDays>30</logRetainDays>
+    <!-- fromLocation 取值来源（config=使用固定值, volu=使用波次明细中的 volu 字段） -->
+    <h7FromLocationSource>sobi</h7FromLocationSource>
+    <!-- 来源库位默认值（config 模式时使用） -->
+    <h7DefaultFromLocation>A-01-03</h7DefaultFromLocation>
+    <!-- 目标库位默认值（无容器号时兜底） -->
+    <h7DefaultTargetLocation>66</h7DefaultTargetLocation>
+    <!-- ★WMS 格口编码：对外格口号 = 前缀 + 格口号按宽度补零（默认 22+3位：格口号5 → "22005"、55 → "22055"）；
+         前缀留空 = 关闭转换（兼容裸数字/旧编码）；解析同时兼容 22005 / 05 / 5 -->
+    <gridCodePrefix>22</gridCodePrefix>
+    <gridCodeWidth>3</gridCodeWidth>
+    <!-- EPC 任务内防重（true/false） -->
+    <sortingEpcDedup>true</sortingEpcDedup>
+    <!-- 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） -->
+    <sortingGridCapPolicy>reject</sortingGridCapPolicy>
+    <!-- orderQty 校验模式（strict=严格, loose=宽松） -->
+    <sortingOrderQtyValidate>strict</sortingOrderQtyValidate>
+    <!-- 冲突策略（STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配） -->
+    <sortingConflictPolicy>STRICT_EXCEPTION</sortingConflictPolicy>
+    <!-- 是否允许超收（true/false） -->
+    <sortingAllowOverrecv>false</sortingAllowOverrecv>
+    <!-- ① 波次下发（WMS → WCS，H4 推送波次数据） -->
+    <apiInsertWaveInfo>/api/DispatchSortingCommand/InsertWaveInfo</apiInsertWaveInfo>
+    <!-- ② 容器绑定（WMS → WCS，H6 格口容器绑定） -->
+    <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
+    <!-- ③ 波次取消（WMS → WCS，H5 退货任务取消） -->
+    <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
+    <gridName num="1">1号格口</gridName>
+    <gridName num="10">10号格口</gridName>
+    <gridName num="11">11号格口</gridName>
+    <gridName num="12">12号格口</gridName>
+    <gridName num="13">13号格口</gridName>
+    <gridName num="14">14号格口</gridName>
+    <gridName num="15">15号格口</gridName>
+    <gridName num="16">16号格口</gridName>
+    <gridName num="17">17号格口</gridName>
+    <gridName num="18">18号格口</gridName>
+    <gridName num="19">19号格口</gridName>
+    <gridName num="2">2号格口</gridName>
+    <gridName num="20">20号格口</gridName>
+    <gridName num="21">21号格口</gridName>
+    <gridName num="22">22号格口</gridName>
+    <gridName num="23">23号格口</gridName>
+    <gridName num="24">24号格口</gridName>
+    <gridName num="25">25号格口</gridName>
+    <gridName num="26">26号格口</gridName>
+    <gridName num="27">27号格口</gridName>
+    <gridName num="28">28号格口</gridName>
+    <gridName num="29">29号格口</gridName>
+    <gridName num="3">3号格口</gridName>
+    <gridName num="30">30号格口</gridName>
+    <gridName num="31">31号格口</gridName>
+    <gridName num="32">32号格口</gridName>
+    <gridName num="33">33号格口</gridName>
+    <gridName num="34">34号格口</gridName>
+    <gridName num="35">35号格口</gridName>
+    <gridName num="36">36号格口</gridName>
+    <gridName num="37">37号格口</gridName>
+    <gridName num="38">38号格口</gridName>
+    <gridName num="39">39号格口</gridName>
+    <gridName num="4">4号格口</gridName>
+    <gridName num="40">40号格口</gridName>
+    <gridName num="41">41号格口</gridName>
+    <gridName num="42">42号格口</gridName>
+    <gridName num="43">43号格口</gridName>
+    <gridName num="44">44号格口</gridName>
+    <gridName num="45">45号格口</gridName>
+    <gridName num="46">46号格口</gridName>
+    <gridName num="47">47号格口</gridName>
+    <gridName num="48">48号格口</gridName>
+    <gridName num="49">49号格口</gridName>
+    <gridName num="5">5号格口</gridName>
+    <gridName num="50">50号格口</gridName>
+    <gridName num="51">51号格口</gridName>
+    <gridName num="52">52号格口</gridName>
+    <gridName num="53">53号格口</gridName>
+    <gridName num="54">54号格口</gridName>
+    <gridName num="55">55号格口</gridName>
+    <gridName num="56">56号格口</gridName>
+    <gridName num="57">57号格口</gridName>
+    <gridName num="58">58号格口</gridName>
+    <gridName num="59">59号格口</gridName>
+    <gridName num="6">6号格口</gridName>
+    <gridName num="60">60号格口</gridName>
+    <gridName num="61">61号格口</gridName>
+    <gridName num="62">62号格口</gridName>
+    <gridName num="63">63号格口</gridName>
+    <gridName num="64">64号格口</gridName>
+    <gridName num="65">65号格口</gridName>
+    <gridName num="66">66号格口</gridName>
+    <gridName num="7">7号格口</gridName>
+    <gridName num="8">8号格口</gridName>
+    <gridName num="9">9号格口</gridName>
+</config>

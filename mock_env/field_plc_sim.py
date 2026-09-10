@@ -13,6 +13,7 @@ field_plc_sim.py — 现场旁路工具: PLC 落格反馈模拟器(客户端)
   python field_plc_sim.py                        # 连 127.0.0.1:2000, 收到指令自动回 状态1
   python field_plc_sim.py --host 192.168.1.50    # WCS 在其他机器
   python field_plc_sim.py --status 2             # 自动回 状态2(无格口, 练异常)
+  python field_plc_sim.py --delay 500            # 落格反馈延迟500ms(模拟PLC响应耗时, 可自定义)
   python field_plc_sim.py --manual               # 手动模式: 收到指令后按回车才回执
 交互(任意模式可用):
   直接输入 原文          按原文原样发给 WCS (例如 {start} / {stop} / {EPC|001|027|029|1})
@@ -44,11 +45,12 @@ def pad3(n):
 
 
 class PlcSim:
-    def __init__(self, host, port, status="1", manual=False, no_input=False):
+    def __init__(self, host, port, status="1", manual=False, no_input=False, delay=0):
         self.host, self.port = host, port
         self.status = status
         self.manual = manual
         self.no_input = no_input
+        self.delay = delay
         self.sock = None
         self.recv_cnt = 0
         self.send_cnt = 0
@@ -125,6 +127,8 @@ class PlcSim:
     def reply(self):
         if not self.last_cmd:
             return
+        if self.delay:
+            time.sleep(self.delay / 1000.0)
         epc, grid, car = self.last_cmd[0], self.last_cmd[1], self.last_cmd[2]
         car3 = pad3(car)
         try:
@@ -188,9 +192,10 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=2000)
     ap.add_argument("--status", default="1")
     ap.add_argument("--manual", action="store_true")
+    ap.add_argument("--delay", type=int, default=0, help="落格反馈延迟ms(模拟PLC响应耗时)")
     ap.add_argument("--no-input", action="store_true")
     a = ap.parse_args()
-    p = PlcSim(a.host, a.port, a.status, a.manual, a.no_input)
+    p = PlcSim(a.host, a.port, a.status, a.manual, a.no_input, a.delay)
     try:
         p.run()
     except KeyboardInterrupt:

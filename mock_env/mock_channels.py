@@ -445,6 +445,17 @@ class _JsonHttpServer(_Base):
         return H
 
     def _run(self):
+        # ★ 端口占用预检（Windows SO_REUSEADDR 会静默双绑，先探测避免“假启动”）
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+            probe.bind((self.host, self.port))
+            probe.close()
+        except OSError as e:
+            self.store.add_event(f"{self._name} 端口被占用 {self.host}:{self.port}（未接管；若同时运行了其它占用该端口的程序如 wms_mock_gui，请二选一）: {e}")
+            self._status["running"] = False
+            self._status["detail"] = f"端口被占用 {self.host}:{self.port}"
+            return
         try:
             h = self._make_handler()
             srv = _ThreadingHttp((self.host, self.port), h)

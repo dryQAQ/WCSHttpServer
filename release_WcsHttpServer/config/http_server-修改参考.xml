@@ -23,18 +23,29 @@
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 二、WMS 回传接口                                                 -->
-    <!--    波次完成/锁格时，WCS 主动向 WMS 发送回传报文                    -->
+    <!--    波次完成/锁格/满箱时，WCS 主动向 WMS 发送回传报文               -->
     <!--    useTestEnv 控制使用正式环境还是测试环境                         -->
-    <!--    AppKey 放在 HTTP Header: AppKey=xxx                          -->
+    <!--    ★ 2026-09-06：URL 由程序拼接（base + ?appkey=xxx&method=yyy）   -->
+    <!--      满箱/锁格/波次完成 → feedbackMethod（gwisSubProductClassifyOrder）-->
+    <!--      完结回传(H8)     → feedbackEndMethod（gwisSubProductClassifyEndOrder）-->
+    <!--    appkey 同时放入 HTTP Header: AppKey=xxx（与 URL 参数 appkey 同值） -->
     <!--    修改后立即生效                                                 -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 正式环境 -->
-    <feedbackUrl>http://47.93.21.77:9090/gids5/service/thirdPartyData/dz_bxh_wcs_zs</feedbackUrl>
+    <feedbackUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackUrl>
     <appkey>dz_bxh_wcs_zs</appkey>
 
-    <!-- 测试环境 -->
-    <feedbackTestUrl>http://182.92.166.232/gids5/service/thirdPartyData/dz_bxh_wcs_cs</feedbackTestUrl>
-    <appkeyTest>dz_bxh_wcs_cs</appkeyTest>
+    <!-- 测试环境（gwms5 openapi 账号 dz_bxh_dmwcs_cs） -->
+    <feedbackTestUrl>https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackTestUrl>
+    <appkeyTest>dz_bxh_dmwcs_cs</appkeyTest>
+
+    <!-- H8 完结回传 base URL（WCS → WMS 波次完结通知） -->
+    <feedbackEndUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndUrl>
+    <feedbackEndTestUrl>https://wmstest.pelliot.com.cn:9090/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndTestUrl>
+
+    <!-- WMS 网关 method 参数（满箱=Order，完结=EndOrder，按 WMS 实际接口调整） -->
+    <feedbackMethod>gwisSubProductClassifyOrder</feedbackMethod>
+    <feedbackEndMethod>gwisSubProductClassifyEndOrder</feedbackEndMethod>
 
     <!-- 环境切换: 1=测试环境, 0=正式环境 -->
     <useTestEnv>1</useTestEnv>

@@ -61,15 +61,20 @@ def backup_live(tag):
 
 
 def enable(verbose=True):
+    """把 mock 模板复制为生效配置；仅当模板与当前配置内容不一致时才备份+覆盖
+    （内容一致=已是最新模板，不重复覆盖、不产生多余备份）"""
     if not os.path.isfile(MOCK):
         return 1, f"找不到 mock 配置模板: {MOCK}"
-    if current_kind() == "missing":
+    if os.path.isfile(LIVE) and _read(MOCK) == _read(LIVE):
+        return 0, "当前配置已与 mock 模板一致（未重复覆盖，无需重启）"
+    bak_note = ""
+    if os.path.isfile(LIVE):
+        bak = backup_live("启用mock前备份")
+        bak_note = f"\n备份: {bak}"
+    else:
         os.makedirs(CFG_DIR, exist_ok=True)
-    elif current_kind() == "mock":
-        return 0, "当前已是 mock 配置（未重复覆盖）"
-    bak = backup_live("正式备份-启用mock前")
     shutil.copy2(MOCK, LIVE)
-    return 0, f"已启用 MOCK 配置。\n备份: {bak}\n当前: {LIVE}\n\n请重启 WCS_httpServer.exe 生效；正式配置用「还原正式配置」恢复。"
+    return 0, f"已启用 MOCK 配置（模板 mock_env\\config_mock\\http_server.xml → 生效配置）。{bak_note}\n当前: {LIVE}\n\n请重启 WCS_httpServer.exe 生效；正式配置用「还原正式配置」恢复。"
 
 
 def restore(verbose=True):

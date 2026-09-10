@@ -64,7 +64,7 @@ class WcsConfig:
 
     @property
     def plc_listen_port(self):
-        return self.i("plcListenPort", 2000)
+        return self.i("plcListenPort", 102)
 
     @property
     def rfid_server_ip(self):
@@ -151,6 +151,19 @@ class WcsConfig:
     @property
     def fullbox_default_target(self):
         return self.f("h7DefaultTargetLocation", "66")
+
+    def port_summary(self):
+        """当前生效端口速查（仿真台/WCS 共用同一份 http_server.xml）。
+        S7(102) 为 snap7 协议固定端口，不在 xml 中配置。"""
+        fb = self.f("feedbackTestUrl") if self.use_test_env else self.f("feedbackUrl")
+        gw_url = fb or self.f("feedbackUrl")
+        return {
+            "wms": self.i("wmsListenPort", 8191),
+            "plc": self.i("plcListenPort", 102),
+            "rfid": self.i("rfidPushServerPort", 2010),
+            "gw": self.parse_url_port(gw_url, 8099),
+            "query": self.parse_url_port(self.f("rfidQueryUrl"), 9100),
+        }
 
     def addresses_summary(self):
         """生成“依据配置文件”的角色地址清单（文本）"""

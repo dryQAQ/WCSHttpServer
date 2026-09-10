@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WMS 报文 Mock 测试台</title>
+<style>
+  :root{
+    --bg:#f2f4f8; --card:#fff; --line:#dde3ec; --txt:#1f2733; --sub:#5b6675;
+    --blue:#1a6feb; --blue2:#e8f1fe; --green:#1e8e3e; --green2:#e6f6ea;
+    --red:#d93025; --red2:#fdecea; --amber:#b06000; --amber2:#fdf3e0;
+    --mono:'Consolas','Courier New',monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.6 'Microsoft YaHei','PingFang SC',system-ui,sans-serif}
+  header{background:#0f1c2e;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;font-weight:600}
+  header .sub{color:#9fb0c8;font-size:12px}
+  .chip{display:inline-flex;align-items:center;gap:6px;border-radius:20px;padding:2px 10px;font-size:12px;background:#233247;color:#cdd9ec}
+  .dot{width:8px;height:8px;border-radius:50%;background:#ffb300}
+  .dot.on{background:#34c759}.dot.off{background:#ff453a}
+  main{max-width:1500px;margin:0 auto;padding:14px}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .tabbtn{border:1px solid var(--line);background:var(--card);color:var(--sub);
+    padding:8px 18px;border-radius:8px;cursor:pointer;font-size:14px}
+  .tabbtn.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+  .card h2{font-size:15px;margin:0 0 10px;color:#0f1c2e;display:flex;align-items:center;gap:8px}
+  .card h2 .no{background:var(--blue);color:#fff;border-radius:6px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none}
+  .hint{color:var(--sub);font-size:12px}
+  label.lbl{display:inline-block;color:var(--sub);margin:6px 8px 2px 0;font-size:12px}
+  input[type=text],input[type=number],select,textarea{border:1px solid #c9d2e0;border-radius:6px;
+    padding:6px 8px;font-size:13px;background:#fff;color:var(--txt)}
+  input:focus,textarea:focus,select:focus{outline:2px solid #bcd5fb;border-color:var(--blue)}
+  textarea.code{font-family:var(--mono);font-size:12.5px;line-height:1.45;width:100%;min-height:190px;resize:vertical;white-space:pre}
+  button{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:7px 14px;
+    font-size:13px;cursor:pointer;transition:filter .12s}
+  button:hover{filter:brightness(1.08)}
+  button.ghost{background:#fff;color:var(--blue);border:1px solid var(--blue)}
+  button.gray{background:#e6eaf1;color:#3a4553;border:1px solid #c9d2e0}
+  button.green{background:var(--green)}
+  button.red{background:var(--red)}
+  button.sm{padding:3px 9px;font-size:12px}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:2px 18px}
+  .frow{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}
+  .frow input[type=text]{min-width:240px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+  th{background:#eef2f8;font-weight:600;white-space:nowrap}
+  tr:nth-child(even) td{background:#fafbfd}
+  .ok{color:var(--green);font-weight:600}
+  .bad{color:var(--red);font-weight:600}
+  .warn{color:var(--amber);font-weight:600}
+  .mono{font-family:var(--mono);font-size:12px}
+  pre{background:#0f1c2e;color:#d9e6f7;border-radius:8px;padding:10px;overflow:auto;
+    font-family:var(--mono);font-size:12px;max-height:340px;white-space:pre-wrap;word-break:break-all}
+  .tag{display:inline-block;border-radius:4px;padding:0 7px;font-size:12px;font-weight:600}
+  .tag.ok{background:var(--green2);color:var(--green)}
+  .tag.bad{background:var(--red2);color:var(--red)}
+  .tag.warn{background:var(--amber2);color:var(--amber)}
+  .tag.gray{background:#e9edf4;color:#5b6675}
+  details.entry{border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;background:#fff}
+  details.entry summary{cursor:pointer;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  details.entry summary b{font-weight:600}
+  .mt4{margin-top:8px}
+  .rowline{display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap}
+  .rowline input,.rowline select{padding:4px 6px;font-size:12.5px}
+  .rowline .wsku{width:210px}.rowline .wgrid{width:110px}.rowline .wqty{width:90px}
+  .rowline .wbox{width:190px}
+  .col-l{float:left;width:calc(50% - 8px)}
+  .col-r{float:right;width:calc(50% - 8px)}
+  .clear{clear:both}
+  .section-title{font-weight:600;margin:14px 0 6px;border-left:3px solid var(--blue);padding-left:8px}
+  .pane{display:none}.pane.on{display:block}
+  .kv{display:grid;grid-template-columns:auto 1fr auto auto;gap:6px 14px;align-items:center}
+  .vchip{font-size:16px;font-weight:700;border-radius:8px;padding:4px 14px;display:inline-block}
+  .vchip.ok{background:var(--green2);color:var(--green)}
+  .vchip.bad{background:var(--red2);color:var(--red)}
+  .vchip.warn{background:var(--amber2);color:var(--amber)}
+  #toast{position:fixed;right:18px;top:64px;background:#1f2937;color:#fff;padding:9px 16px;border-radius:8px;
+    font-size:13px;opacity:0;transition:opacity .2s;z-index:99;max-width:520px}
+  #toast.show{opacity:1}
+  .rule-row{display:flex;gap:10px;align-items:flex-start;padding:7px 4px;border-bottom:1px dashed #e5eaf1}
+  .rule-row input{margin-top:4px}
+  .rule-row .rl{width:190px;font-weight:600;flex:none}
+  .rule-row .rd{color:var(--sub);font-size:12px}
+  .flow{background:var(--blue2);border:1px solid #c4dbfa;border-radius:8px;padding:8px 12px;font-size:12.5px;color:#12437f}
+  .mini{font-size:12px;color:var(--sub)}
+  .right{float:right}
+  .redtxt{color:var(--red)}
+  .greentxt{color:var(--green)}
+</style>
+</head>
+<body>
+<header>
+  <h1>WMS 报文 Mock 测试台</h1>
+  <span class="sub">鞋服窄带分拣 WCS ↔ WMS 接口联调（H7/H8 回传 · H4/H6 下发 · 模拟网关规则校验）</span>
+  <span style="flex:1"></span>
+  <span class="chip"><span class="dot" id="gwDot"></span>模拟WMS网关 <span id="gwSt">--</span></span>
+  <span class="chip" id="gwCntChip">H7 0 / H8 0</span>
+  <span class="chip">期望AppKey: <span id="headAppkey">--</span></span>
+  <button class="red" id="btnQuit" title="停止本服务并退出（EXE 无控制台时用这个退出）">✕ 退出服务</button>
+</header>
+<div id="toast"></div>
+<main>
+  <div class="tabs">
+    <button class="tabbtn active" data-tab="tab-send">① 报文编辑·发送</button>
+    <button class="tabbtn" data-tab="tab-gateway">② 模拟WMS网关</button>
+    <button class="tabbtn" data-tab="tab-data">③ 规则与主数据</button>
+    <button class="tabbtn" data-tab="tab-help">④ 使用说明</button>
+  </div>
+
+  <!-- ═══════════════ 页签1: 报文编辑与发送 ═══════════════ -->
+  <div id="tab-send" class="pane on">
+    <div class="flow" style="margin-bottom:12px">
+      <b>推荐演练流（本机模拟）：</b>
+      ①选 H4 载入演示波次并<b>发送</b>（记录计划）→ ②选 H6 发送绑定（记录绑定）→
+      ③选 H7：SKU/格口填<b>计划内</b>的 → 模拟WMS 应答 <span class="greentxt">success=true 成功</span>；
+      故意填<b>不属于该格口的SKU / 超计划数量 / 错误AppKey / 未知波次</b> → 应答 <span class="redtxt">success=false + 原因</span>。
+      WCS 生产侧只认响应 <code>success==true</code>，与真实网关一致。
+    </div>
+
+    <div class="card">
+      <h2><span class="no">1</span>输入 SKU 码与格口号（含业务参数）<span class="hint" id="typeHint"></span></h2>
+      <div class="frow">
+        <label class="lbl">报文类型</label>
+        <select id="selType" style="min-width:340px">
+          <option value="H7">H7 满箱回传（WCS → WMS，gwisSubProductClassifyOrder）</option>
+          <option value="H8">H8 波次完结回传（WCS → WMS，gwisSubProductClassifyEndOrder）</option>
+          <option value="H4">H4 波次下发（WMS → WCS，InsertWaveInfo）</option>
+          <option value="H6">H6 格口容器绑定（WMS → WCS，BindingLatticePort）</option>
+        </select>
+        <span class="hint" id="typeDesc"></span>
+      </div>
+
+      <!-- H7 / H8 公共 -->
+      <div class="frow" id="secCommon" style="display:none">
+        <label class="lbl">波次号 orderCode</label>
+        <input type="text" id="f_order" style="width:220px" placeholder="如 PP202600000099">
+      </div>
+      <!-- H7 专用 -->
+      <div id="secH7" style="display:none">
+        <div class="frow">
+          <label class="lbl">格口号</label>
+          <input type="text" id="f_grid" class="wgrid" placeholder="格口原始号 1~66">
+          <label class="lbl">容器号 targetLocation</label>
+          <input type="text" id="f_box" class="wbox" placeholder="绑定容器号（自动带出）">
+          <label class="lbl">来源库位 fromLocation</label>
+          <input type="text" id="f_from" style="width:150px">
+          <span class="hint" id="f_gridHint"></span>
+        </div>
+        <div class="section-title">满箱明细 detailList（每行 = 一个 SKU 的聚合件数）</div>
+        <div id="h7rows"></div>
+        <button class="sm gray" id="btnH7Add">＋ 添加SKU行</button>
+        <span class="hint" id="h7bindHint"></span>
+      </div>
+      <!-- H8 专用 -->
+      <div id="secH8" style="display:none">
+        <div class="frow">
+          <label class="lbl">已分拣总件数 sumLocation</label>
+          <input type="number" id="f_sum" min="0" style="width:110px" value="12">
+          <span class="hint">模拟波次 PP202600000099 计划总件数 12</span>
+        </div>
+      </div>
+      <!-- H4 专用 -->
+      <div id="secH4" style="display:none">
+        <div class="frow">
+          <label class="lbl">来源库位 sobi</label>
+          <input type="text" id="f_sobi" style="width:150px" placeholder="H-01-AB">
+          <span class="hint">orderQty 自动 = Σ 明细数量；WCS 严格校验模式要求两者一致</span>
+        </div>
+        <div class="section-title">波次明细 items（SKU码 + 格口号 + 件数）</div>
+        <div id="h4rows"></div>
+        <button class="sm gray" id="btnH4Add">＋ 添加明细行</button>
+        <button class="sm gray" id="btnH4Demo">载入演示波次（格口1~6×2 SKU）</button>
+        <button class="sm gray" id="btnH4Clear">清空行</button>
+        <div class="hint" id="h4tot"></div>
+      </div>
+      <!-- H6 专用 -->
+      <div id="secH6" style="display:none">
+        <div class="frow"><span class="hint">绑定即「格口号 ↔ 容器号」，WCS 收到后格口解除满箱禁用；此接口无 JSON 报文体，
+          报文 = POST 到 BindingLatticePort 的查询参数。保存后可多条顺序发送。</span></div>
+        <div id="h6rows"></div>
+        <button class="sm gray" id="btnH6Add">＋ 添加绑定</button>
+        <button class="sm gray" id="btnH6Batch">批量：格口1~6（箱号 H-01-2001..2006）</button>
+        <button class="sm gray" id="btnH6Clear">清空行</button>
+      </div>
+
+      <div class="frow mt4">
+        <button class="ghost" id="btnGen">⟳ 按输入生成报文</button>
+        <label class="lbl">载入演练样例</label>
+        <select id="selDemo" style="min-width:300px"></select>
+        <button class="sm gray" id="btnDemoLoad">载入</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">2</span>生成的报文（可直接修改后发送）<span class="hint">修改即生效，点「发送」将发送当前内容</span></h2>
+      <textarea id="msgJson" class="code" spellcheck="false"
+        placeholder="（点「按输入生成报文」后此处显示 JSON；H6 无报文体，见③逐条发送）"></textarea>
+      <div class="frow mt4">
+        <button class="sm gray" id="btnFmt">格式化 JSON</button>
+        <button class="sm gray" id="btnChk">校验结构</button>
+        <button class="sm red" id="btnClearMsg">清空</button>
+        <span class="hint" id="chkWarn" style="color:var(--amber)"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">3</span>接口地址与发送 <span class="hint" id="dirNote"></span></h2>
+      <div class="frow">
+        <label class="lbl">地址预设</label>
+        <select id="presetSel" style="min-width:360px"></select>
+        <button class="sm gray" id="btnUrlRe" >按预设与报文类型重填地址</button>
+      </div>
+      <div class="frow">
+        <label class="lbl">目标接口地址(完整URL)</label>
+        <input type="text" id="urlTarget" style="flex:1;min-width:480px" spellcheck="false">
+      </div>
+      <div class="frow" id="appkeyRow">
+        <label class="lbl">AppKey（URL参数+Header）</label>
+        <input type="text" id="f_appkey" style="width:260px" spellcheck="false">
+        <label class="lbl" style="margin-left:10px"><input type="checkbox" id="ckQuery" checked> 自动附加 ?appkey=&method=（WCS口径）</label>
+      </div>
+      <div class="frow" id="recordRow" style="display:none">
+        <label class="lbl" style="margin-left:0"><input type="checkbox" id="ckRecord" checked>
+          <b>发送成功后记录为本机模拟WMS底账</b>（H4→波次计划库；H6→格口绑定表，供后续H7/H8校验）</label>
+      </div>
+      <div class="frow"><span class="hint">最终请求: </span><span class="mono" id="finalUrl" style="color:#12437f"></span></div>
+      <div class="frow">
+        <button class="green" id="btnSend" style="font-size:15px;padding:9px 26px">➤ 发送报文</button>
+        <span id="sendState" class="hint"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">4</span>响应与判定 <span class="hint" id="respNote"></span></h2>
+      <div class="frow">
+        <span class="vchip" id="vchip" style="display:none">--</span>
+        <span id="respMeta" class="hint"></span>
+      </div>
+      <pre id="respPre" style="display:none"></pre>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">5</span>发送历史 <span class="right"><button class="sm gray" id="btnClearSent">清空历史</button></span></h2>
+      <div id="sentList"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ 页签2: 模拟WMS网关 ═══════════════ -->
+  <div id="tab-gateway" class="pane">
+    <div class="card">
+      <h2><span class="no">1</span>监听状态与应答策略</h2>
+      <div class="kv">
+        <span>监听地址</span>
+        <span><b class="mono" id="gwAddr">--</b>
+          <span class="hint"> 路径任意：真实 WCS 配置的 feedback(Test)Url 指向 http://&lt;本机IP&gt;:&lt;端口&gt; 后追加原路径即可接入</span></span>
+        <span><button class="sm gray" id="btnGwRestart">重启网关(应用端口)</button></span>
+        <span><button class="sm red" id="btnGwStop">停止</button></span>
+        <span>端口</span>
+        <span><input type="number" id="f_gwport" style="width:110px"></span>
+        <span></span><span></span>
+        <span>接收计数</span>
+        <span><span class="tag gray" id="gwCnt">H7 0 · H8 0 · 未知 0</span></span>
+        <span></span><span></span>
+        <span>应答策略</span>
+        <span id="gwModeRow">
+          <label><input type="radio" name="gwmode" value="auto"> 自动(按规则引擎校验)</label> &nbsp;
+          <label><input type="radio" name="gwmode" value="force_success"> 强制成功</label> &nbsp;
+          <label><input type="radio" name="gwmode" value="force_fail"> 强制失败(演练WCS重试)</label>
+          <button class="sm gray" id="btnGwMode" style="margin-left:8px">应用策略</button>
+        </span>
+        <span></span><span></span>
+        <span>说明</span>
+        <span class="hint">收到报文 → 若<b>正确</b>应答 <span class="greentxt">{"success":true,"body":"产品分类框号库位完成分类--同步成功!","ts":"…"}</span>（H7）；
+          若<b>错误</b>应答 <span class="redtxt">{"success":false,"body":"同步失败：&lt;规则原因&gt;","ts":"…"}</span> —— 与生产网关同字段，
+          WCS 只判 success==true。校验依据见「③ 规则与主数据」。</span>
+        <span></span><span></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2><span class="no">2</span>接收记录（真实 WCS 发来的 H7/H8 会实时出现在这里）
+        <span class="right">
+          <select id="gwFilterOk" style="width:110px"><option value="">全部结果</option><option value="ok">通过</option><option value="bad">失败</option></select>
+          <select id="gwFilterKind" style="width:110px"><option value="">全部类型</option><option value="H7">H7</option><option value="H8">H8</option><option value="未知">未知</option></select>
+          <button class="sm gray" id="btnGwRefresh">刷新</button>
+          <button class="sm red" id="btnGwClear">清空记录</button>
+        </span>
+      </h2>
+      <div id="gwList"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ 页签3: 规则与主数据 ═══════════════ -->
+  <div id="tab-data" class="pane">
+    <div class="card">
+      <h2><span class="no">1</span>网关身份 / 参数 / 格口编码 <span class="right"><button class="green" id="btnCfgSave">保存以上全部主数据</button></span></h2>
+      <div class="grid2">
+        <div class="frow"><label class="lbl" style="width:170px">期望AppKey</label><input type="text" id="cfg_appkey" style="width:230px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">method H7</label><input type="text" id="cfg_mh7" style="width:300px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">method H8</label><input type="text" id="cfg_mh8" style="width:300px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">格口编码前缀</label><input type="text" id="cfg_prefix" style="width:80px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">补零宽度</label><input type="number" id="cfg_width" style="width:80px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">格口号上限</label><input type="number" id="cfg_max" style="width:80px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">仓库编码</label><input type="text" id="cfg_wh" style="width:100px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">货主编码</label><input type="text" id="cfg_owner" style="width:140px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">orderType</label><input type="text" id="cfg_otype" style="width:80px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">默认来源库位</label><input type="text" id="cfg_from" style="width:120px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">网关监听IP</label><input type="text" id="cfg_gwhost" style="width:130px"></div>
+        <div class="frow"><label class="lbl" style="width:170px">请求超时(秒)</label><input type="number" id="cfg_timeout" style="width:90px"></div>
+      </div>
+      <div class="hint mt4">格口编码 = 前缀 + 格口号补零（如 5 → 22005），H7出参/H4与H6的格口号入参均按此规则；
+        解析时兼容 带前缀 / 裸数字 / 补零 三种写法。前缀留空 = 仅补零（如 005）。</div>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">2</span>校验规则（模拟WMS判定“正确/错误”的依据；勾选=启用）</h2>
+      <div id="ruleList"></div>
+      <div class="hint mt4">命中任一启用的失败规则 → 应答 success=false + 具体原因；全部通过 → 应答成功样例。</div>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">3</span>格口绑定表（H6 发送成功后自动写入，也可手工维护）</h2>
+      <div class="rowline">
+        <input type="number" id="bGrid" class="wgrid" placeholder="格口号">
+        <input type="text" id="bBox" class="wbox" placeholder="容器号 boxcode">
+        <button class="sm gray" id="btnBindAdd">添加绑定行</button>
+        <span class="hint">删除需点行尾按钮；编辑后点页首「保存以上全部主数据」生效</span>
+      </div>
+      <table id="tblBind"></table>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">4</span>波次计划库（本模拟WMS“已下发的波次”，H7/H8 按它校验）
+        <span class="right">
+          <button class="sm gray" id="btnWaveImpCurrent">导入发送页当前H4草稿</button>
+          <button class="sm red" id="btnWavesClear">清空计划库</button>
+        </span>
+      </h2>
+      <div class="hint">H4 发送成功且勾选“记录底账”后自动写入；也可在此粘贴 H4 报文 JSON 手工导入。
+        波次不存在的 H7/H8 → 模拟WMS按规则应答失败。</div>
+      <div class="rowline mt4">
+        <textarea id="waveImport" style="flex:1;min-height:60px;font-family:var(--mono);font-size:12px"
+          placeholder='{"orderCode":"PP202600000099","sobi":"H-01-AB","items":[{"inco":"SK0000000001001","gridNum":"1","gridNumber":5}]}'></textarea>
+        <button class="sm gray" id="btnWaveImport">导入波次到计划库</button>
+      </div>
+      <span id="importMsg" class="hint"></span>
+      <div class="mt4"><table id="tblWaves"></table></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">5</span>SKU 主档（由计划库自动汇总；启用“SKU主档校验”规则后生效）</h2>
+      <div class="mono" id="skuMaster" style="background:#f4f6fa;border:1px dashed #c9d2e0;border-radius:6px;padding:8px;max-height:120px;overflow:auto"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="no">6</span>发送地址预设 <span class="hint">可在「①报文编辑·发送」的地址预设下拉中选择</span></h2>
+      <div class="rowline">
+        <button class="sm gray" id="btnPresetAdd">添加一行</button>
+        <span class="hint">保存后点页首「保存以上全部主数据」生效（角色: wms=回传网关 wcs=WCS服务）</span>
+      </div>
+      <table id="tblPresets"></table>
+    </div>
+
+    <div class="card">
+      <div class="frow">
+        <button class="red" id="btnResetDemo">恢复出厂示例数据（清空计划库/绑定/规则恢复默认）</button>
+        <span class="hint">不会改动端口与参数；状态自动保存于同目录 wms_mock_state.json</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ 页签4: 说明 ═══════════════ -->
+  <div id="tab-help" class="pane">
+    <div class="card">
+      <h2><span class="no">?</span>使用说明</h2>
+      <div class="section-title">一、这是什么</div>
+      <div class="hint" style="line-height:1.9">
+        鞋服窄带分拣项目中「WCS ↔ WMS」接口的联调测试台，与仓库现有仿真台（mock_env/mock_app.py）互补：
+        <b>仿真台负责全链路</b>（RFID/PLC/S7/波次编排）；<b>本测试台专注 WMS 接口</b>，可直接拷到客户机使用。
+        <br>· 你输入 <b>SKU码 + 格口号</b>（等业务参数）→ 自动生成与生产一致的报文（H7/H8/H4/H6）→ 可修改 → 发送到可配置地址；
+        <br>· 内置 <b>模拟WMS网关</b>：报文正确 → 应答成功样例；报文错误 → 应答 success=false + 具体原因（按可配置规则判定）；
+        <br>· 也可把地址指向 <b>WMS测试/正式环境网关</b> 或 <b>真实WCS服务</b>，看它们的真实响应。
+      </div>
+      <div class="section-title">二、启动</div>
+      <div class="hint" style="line-height:1.9">
+        双击 <span class="mono">run.bat</span>（或 <span class="mono">python wms_mock_gui.py</span>），自动打开本页。
+        可选参数：<span class="mono">--gui-port 9000 --gw-port 8099 --no-browser --no-gateway</span>。
+        整个目录可复制到任意机器（纯 Python 标准库，无第三方依赖）。
+      </div>
+      <div class="section-title">三、四种报文与判定口径</div>
+      <table>
+        <tr><th>类型</th><th>方向</th><th>接口/method</th><th>要点</th><th>成功判定</th></tr>
+        <tr><td><b>H7</b> 满箱回传</td><td>WCS→WMS</td><td class="mono">…/gwisSubProductClassifyOrder<br>method=gwisSubProductClassifyOrder</td>
+            <td>head{orderCode,orderType,warehouseCode,goodsOwner,fromLocation,createDate,…}+detailList[{num:格口编码,targetLocation:容器号,sku,qty}]</td>
+            <td>响应JSON顶层 <b>success==true</b></td></tr>
+        <tr><td><b>H8</b> 完结回传</td><td>WCS→WMS</td><td class="mono">…/productClasTask/gwisSubProductClassifyEndOrder</td>
+            <td>head{orderCode,orderType,sumLocation,operuserDate,operuserCode,operuserName}</td>
+            <td>响应JSON顶层 <b>success==true</b></td></tr>
+        <tr><td><b>H4</b> 波次下发</td><td>WMS→WCS</td><td class="mono">/api/DispatchSortingCommand/InsertWaveInfo</td>
+            <td>{orderCode,orderQty(须=ΣgridNumber),items:[{inco=SKU,gridNum,gridNumber,gridType}]}；未点「开始接收任务」WCS返回HTTP500</td>
+            <td>HTTP200 且 code=="200"</td></tr>
+        <tr><td><b>H6</b> 容器绑定</td><td>WMS→WCS</td><td class="mono">/api/DispatchSortingCommand/BindingLatticePort<br>?latticehole=格口&amp;boxcode=容器</td>
+            <td>查询参数报文，无JSON体；满箱禁用后重绑即恢复格口</td>
+            <td>HTTP200 且 code=="200"</td></tr>
+      </table>
+      <div class="section-title">四、把真实 WCS 的 H7/H8 接入本模拟网关</div>
+      <div class="hint" style="line-height:1.9">
+        ① 在「③规则与主数据」确认<b>期望AppKey</b>（默认测试环境 dz_bxh_dmwcs_cs，与 WCS 配置 appkeyTest 同值，勿与正式 dz_bxh_wcs_zs 混用）；
+        <br>② 本机联调：直接运行仓库 <span class="mono">mock_env/启用Mock配置.bat</span> 后，WCS 回传 URL 已指向 127.0.0.1:8099（本测试台默认端口）；
+        <br>③ WCS 在其它机器：手工改 WCS 的 config/http_server.xml 中 feedbackTestUrl / feedbackEndTestUrl 主机为<b>本机IP</b>，
+        并保证本测试台网关监听 0.0.0.0（默认）；改完重启 WCS；
+        <br>④ 之后在 WCS 上锁格/结束任务 → 这里实时出现 H7/H8 与校验判定；「强制失败」可演练 WCS Outbox 自动重试。
+      </div>
+      <div class="section-title">五、常见问题</div>
+      <div class="hint" style="line-height:1.9">
+        · <b>8099 被占用</b>：仿真台 mock_app.py 也在监听 8099，两者不要同时开；或在本页改端口（真实 WCS 接入时需同步改回传URL）。
+        <br>· <b>H7 应答失败后 WCS 何时重发</b>：H7 出站约 30s×2 重试、H8 约 5s×3 —— 与生产一致，可开「强制失败」观察。
+        <br>· <b>想连 WMS 测试/正式环境</b>：报文类型 H7/H8，预设选「wmstest.pelliot.com.cn:9090」或正式网关并核对 AppKey；响应为真实网关判定。
+        <br>· <b>报文是修改后的</b>：点「发送」发送的就是当前文本框内容；「格式化」仅排版不改变内容。
+        <br>· <b>本工具不连数据库</b>：全部状态自动保存在同目录 <span class="mono">wms_mock_state.json</span>，删除该文件即恢复出厂默认。
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+/* ═══════════ 全局状态与工具 ═══════════ */
+let S = null;              // 服务器状态快照
+let curType = "H7";        // 当前报文类型
+let urlEdited = false;     // 目标地址被手工改过
+let sentBusy = false;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+const nowStr = () => { const d=new Date(); const p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds()); };
+const sleep = (ms) => new Promise(r=>setTimeout(r,ms));
+
+let toastTimer = null;
+function toast(msg, ms){
+  const t=$("toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("show"), ms||2600);
+}
+async function api(path, method, body){
+  const opt = {method: method||"GET", headers:{"Content-Type":"application/json"}};
+  if(body !== undefined) opt.body = JSON.stringify(body);
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok && j.error) throw new Error(j.error);
+  return j;
+}
+function vchip(ok){
+  if(ok===true) return '<span class="tag ok">成功</span>';
+  if(ok===false) return '<span class="tag bad">失败</span>';
+  return '<span class="tag warn">'+esc(ok||"--")+'</span>';
+}
+
+/* ═══════════ 页签切换 ═══════════ */
+document.querySelectorAll(".tabbtn").forEach(btn=>btn.addEventListener("click",()=>{
+  document.querySelectorAll(".tabbtn").forEach(b=>b.classList.remove("active"));
+  document.querySelectorAll(".pane").forEach(p=>p.classList.remove("on"));
+  btn.classList.add("active"); $(btn.dataset.tab).classList.add("on");
+  if(btn.dataset.tab==="tab-data") renderData();
+  if(btn.dataset.tab==="tab-gateway"){ renderGateway(); }
+}));
+
+/* ═══════════ 报文类型切换 ═══════════ */
+const TYPE_INFO = {
+  H7:{desc:"满箱(锁格)回传：WCS 把已分拣满箱的 格口/容器/SKU/件数 报给 WMS；建议目标=模拟WMS网关或WMS网关",demo:"H7",role:"wms",needAppkey:true},
+  H8:{desc:"波次完结回传：WCS 点击「结束任务」后向 WMS 回传完结件数；建议目标=模拟WMS网关或WMS网关",demo:"H8",role:"wms",needAppkey:true},
+  H4:{desc:"波次下发：WMS 把 波次明细(SKU码+格口号+件数) 推给 WCS；建议目标=WCS服务(8191)",demo:"H4",role:"wcs",needAppkey:false},
+  H6:{desc:"格口容器绑定：WMS 把 格口号↔容器号 绑定关系推给 WCS；建议目标=WCS服务(8191)",demo:"H6",role:"wcs",needAppkey:false},
+};
+
+function curCfg(){ return (S&&S.config)||{}; }
+function gridCode(raw){ const c=curCfg(); const g=parseGrid(raw);
+  if(g==null) return String(raw||""); const w=parseInt(c.grid_width)||3;
+  return (c.grid_prefix||"") + String(g).padStart(w,"0"); }
+function parseGrid(raw){
+  if(raw==null) return null; let t=String(raw).trim(); if(!t) return null;
+  const pre=(curCfg().grid_prefix||"").trim();
+  if(pre && t.startsWith(pre)) t=t.slice(pre.length);
+  t=t.replace(/^0+/,""); if(!t) return null; const v=parseInt(t,10);
+  return (v>0)?v:null;
+}
+function stripGridCode(raw){ return parseGrid(raw); }
+function bindBox(grid){
+  if(!S||grid==null) return "";
+  for(const b of S.bindings||[]){ if(parseGrid(b.grid)===grid) return String(b.box||""); }
+  return "";
+}
+
+function switchType(t){
+  curType = t;
+  $("secCommon").style.display = (t==="H7"||t==="H8")?"":"none";
+  $("secH7").style.display = (t==="H7")?"block":"none";
+  $("secH8").style.display = (t==="H8")?"block":"none";
+  $("secH4").style.display = (t==="H4")?"block":"none";
+  $("secH6").style.display = (t==="H6")?"block":"none";
+  $("appkeyRow").style.display = TYPE_INFO[t].needAppkey?"":"none";
+  $("recordRow").style.display = (t==="H4"||t==="H6")?"":"none";
+  $("typeDesc").textContent = TYPE_INFO[t].desc;
+  $("dirNote").textContent = TYPE_INFO[t].role==="wms"
+    ? "方向: WCS → WMS；生产响应字段 {success,body,ts}，WCS 只认 success==true"
+    : "方向: WMS → WCS；WCS 应答 {code,message,…}，判 code==200";
+  fillDemoOptions(t);
+  $("respNote").textContent = (t==="H7"||t==="H8")
+    ? "判定口径(与生产WCS一致): 响应JSON顶层 success===true 即成功；否则失败并显示 body 原因。"
+    : "判定口径: HTTP 200 且响应 code==\"200\" 即成功；否则显示失败信息(如“未开始接收任务”→HTTP500)。";
+  buildRowsForType();
+  // 切换类型后清掉上一类型的旧报文，避免误发；H7/H8 若已有完整字段则自动生成
+  if(t==="H4"||t==="H6"){ $("msgJson").value=""; }
+  else if(t==="H7"||t==="H8"){
+    const o=genPayload();
+    const okH7 = t==="H7" && o && o.head && Array.isArray(o.head.detailList) && o.head.detailList.length;
+    const okH8 = t==="H8" && o && o.head && o.head.orderCode;
+    $("msgJson").value = (okH7||okH8)? JSON.stringify(o,null,2) : "";
+  }
+  if(!urlEdited) fillUrlByPreset();
+  syncFinalUrl();
+  updateTypeHint();
+}
+function updateTypeHint(){
+  if(curType!=="H7"){ $("f_gridHint").textContent=""; return; }
+  const g=parseGrid($("f_grid").value);
+  $("f_gridHint").textContent = g? ("对外编码: "+gridCode(g)) : "";
+  const box=bindBox(g);
+  $("h7bindHint").textContent = g? (box? ("绑定表: 格口"+g+" → 容器 "+box) : ("⚠ 绑定表中无格口"+g+"（H7校验会失败：先发H6/维护绑定表）")) : "";
+}
+function addRow(container, cols){
+  const d=document.createElement("div"); d.className="rowline"; d.dataset.row="1";
+  const del='<button class="sm red btn-del">删除</button>';
+  if(cols==="h7"){
+    d.innerHTML='<input type="text" class="r_sku wsku" placeholder="SKU码"><input type="number" class="r_qty wqty" min="1" value="1">'+del;
+  }else if(cols==="h4"){
+    d.innerHTML='<input type="text" class="r_sku wsku" placeholder="SKU码(inco)">'+
+      '<input type="text" class="r_grid wgrid" placeholder="格口号">'+
+      '<input type="number" class="r_qty wqty" min="1" value="1">'+
+      '<select class="r_gtype" style="width:110px"><option value="0">0 普通</option><option value="1">1 优先</option><option value="2">2 异常</option></select>'+del;
+  }else{ // h6
+    d.innerHTML='<input type="text" class="r_grid wgrid" placeholder="格口号">'+
+      '<input type="text" class="r_box wbox" placeholder="容器号">'+del;
+  }
+  container.appendChild(d);
+}
+function rowsOf(container){ return Array.from(container.querySelectorAll(".rowline")); }
+function buildRowsForType(){
+  const c7=$("h7rows"), c4=$("h4rows"), c6=$("h6rows");
+  const ensure=(c,cols,n)=>{ if(c.children.length===0){ for(let i=0;i<n;i++) addRow(c,cols);} };
+  if(curType==="H7") ensure(c7,"h7",1);
+  if(curType==="H4") ensure(c4,"h4",3);
+  if(curType==="H6") ensure(c6,"h6",3);
+  if(curType==="H7") $("f_from").value = $("f_from").value || curCfg().from_location_default||"A-01-02";
+}
+document.addEventListener("click",(e)=>{
+  const del=e.target.closest(".btn-del");
+  if(del){ const rows=del.closest("div#h7rows,div#h4rows,div#h6rows");
+    if(rows){ rows.removeChild(del.closest(".rowline")); return; } }
+  const btn=e.target.closest("button[data-act]"); if(!btn) return;
+  const act=btn.dataset.act;
+  if(act==="deltbl"){ /* 表行删除由各自处理器处理 */ }
+});
+
+/* ═══════════ 报文生成 ═══════════ */
+function pad3(n){ return String(n).padStart(3,"0"); }
+function genPayload(){
+  const c=curCfg();
+  const dt=nowStr();
+  if(curType==="H7"){
+    const order=$("f_order").value.trim();
+    const gridRaw=$("f_grid").value.trim(); const grid=parseGrid(gridRaw);
+    const box=$("f_box").value.trim();
+    const dl=[];
+    for(const r of rowsOf($("h7rows"))){
+      const sku=r.querySelector(".r_sku").value.trim(); const qty=parseInt(r.querySelector(".r_qty").value||"0",10);
+      if(!sku||qty<1) continue;
+      dl.push({num: gridCode(gridRaw), targetLocation: box, sku: sku, qty: String(qty)});
+    }
+    return {head:{orderCode:order, orderType:c.order_type||"01", warehouseCode:c.warehouse||"H",
+      goodsOwner:c.goods_owner||"BXH_CS", fromLocation:$("f_from").value.trim()||c.from_location_default||"",
+      createDate:dt+".000", createUserCode:c.operuser_code||"admin", createUserName:c.operuser_name||"管理员",
+      detailList:dl}};
+  }
+  if(curType==="H8"){
+    const order=$("f_order").value.trim();
+    return {head:{orderCode:order, orderType:c.order_type||"01", sumLocation:String(parseInt($("f_sum").value||"0",10)),
+      operuserDate:dt+".000", operuserCode:c.operuser_code||"admin", operuserName:c.operuser_name||"管理员"}};
+  }
+  if(curType==="H4"){
+    const order=$("f_order").value.trim(); const items=[];
+    for(const r of rowsOf($("h4rows"))){
+      const sku=r.querySelector(".r_sku").value.trim();
+      const gridRaw=r.querySelector(".r_grid").value.trim();
+      const qty=parseInt(r.querySelector(".r_qty").value||"0",10);
+      const gt=r.querySelector(".r_gtype").value;
+      if(!sku||qty<1) continue;
+      items.push({inco:sku, gridNum: gridCode(gridRaw), gridNumber: qty, gridType: gt});
+    }
+    const tot=items.reduce((a,b)=>a+b.gridNumber,0);
+    return {orderCode:order, orderQty:String(tot), sobi:$("f_sobi").value.trim(), items:items};
+  }
+  return null;
+}
+function h4Total(){ const items=(genPayload()||{}).items||[];
+  const tot=items.reduce((a,b)=>a+b.gridNumber,0);
+  $("h4tot").textContent="明细 "+items.length+" 行，合计 "+tot+" 件 → orderQty="+tot; }
+$("btnGen").addEventListener("click",()=>{
+  if(curType==="H6"){
+    toast("H6 无 JSON 报文体：报文为「③ 发送」中的 URL 查询参数，逐条发送。");
+    return;
+  }
+  const obj=genPayload();
+  if(!obj || ((curType==="H7")&&!(obj.head&&obj.head.detailList&&obj.head.detailList.length))){ toast("请先填写明细行",3000); return; }
+  $("msgJson").value=JSON.stringify(obj,null,2);
+  toast("已按输入生成报文，可在文本框直接修改后发送");
+  if(curType==="H4"){ h4Total(); }
+  runChk();
+});
+$("btnH4Add").addEventListener("click",()=>{ addRow($("h4rows"),"h4"); });
+$("btnH7Add").addEventListener("click",()=>{ addRow($("h7rows"),"h7"); });
+$("btnH6Add").addEventListener("click",()=>{ addRow($("h6rows"),"h6"); });
+$("btnH4Clear").addEventListener("click",()=>{ $("h4rows").innerHTML=""; });
+$("btnH6Clear").addEventListener("click",()=>{ $("h6rows").innerHTML=""; });
+$("btnH4Demo").addEventListener("click",()=>{
+  $("h4rows").innerHTML="";
+  for(let g=1;g<=6;g++) for(let k=0;k<2;k++){
+    addRow($("h4rows"),"h4");
+    const r=rowsOf($("h4rows")).pop();
+    r.querySelector(".r_sku").value="SK"+String(g*1000+k+1).padStart(13,"0");
+    r.querySelector(".r_grid").value=String(g);
+    r.querySelector(".r_qty").value="1";
+  }
+  $("f_sobi").value="H-01-AB"; h4Total();
+});
+$("btnH6Batch").addEventListener("click",()=>{
+  $("h6rows").innerHTML="";
+  for(let g=1;g<=6;g++){ addRow($("h6rows"),"h6"); const r=rowsOf($("h6rows")).pop();
+    r.querySelector(".r_grid").value=String(g); r.querySelector(".r_box").value="H-01-2"+pad3(g); }
+});
+$("f_grid").addEventListener("input",()=>{
+  updateTypeHint();
+  const g=parseGrid($("f_grid").value);
+  if(g!=null && !$("f_box").value) $("f_box").value=bindBox(g);
+});
+$("f_box").addEventListener("input",updateTypeHint);
+$("f_order").addEventListener("input",()=>{});
+
+/* ═══════════ 演练样例 ═══════════ */
+function fillDemoOptions(t){
+  const sel=$("selDemo"); sel.innerHTML="";
+  const opts = {
+    H7:[["correct","✓ 正确：计划内格口1 + 计划SKU1001/1002"],
+        ["err_sku","✗ 错误：SKU 不属于该格口(用格口3的SKU) "],
+        ["err_cap","✗ 错误：超计划数量(qty 5 > 计划1)"],
+        ["err_grid","✗ 错误：格口9 不在波次/未绑定"],
+        ["err_appkey","✗ 错误：AppKey 不匹配"],
+        ["err_order","✗ 错误：波次不存在"]],
+    H8:[["correct","✓ 正确：波次 PP202600000099 完结12件"],
+        ["err_order","✗ 错误：波次不存在"],
+        ["err_sum","✗ 错误：sumLocation 超计划总数"]],
+    H4:[["demo","✓ 载入演示波次(格口1~6×2SKU×1件)"],
+        ["empty","✗ 空明细(仅orderCode)"]],
+    H6:[["batch","✓ 批量绑定 格口1~6"],
+        ["err","✗ 格口号越界(99)"]],
+  };
+  for(const [v,txt] of (opts[t]||[])){ const o=document.createElement("option"); o.value=v; o.textContent=txt; sel.appendChild(o); }
+}
+$("btnDemoLoad").addEventListener("click",()=>applyDemo($("selDemo").value));
+function applyDemo(kind){
+  const demoW=$("f_order").value.trim() || "PP202600000099";
+  if(curType==="H7"){
+    $("f_order").value = demoW || "PP202600000099";
+    if(kind==="correct"){ $("f_grid").value="1"; $("f_box").value=bindBox(1);
+      $("h7rows").innerHTML="";
+      addRow($("h7rows"),"h7"); addRow($("h7rows"),"h7");
+      const rs=rowsOf($("h7rows"));
+      rs[0].querySelector(".r_sku").value="SK0000000001001"; rs[0].querySelector(".r_qty").value="1";
+      rs[1].querySelector(".r_sku").value="SK0000000001002"; rs[1].querySelector(".r_qty").value="1";
+    }else if(kind==="err_sku"){ $("f_grid").value="1"; $("f_box").value=bindBox(1);
+      $("h7rows").innerHTML=""; addRow($("h7rows"),"h7");
+      rowsOf($("h7rows"))[0].querySelector(".r_sku").value="SK0000000003001"; // 格口3的SKU
+    }else if(kind==="err_cap"){ $("f_grid").value="1"; $("f_box").value=bindBox(1);
+      $("h7rows").innerHTML=""; addRow($("h7rows"),"h7");
+      const r=rowsOf($("h7rows"))[0]; r.querySelector(".r_sku").value="SK0000000001001"; r.querySelector(".r_qty").value="5";
+    }else if(kind==="err_grid"){ $("f_grid").value="9"; $("f_box").value="";
+      $("h7rows").innerHTML=""; addRow($("h7rows"),"h7");
+      const r=rowsOf($("h7rows"))[0]; r.querySelector(".r_sku").value="SK0000000001001";
+    }else if(kind==="err_appkey"){ $("f_grid").value="1"; $("f_box").value=bindBox(1);
+      $("h7rows").innerHTML=""; addRow($("h7rows"),"h7");
+      rowsOf($("h7rows"))[0].querySelector(".r_sku").value="SK0000000001001";
+      $("f_appkey").value="wrong_appkey_xxx";
+    }else if(kind==="err_order"){ $("f_order").value="WAVE_NOT_EXIST_0001"; $("f_grid").value="1"; $("f_box").value=bindBox(1);
+      $("h7rows").innerHTML=""; addRow($("h7rows"),"h7");
+      rowsOf($("h7rows"))[0].querySelector(".r_sku").value="SK0000000001001";
+    }
+    updateTypeHint();
+  }else if(curType==="H8"){
+    if(kind==="err_order") $("f_order").value="WAVE_NOT_EXIST_0001"; else $("f_order").value=demoW||"PP202600000099";
+    $("f_sum").value = kind==="err_sum" ? "99" : "12";
+  }else if(curType==="H4"){
+    if(kind==="demo"){ $("btnH4Demo").click(); $("f_order").value=demoW||"PP202600000099"; }
+    else{ $("h4rows").innerHTML=""; $("f_order").value="EMPTY_WAVE_01"; h4Total(); }
+  }else if(curType==="H6"){
+    if(kind==="batch"){ $("btnH6Batch").click(); }
+    else{ $("h6rows").innerHTML=""; addRow($("h6rows"),"h6");
+      const r=rowsOf($("h6rows"))[0]; r.querySelector(".r_grid").value="99"; r.querySelector(".r_box").value="H-99-9999"; }
+  }
+  if(curType!=="H6"){
+    if(curType==="H4") $("btnGen").click();
+    else { $("btnGen").click(); }
+  }
+  if(curType==="H6") toast("H6 行已填充，点「发送报文」逐条发送");
+  if((curType==="H7"||curType==="H8") && kind!=="err_appkey"){
+    $("f_appkey").value = curCfg().appkey_expected || "";
+  }
+}
+
+/* ═══════════ 结构校验 / 格式化 ═══════════ */
+function runChk(){
+  const txt=$("msgJson").value; const ws=$("chkWarn"); ws.textContent="";
+  if(!txt.trim()) return;
+  let obj=null;
+  try{ obj=JSON.parse(txt); }catch(e){ ws.textContent="JSON 语法错误: "+e.message; return false; }
+  const warns=[];
+  if(curType==="H7"){
+    const h=obj.head;
+    if(!h||typeof h!=="object") warns.push("缺 head"); else {
+      if(!h.orderCode) warns.push("head.orderCode 为空");
+      if(!Array.isArray(h.detailList)||!h.detailList.length) warns.push("detailList 为空");
+      else h.detailList.forEach((it,i)=>{
+        if(!it.num) warns.push("detailList["+i+"] 缺 num"); if(!it.targetLocation) warns.push("detailList["+i+"] 缺 targetLocation");
+        if(!it.sku) warns.push("detailList["+i+"] 缺 sku"); if(!(parseInt(it.qty,10)>0)) warns.push("detailList["+i+"] qty 非法");
+        const g=stripGridCode(it.num); if(g==null||g<1||g>(curCfg().grid_max||66)) warns.push("detailList["+i+"] 格口号 "+it.num+" 越界");
+      });
+    }
+  }else if(curType==="H8"){
+    const h=obj.head;
+    if(!h||typeof h!=="object") warns.push("缺 head"); else {
+      if(!h.orderCode) warns.push("head.orderCode 为空");
+      if(!(parseInt(h.sumLocation,10)>=0)) warns.push("head.sumLocation 非法");
+    }
+  }else if(curType==="H4"){
+    if(!obj.orderCode) warns.push("orderCode 为空");
+    if(!Array.isArray(obj.items)||!obj.items.length) warns.push("items 为空");
+    else {
+      let tot=0; obj.items.forEach((it,i)=>{
+        if(!it.inco) warns.push("items["+i+"] 缺 inco(SKU)"); if(!(parseInt(it.gridNumber,10)>0)) warns.push("items["+i+"] gridNumber 非法");
+        const g=stripGridCode(it.gridNum); if(g==null||g<1||g>(curCfg().grid_max||66)) warns.push("items["+i+"] 格口号 "+it.gridNum+" 非法/越界");
+        tot+=parseInt(it.gridNumber,10)||0;
+      });
+      if(String(obj.orderQty)!=="" && parseInt(obj.orderQty,10)!==tot) warns.push("⚠ orderQty("+obj.orderQty+") ≠ ΣgridNumber("+tot+")，WCS严格校验会拒绝");
+    }
+  }
+  ws.textContent=warns.join("；")||"✓ 结构检查通过";
+  return warns.filter(w=>!w.startsWith("⚠")).length===0;
+}
+$("btnChk").addEventListener("click",runChk);
+$("btnFmt").addEventListener("click",()=>{ try{ $("msgJson").value=JSON.stringify(JSON.parse($("msgJson").value),null,2); }catch(e){ toast("无法格式化: "+e.message); } });
+$("btnClearMsg").addEventListener("click",()=>{ $("msgJson").value=""; $("chkWarn").textContent=""; });
+
+/* ═══════════ 目标地址/预设 ═══════════ */
+const TYPE_PATH = {H7:PATH_H7, H8:PATH_H8, H4:PATH_H4, H6:PATH_H6};
+function fillPresets(){
+  const sel=$("presetSel"); sel.innerHTML="";
+  (S.presets||[]).forEach((p,i)=>{ const o=document.createElement("option");
+    o.value=String(i); o.textContent="["+p.env+"] "+p.name+" ("+p.base+")"; sel.appendChild(o); });
+}
+function pickPresetIndex(role){
+  const arr=S.presets||[];
+  let idx=arr.findIndex(p=>p.role===role && /本机|127\.0\.0\.1/.test(p.base));
+  if(idx<0) idx=arr.findIndex(p=>p.role===role);
+  return idx<0?0:idx;
+}
+function fillUrlByPreset(){
+  const arr=S.presets||[]; const role=TYPE_INFO[curType].role;
+  const p=arr[$("presetSel").value]||arr[pickPresetIndex(role)];
+  if(!p) return;
+  $("presetSel").value=String(arr.indexOf(p));
+  $("urlTarget").value=p.base.replace(/\/+$/,"")+TYPE_PATH[curType];
+  if(TYPE_INFO[curType].needAppkey){ $("f_appkey").value=p.appkey||curCfg().appkey_expected||""; }
+  urlEdited=false;
+  syncFinalUrl();
+}
+$("presetSel").addEventListener("change",()=>{
+  const p=(S.presets||[])[$("presetSel").value];
+  if(p){ $("urlTarget").value=p.base.replace(/\/+$/,"")+TYPE_PATH[curType];
+    if(TYPE_INFO[curType].needAppkey) $("f_appkey").value=p.appkey||curCfg().appkey_expected||"";
+  }
+  urlEdited=false; syncFinalUrl();
+});
+$("urlTarget").addEventListener("input",()=>{ urlEdited=true; syncFinalUrl(); });
+$("f_appkey").addEventListener("input",syncFinalUrl);
+$("btnUrlRe").addEventListener("click",fillUrlByPreset);
+function syncFinalUrl(){
+  let u=($("urlTarget").value||"").trim();
+  if(curType==="H7"||curType==="H8") u=buildFinalBase();
+  $("finalUrl").textContent = curType==="H6" ? "(发送时按行追加 latticehole/boxcode 后逐条 POST)" : (u||"--");
+}
+$("ckQuery").addEventListener("change",syncFinalUrl);
+
+/* ═══════════ 发送 ═══════════ */
+function buildFinalBase(){
+  let u=($("urlTarget").value||"").trim().split("#")[0];
+  if(curType!=="H7"&&curType!=="H8") return u;
+  if(!$("ckQuery").checked) return u;
+  const appkey=$("f_appkey").value.trim();
+  const m = curType==="H7" ? (curCfg().method_h7||METHOD_H7) : (curCfg().method_h8||METHOD_H8);
+  const params=new URLSearchParams();
+  const oldQ=new URLSearchParams((u.split("?")[1]||""));
+  oldQ.forEach((v,k)=>{ if(!["appkey","method"].includes(k)) params.set(k,v); });
+  if(appkey) params.set("appkey",appkey);
+  if(m) params.set("method",m);
+  const base=u.split("?")[0];
+  const qs=params.toString();
+  return qs? base+"?"+qs : base;
+}
+function showResp(entry){
+  $("vchip").style.display="inline-block";
+  const body=(entry&&entry.resp)||"";
+  let obj=null; try{ obj=JSON.parse(body); }catch(e){}
+  let verdict, cls;
+  if(entry&&entry.error){ verdict="网络/发送错误"; cls="warn"; }
+  else if(curType==="H7"||curType==="H8"){
+    verdict=(obj&&obj.success===true)?"成功":(obj?"失败":"HTTP/格式错误"); cls=(obj&&obj.success===true)?"ok":"bad";
+  } else {
+    const code=(obj&&obj.code!==undefined)?String(obj.code):"";
+    verdict=(entry&&entry.status===200&&code==="200")?"成功":"失败"; cls=(verdict==="成功")?"ok":"bad";
+  }
+  const el=$("vchip"); el.textContent=verdict; el.className="vchip "+cls;
+  $("respMeta").textContent= (entry? ("时间 "+entry.t+" · HTTP "+entry.status+" · "+entry.ms+"ms · "+(entry.label||"")) : "");
+  const pre=$("respPre");
+  try{ pre.textContent=JSON.stringify(JSON.parse(body),null,2); }catch(e){ pre.textContent=body||"(空响应)"; }
+  pre.style.display="block";
+}
+async function doSend(url, bodyText, opts){
+  opts=opts||{};
+  if(sentBusy) return; sentBusy=true; $("sendState").textContent="发送中…"; $("btnSend").disabled=true;
+  try{
+    const payload=Object.assign({kind:curType, url:url, appkey:$("f_appkey").value.trim(),
+      timeout: curCfg().send_timeout_s||15}, opts.extra||{});
+    if(bodyText!==undefined) payload.body=bodyText;
+    if(curType==="H4"&&$("ckRecord").checked){ const o=JSON.parse(bodyText||"{}");
+      payload.record_wave={orderCode:o.orderCode, sobi:o.sobi, items:o.items}; }
+    const j=await api("/api/send","POST",payload);
+    showResp(j.entry);
+    await refreshSent();
+    return j.entry;
+  }catch(e){ showResp({error:String(e.message||e), t:nowStr()}); toast("发送失败: "+e.message,4000); return null; }
+  finally{ sentBusy=false; $("btnSend").disabled=false; $("sendState").textContent=""; }
+}
+$("btnSend").addEventListener("click", async ()=>{
+  if(curType==="H6"){
+    const rows=rowsOf($("h6rows"));
+    if(!rows.length){ toast("请先添加绑定行"); return; }
+    const base=($("urlTarget").value||"").trim().split("#")[0];
+    let okN=0, failN=0;
+    for(const r of rows){
+      const gRaw=r.querySelector(".r_grid").value.trim(); const box=r.querySelector(".r_box").value.trim();
+      const g=parseGrid(gRaw);
+      if(!gRaw||!box||g==null){ failN++; continue; }
+      const sep=base.indexOf("?")>=0?"&":"?";
+      const url=base+sep+"latticehole="+encodeURIComponent(gridCode(gRaw))+"&boxcode="+encodeURIComponent(box);
+      $("sendState").textContent="绑定发送中: 格口"+gRaw+" …";
+      const ent=await doSend(url, undefined, {extra:{record_binding:{grid:g, box:box}}});
+      if(ent&&ent.ok){ okN++; }
+      else failN++;
+    }
+    toast("H6 绑定完成: 成功 "+okN+"，失败 "+failN);
+    return;
+  }
+  const txt=$("msgJson").value;
+  if(!txt.trim()){ toast("请先生成报文（① 页签按「按输入生成报文」）或粘贴 JSON"); return; }
+  const okStruct=runChk();
+  if(!okStruct){ toast("报文结构有误，已拦截发送；请修正后重试",3500); return; }
+  const url=buildFinalBase();
+  if(!url){ toast("请输入目标接口地址"); return; }
+  const ent=await doSend(url, txt, {});
+  if(ent&&ent.note) toast(ent.note, 3200);
+});
+
+/* ═══════════ 历史/日志渲染 ═══════════ */
+function entryHtml(e){
+  const cls=e.ok?"ok":(e.error?"warn":"bad");
+  const verdict=e.error? e.error : e.ok? "成功" : "失败";
+  const label=e.label||"";
+  let bodyPre="", respPre="";
+  try{ bodyPre=e.body? JSON.stringify(JSON.parse(e.body),null,2):""; }catch(err){ bodyPre=e.body||""; }
+  try{ respPre=e.resp? JSON.stringify(JSON.parse(e.resp),null,2):e.resp||""; }catch(err){ respPre=e.resp||""; }
+  const appkey=String(e.appkey||"");
+  return '<details class="entry"><summary>'+
+    '<span class="mono">'+esc(e.t)+'</span> <b>'+esc(e.kind||"--")+'</b> '+
+    '<span class="tag '+cls+'">'+esc(verdict)+'</span>'+
+    '<span class="hint">HTTP '+esc(e.status==null?"-":e.status)+' · '+esc(e.ms==null?"-":e.ms+"ms")+
+    (label?(' · '+esc(label)):"")+'</span>'+
+    (appkey?' <span class="hint">AppKey:'+esc(appkey)+'</span>':'')+
+    '</summary><div class="mini">URL: <span class="mono">'+esc(e.url)+'</span></div>'+
+    (e.body?'<div class="mini mt4">请求报文:</div><pre>'+esc(bodyPre)+'</pre>':'')+
+    '<div class="mini mt4">响应:</div><pre>'+esc(respPre)+'</pre>'+
+    '</details>';
+}
+async function refreshSent(){
+  const s=await api("/api/state");
+  const list=s.log_sent||[];
+  const box=$("sentList");
+  if(!list.length){ box.innerHTML='<span class="hint">暂无发送记录</span>'; }
+  else box.innerHTML=list.slice().reverse().map(entryHtml).join("");
+}
+$("btnClearSent").addEventListener("click",async()=>{ await api("/api/log_clear","POST",{scope:"sent"}); await refreshSent(); toast("已清空发送历史"); });
+
+/* ═══════════ 网关页签 ═══════════ */
+function renderGateway(){
+  if(!S) return;
+  const c=curCfg();
+  $("gwSt").textContent = c.gw_running? ("运行中 · "+c.gw_host+":"+c.gw_port) : ("已停止"+(c.gw_last_error?"（"+c.gw_last_error+"）":""));
+  $("gwDot").className="dot "+(c.gw_running?"on":"off");
+  $("gwAddr").textContent=c.gw_host+":"+c.gw_port;
+  $("f_gwport").value=c.gw_port;
+  $("gwCnt").textContent="H7 "+c.gw_h7+" · H8 "+c.gw_h8+" · 未知 "+c.gw_unknown;
+  const mode=S.gateway_mode||"auto";
+  document.querySelectorAll('input[name=gwmode]').forEach(r=>{ r.checked=(r.value===mode); });
+  const okF=$("gwFilterOk").value, kindF=$("gwFilterKind").value;
+  const rows=(S.log_gw||[]).slice().reverse();
+  const box=$("gwList");
+  const fit=rows.filter(e=> (okF===""|| (okF==="ok"?e.ok:(okF==="bad"?!e.ok:true))) &&
+                          (kindF===""||e.kind===kindF));
+  if(!fit.length){ box.innerHTML='<span class="hint">暂无接收记录 —— 在 WCS 上锁格(满箱)或点「结束任务」，或在本工具「①报文编辑」用 H7/H8 发向本机模拟网关。</span>'; return; }
+  box.innerHTML=fit.map(e=>gwEntryHtml(e)).join("");
+}
+function gwEntryHtml(e){
+  const checks=(e.checks||[]).map(c=>{
+    const st = c.on===false? ' <span class="tag gray">停用</span>' : c.ok===true? ' <span class="tag ok">通过</span>' : c.ok===false? ' <span class="tag bad">失败</span>' : ' <span class="tag gray">--</span>';
+    const msg=c.msg? '<span class="hint">' + esc(c.msg) + '</span>':'';
+    return '<div class="mini" style="margin:2px 0">· '+(c.label||c.rule)+st+' '+msg+'</div>';
+  }).join("");
+  let bodyPre="", respPre="";
+  try{ bodyPre=JSON.stringify(JSON.parse(e.body),null,2); }catch(err){ bodyPre=e.body||""; }
+  try{ respPre=JSON.stringify(e.resp,null,2); }catch(err){ respPre=JSON.stringify(e.resp); }
+  const kindTxt = e.kind==="H7"?'<span class="tag ok">H7</span>':e.kind==="H8"?'<span class="tag warn">H8</span>':'<span class="tag bad">未知</span>';
+  return '<details class="entry"><summary>'+esc(e.t)+' '+kindTxt+' '+
+    '<span class="tag '+(e.ok?"ok":"bad")+'">'+(e.ok?"success=true":"success=false")+'</span>'+
+    '<span class="mono" style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.path)+'</span>'+
+    '<span class="hint">'+e.ms+'ms · '+esc(e.verdict||"")+'</span></summary>'+
+    '<div class="mini">method参数: '+(e.method_param?esc(e.method_param):'<span class="redtxt">(缺失)</span>')+
+    ' · URL appkey: '+(e.url_appkey?esc(e.url_appkey):'<span class="redtxt">(缺失)</span>')+
+    ' · Header AppKey: '+(e.hdr_appkey?esc(e.hdr_appkey):'<span class="redtxt">(缺失)</span>')+'</div>'+
+    '<div class="mini mt4">校验明细:</div>'+checks+
+    '<div class="mini mt4">请求报文:</div><pre>'+esc(bodyPre)+'</pre>'+
+    '<div class="mini mt4">应答(生产口径):</div><pre>'+esc(respPre)+'</pre></details>';
+}
+$("btnGwRefresh").addEventListener("click",async()=>{ await loadState(); renderGateway(); });
+$("btnGwClear").addEventListener("click",async()=>{ await api("/api/log_clear","POST",{scope:"gw"}); await loadState(); renderGateway(); });
+$("gwFilterOk").addEventListener("change",renderGateway);
+$("gwFilterKind").addEventListener("change",renderGateway);
+$("btnGwRestart").addEventListener("click",async()=>{
+  const r=await api("/api/gw_restart","POST",{port:parseInt($("f_gwport").value||"8099",10)});
+  toast(r.ok?"网关已重启":("重启失败: "+(r.error||"")), 3500);
+  await loadState(); renderGateway(); syncHead();
+});
+$("btnGwStop").addEventListener("click",async()=>{ await api("/api/gw_stop","POST",{}); await loadState(); renderGateway(); syncHead(); });
+$("btnGwMode").addEventListener("click",async()=>{
+  const mode=document.querySelector('input[name=gwmode]:checked').value;
+  await api("/api/config","POST",{gateway_mode:mode}); await loadState(); renderGateway(); toast("应答策略已切换: "+mode);
+});
+
+/* ═══════════ 主数据页签 ═══════════ */
+function renderData(){
+  if(!S) return;
+  const c=curCfg();
+  $("cfg_appkey").value=c.appkey_expected||"";
+  $("cfg_mh7").value=c.method_h7||""; $("cfg_mh8").value=c.method_h8||"";
+  $("cfg_prefix").value=c.grid_prefix||""; $("cfg_width").value=c.grid_width||3;
+  $("cfg_max").value=c.grid_max||66; $("cfg_wh").value=c.warehouse||"";
+  $("cfg_owner").value=c.goods_owner||""; $("cfg_otype").value=c.order_type||"";
+  $("cfg_from").value=c.from_location_default||""; $("cfg_gwhost").value=c.gw_host||"127.0.0.1";
+  $("cfg_timeout").value=c.send_timeout_s||15;
+  // 规则
+  $("ruleList").innerHTML=(S.rules||[]).map((r,i)=>{
+    return '<div class="rule-row"><input type="checkbox" id="rule_'+i+'" '+(r[2]?"checked":"")+'>'+
+      '<span class="rl">'+esc(r[1])+'</span><span class="rd">'+esc(r[3])+'</span></div>';
+  }).join("");
+  // 绑定表
+  $("tblBind").innerHTML='<tr><th>格口号</th><th>容器号</th><th></th></tr>'+
+    (S.bindings||[]).map((b,i)=>{ const g=parseGrid(b.grid); return '<tr>'+
+      '<td><input type="number" class="bd_grid" value="'+esc(parseGrid(b.grid))+'"></td>'+
+      '<td><input type="text" class="bd_box" value="'+esc(b.box)+'" style="width:220px"></td>'+
+      '<td><button class="sm red" data-del="'+i+'">删除</button></td></tr>'; }).join("");
+  $("tblBind").querySelectorAll("button[data-del]").forEach(btn=>btn.addEventListener("click",()=>{
+    (S.bindings||[]).splice(parseInt(btn.dataset.del,10),1); renderData(); }));
+  // 波次
+  $("tblWaves").innerHTML='<tr><th>orderCode</th><th>sobi</th><th>明细行</th><th>总件数</th><th>记录时间</th><th>格口</th><th></th></tr>'+
+    (S.waves||[]).map((w,i)=>{
+      const items=w.items||[]; const tot=items.reduce((a,b)=>a+(parseInt(b.gridNumber,10)||0),0);
+      const gs=[...new Set(items.map(it=>parseGrid(it.gridNum)||it.gridNum))].join(",");
+      return '<tr><td class="mono">'+esc(w.orderCode)+'</td><td>'+esc(w.sobi||"")+'</td><td>'+items.length+
+        '</td><td>'+tot+'</td><td>'+esc(w.pushed_at||"")+'</td><td class="mono">'+esc(gs)+
+        '</td><td><button class="sm red" data-wdel="'+esc(w.orderCode)+'">删除</button></td></tr>';
+    }).join("");
+  $("tblWaves").querySelectorAll("button[data-wdel]").forEach(btn=>btn.addEventListener("click",async()=>{
+    await api("/api/waves_delete","POST",{orderCode:btn.dataset.wdel}); await loadState(); renderData(); }));
+  // sku主档
+  $("skuMaster").textContent=(S.sku_master||[]).join("　")||"（计划库为空）";
+  // 预设
+  $("tblPresets").innerHTML='<tr><th>名称</th><th>base地址</th><th>角色</th><th>AppKey</th><th>环境标签</th><th></th></tr>'+
+    (S.presets||[]).map((p,i)=>'<tr>'+
+      '<td><input type="text" class="ps_name" value="'+esc(p.name)+'" style="width:220px"></td>'+
+      '<td><input type="text" class="ps_base" value="'+esc(p.base)+'" style="width:300px"></td>'+
+      '<td><select class="ps_role"><option value="wms"'+(p.role==="wms"?" selected":"")+'>wms 网关</option>'+
+      '<option value="wcs"'+(p.role==="wcs"?" selected":"")+'>wcs 服务</option></select></td>'+
+      '<td><input type="text" class="ps_appkey" value="'+esc(p.appkey||"")+'" style="width:200px"></td>'+
+      '<td><input type="text" class="ps_env" value="'+esc(p.env||"")+'" style="width:100px"></td>'+
+      '<td><button class="sm red" data-pdel="'+i+'">删除</button></td></tr>').join("");
+  $("tblPresets").querySelectorAll("button[data-pdel]").forEach(btn=>btn.addEventListener("click",()=>{
+    (S.presets||[]).splice(parseInt(btn.dataset.pdel,10),1); renderData(); }));
+}
+$("btnBindAdd").addEventListener("click",()=>{
+  const g=parseGrid($("bGrid").value), box=$("bBox").value.trim();
+  if(g==null||!box){ toast("格口号/容器号非法"); return; }
+  (S.bindings||[]).push({grid:g, box:box}); $("bGrid").value=""; $("bBox").value=""; renderData();
+});
+$("btnPresetAdd").addEventListener("click",()=>{
+  (S.presets||[]).push({name:"新预设", base:"http://127.0.0.1:8099", role:"wms", appkey:APPKEY_TEST, env:"自定义"});
+  renderData();
+});
+$("btnCfgSave").addEventListener("click",async()=>{
+  const rules=(S.rules||[]).map((r,i)=>[r[0],r[1], $("rule_"+i).checked, r[3]]);
+  const bindings=Array.from($("tblBind").querySelectorAll("tr")).slice(1).map(tr=>({
+    grid: parseGrid(tr.querySelector(".bd_grid").value), box: tr.querySelector(".bd_box").value.trim()
+  })).filter(b=>b.grid!=null&&b.box);
+  const presets=Array.from($("tblPresets").querySelectorAll("tr")).slice(1).map(tr=>({
+    name: tr.querySelector(".ps_name").value.trim(), base: tr.querySelector(".ps_base").value.trim(),
+    role: tr.querySelector(".ps_role").value, appkey: tr.querySelector(".ps_appkey").value.trim(),
+    env: tr.querySelector(".ps_env").value.trim()
+  })).filter(p=>p.name&&p.base);
+  const config={
+    appkey_expected:$("cfg_appkey").value.trim(),
+    method_h7:$("cfg_mh7").value.trim(), method_h8:$("cfg_mh8").value.trim(),
+    grid_prefix:$("cfg_prefix").value.trim(), grid_width:parseInt($("cfg_width").value||"3",10),
+    grid_max:parseInt($("cfg_max").value||"66",10),
+    warehouse:$("cfg_wh").value.trim(), goods_owner:$("cfg_owner").value.trim(),
+    order_type:$("cfg_otype").value.trim()||"01",
+    from_location_default:$("cfg_from").value.trim(),
+    gw_host:$("cfg_gwhost").value.trim()||"127.0.0.1",
+    send_timeout_s:parseInt($("cfg_timeout").value||"15",10),
+  };
+  await api("/api/config","POST",{config:config, rules:rules, bindings:bindings, presets:presets});
+  await loadState();
+  renderData(); fillPresets(); syncHead();
+  toast("主数据已保存并生效");
+});
+$("btnWaveImport").addEventListener("click",async()=>{
+  const txt=$("waveImport").value.trim(); if(!txt){ toast("请粘贴 H4 报文 JSON"); return; }
+  try{
+    const o=JSON.parse(txt);
+    if(!o.orderCode) throw new Error("缺 orderCode");
+    if(!Array.isArray(o.items)||!o.items.length) throw new Error("缺 items");
+    const items=o.items.map(it=>({inco:String(it.inco||""), gridNum:String(it.gridNum!==undefined?it.gridNum:""),
+      gridNumber:parseInt(it.gridNumber,10)||1, gridType:String(it.gridType||"0")}));
+    if(items.some(it=>!it.inco)) throw new Error("存在空 inco(SKU)");
+    await api("/api/waves_add","POST",{wave:{orderCode:o.orderCode, sobi:o.sobi, items:items}});
+    await loadState(); renderData();
+    $("importMsg").textContent="✓ 波次 "+o.orderCode+" 已导入计划库（"+items.length+" 明细行）"; $("importMsg").className="greentxt mini";
+  }catch(e){ $("importMsg").textContent="导入失败: "+e.message; $("importMsg").className="redtxt mini"; }
+});
+$("btnWaveImpCurrent").addEventListener("click",()=>{
+  try{ const o=JSON.parse($("msgJson").value);
+    if(curType!=="H4"){ throw new Error("当前报文类型不是 H4"); }
+    $("waveImport").value=JSON.stringify(o,null,2); $("btnWaveImport").click();
+  }catch(e){ toast("导入失败: "+e.message); }
+});
+$("btnWavesClear").addEventListener("click",async()=>{
+  if(!confirm("确定清空整个波次计划库？")) return;
+  await api("/api/waves_clear","POST",{}); await loadState(); renderData();
+});
+$("btnResetDemo").addEventListener("click",async()=>{
+  if(!confirm("恢复出厂示例数据？将清空计划库、绑定表与规则设置（端口等参数保留）。")) return;
+  await api("/api/reset_demo","POST",{}); await loadState(); renderData(); fillPresets(); syncHead();
+  toast("已恢复出厂示例数据");
+});
+
+/* ═══════════ 头部/轮询 ═══════════ */
+function syncHead(){
+  const c=curCfg();
+  $("gwDot").className="dot "+(c.gw_running?"on":"off");
+  $("gwSt").textContent=c.gw_running?"运行中 · "+c.gw_host+":"+c.gw_port:"已停止";
+  $("gwCntChip").textContent="H7 "+c.gw_h7+" / H8 "+c.gw_h8;
+  $("headAppkey").textContent=c.appkey_expected||"--";
+}
+async function loadState(){ S=await api("/api/state"); syncHead(); }
+async function init(){
+  await loadState();
+  fillPresets();
+  $("selType").value=curType; switchType(curType);
+  const arr=S.presets||[];
+  const role=TYPE_INFO[curType].role;
+  const p=arr[pickPresetIndex(role)];
+  $("presetSel").value=String(arr.indexOf(p));
+  fillUrlByPreset();
+  // 默认填一份正确的 H7 报文
+  if(curType==="H7"){
+    $("f_order").value=(S.waves&&S.waves.length)?S.waves[0].orderCode:"PP202600000099";
+    applyDemo("correct"); $("btnGen").click();
+  }
+  syncHead();
+}
+init();
+$("btnQuit").addEventListener("click",async()=>{
+  if(!confirm("确定退出服务？退出后请重新双击启动程序。")) return;
+  try{ await api("/api/quit","POST",{}); }catch(e){}
+  toast("服务已退出，可关闭本页面",3000);
+});
+setInterval(async()=>{
+  try{
+    await loadState();
+    const on=document.querySelector(".tabbtn.active");
+    if(on&&on.dataset.tab==="tab-gateway") renderGateway();
+  }catch(e){}
+},4000);
+</script>
+</body>
+</html>

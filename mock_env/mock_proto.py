@@ -128,10 +128,48 @@ SAMPLE_WAVE_ITEMS = [
 ]
 
 
+# ============================================================================
+# 2.5) 格口编码（与 WCS WmsGridCode.h 一致：对外格口号 = 前缀"22" + 3位补零，
+#      例如 格口号55 → "22055"；解析兼容 "22005"/"5"/"005"）
+# ============================================================================
+GRID_CODE_PREFIX = "22"
+GRID_CODE_WIDTH = 3
+
+
+def grid_code_encode(grid, prefix=GRID_CODE_PREFIX, width=GRID_CODE_WIDTH):
+    """内部格口号(1..66) → WMS 下发格口编码：55 → '22055'；prefix 空 → 仅补零 '055'"""
+    s = str(grid)
+    if prefix and s.startswith(prefix):
+        return s                       # 已是编码形态
+    try:
+        g = int(s)
+    except Exception:
+        return s
+    return (prefix or "") + str(g).zfill(width)
+
+
+def grid_code_parse(code, prefix=GRID_CODE_PREFIX):
+    """解析下发格口号（兼容带前缀 '22055' / 补零 '055' / 裸数字 '55'）→ 内部号 int；非法返回 None"""
+    s = str(code).strip()
+    if not s:
+        return None
+    if prefix and s.startswith(prefix):
+        s = s[len(prefix):]
+    try:
+        g = int(s)
+    except Exception:
+        return None
+    return g if 1 <= g <= 66 else None
+
+
 def sample_wave(order_code="PP202600000030"):
     qty = sum(int(it.get("gridNumber", 0)) for it in SAMPLE_WAVE_ITEMS)
+    items = copy.deepcopy(SAMPLE_WAVE_ITEMS)
+    # ★ 2026-09-07: 下发格口号按现网编码 220 前缀（22+3位），如 格口1 → "22001"
+    for it in items:
+        it["gridNum"] = grid_code_encode(it["gridNum"])
     return {"orderCode": order_code, "orderQty": qty,
-            "sobi": "H-01-AB", "items": copy.deepcopy(SAMPLE_WAVE_ITEMS)}
+            "sobi": "H-01-AB", "items": items}
 
 
 def sample_epc_map():
@@ -140,8 +178,9 @@ def sample_epc_map():
     return {"A10126000900009285552527": sku}
 
 
-def build_clean_wave(order_code="PP202600000099", grids=6, per_grid=2):
+def build_clean_wave(order_code="PP202600000099", grids=6, per_grid=2, sobi="H-01-AB"):
     """生成“干净”波次：单 SKU 单格口、可指定 格口数×每格口SKU数，
+    gridNum 采用现网 220 编码、明细带 sobi(来源库位)；
     orderQty 自动 = ΣgridNumber，附 EPC↔SKU 表。返回 (wave_dict, epc_map)"""
     items = []
     epc_map = {}
@@ -149,19 +188,20 @@ def build_clean_wave(order_code="PP202600000099", grids=6, per_grid=2):
     for g in range(1, grids + 1):
         for k in range(per_grid):
             sku = "SK%013d" % (g * 1000 + k + 1)      # 13位 SKU 码
-            items.append({"inco": sku, "gridNum": str(g),
-                          "gridNumber": 1, "gridType": "0"})
+            items.append({"inco": sku, "gridNum": grid_code_encode(g),
+                          "gridNumber": 1, "gridType": "0", "sobi": sobi})
             epc_map["A1012600090000928555%05d" % n] = sku
             n += 1
     wave = {"orderCode": order_code,
             "orderQty": sum(int(it["gridNumber"]) for it in items),
-            "sobi": "H-01-AB", "items": items}
+            "sobi": sobi, "items": items}
     return wave, epc_map
 
 
 def build_count_wave(order_code, grids=3, skus_per_grid=2, qty=3, sobi="H-01-AB"):
     """按 格口数×每格SKU数×每SKU件数 生成波次与 EPC↔SKU 表。
-    返回 (wave, epc_map, pieces): pieces=[(epc, sku, grid), ...] 按件展开、按格口分组顺序排列"""
+    gridNum 采用现网 220 编码、明细带 sobi(来源库位)。
+    返回 (wave, epc_map, pieces): pieces=[(epc, sku, grid内部号), ...] 按件展开、按格口分组顺序排列"""
     items = []
     epc_map = {}
     pieces = []
@@ -170,7 +210,8 @@ def build_count_wave(order_code, grids=3, skus_per_grid=2, qty=3, sobi="H-01-AB"
         for s in range(1, skus_per_grid + 1):
             sku = "SK%013d" % (g * 1000 + s)
             grid_type = "1" if s == skus_per_grid and g == grids else "0"
-            items.append({"inco": sku, "gridNum": str(g), "gridNumber": qty, "gridType": grid_type})
+            items.append({"inco": sku, "gridNum": grid_code_encode(g),
+                          "gridNumber": qty, "gridType": grid_type, "sobi": sobi})
             for _ in range(qty):
                 epc = "A1012600090000928555%05d" % n
                 n += 1

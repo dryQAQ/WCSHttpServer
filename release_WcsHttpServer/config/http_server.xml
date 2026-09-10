@@ -5,11 +5,11 @@
     <!-- WMS 推送监听端口（WMS → WCS，修改后需重启服务） -->
     <wmsListenPort>8191</wmsListenPort>
     <!-- 正式环境满箱回传 URL（H7 满箱同步到WMS） -->
-    <feedbackUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackUrl>
+    <feedbackUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms</feedbackUrl>
     <!-- 测试环境满箱回传 URL（H7） -->
     <feedbackTestUrl>http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackTestUrl>
     <!-- 正式环境完结回传 URL（H8 波次完结通知WMS） -->
-    <feedbackEndUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndUrl>
+    <feedbackEndUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms</feedbackEndUrl>
     <!-- 测试环境完结回传 URL（H8） -->
     <feedbackEndTestUrl>http://127.0.0.1:8099/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndTestUrl>
     <!-- ★ 满箱/锁格/波次完成回传 method（URL 参数 method，WMS 网关接口标识） -->
@@ -17,7 +17,7 @@
     <!-- ★ 完结回传(H8) method（URL 参数 method，WMS 网关接口标识） -->
     <feedbackEndMethod>gwisSubProductClassifyEndOrder</feedbackEndMethod>
     <!-- 正式环境 AppKey（HTTP Header + URL 参数 appkey） -->
-    <appkey>dz_bxh_wcs_zs</appkey>
+    <appkey>dz_bxh_dmwcs_zs</appkey>
     <!-- 测试环境 AppKey -->
     <appkeyTest>dz_bxh_dmwcs_cs</appkeyTest>
     <!-- 是否使用测试环境（1=测试, 0=正式） -->
@@ -69,6 +69,10 @@
     <h7DefaultFromLocation>A-01-03</h7DefaultFromLocation>
     <!-- 目标库位默认值（无容器号时兜底） -->
     <h7DefaultTargetLocation>66</h7DefaultTargetLocation>
+    <!-- WMS 格口编码：对外格口号 = 前缀 + 格口号补零（默认 22+3位：格口号5 → 22005）；前缀留空=关闭转换 -->
+    <gridCodePrefix>22</gridCodePrefix>
+    <!-- 格口号补零宽度（默认 3，与内部/PLC 3位一致） -->
+    <gridCodeWidth>3</gridCodeWidth>
     <!-- EPC 任务内防重（true/false） -->
     <sortingEpcDedup>true</sortingEpcDedup>
     <!-- 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） -->

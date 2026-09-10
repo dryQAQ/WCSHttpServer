@@ -1,0 +1,29 @@
+2026-09-08 19:10:02.397  [网关] 模拟WMS网关已启动 → http://127.0.0.1:8099 （接收H7/H8，路径任意）
+2026-09-08 19:10:02.399  ==============================================================
+2026-09-08 19:10:02.399    WMS 报文 Mock 测试台
+2026-09-08 19:10:02.400    GUI 界面     : http://127.0.0.1:8765
+2026-09-08 19:10:02.400    模拟WMS网关  : 127.0.0.1:8099
+2026-09-08 19:10:02.401    状态文件     : wms_mock_state.json
+2026-09-08 19:10:02.401    退出方式     : 页面右上角「退出服务」按钮（无控制台窗口）
+2026-09-08 19:10:02.402  ==============================================================
+2026-09-08 19:10:42.382  [状态] 已从 wms_mock_state.json 加载配置
+2026-09-08 19:10:42.438  检测到 WMS 报文 Mock 测试台 已在运行 → 打开 http://127.0.0.1:8765
+2026-09-08 19:16:32.873  [网关 19:16:32] H7  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 19:17:02.723  [网关 19:17:02] H7  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 19:17:32.737  [网关 19:17:32] H7  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (1ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 19:17:45.875  [网关 19:17:45] H7  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (4ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 20:03:47.606  [网关 20:03:47] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (3ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 20:03:52.953  [网关 20:03:52] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 20:03:57.964  [网关 20:03:57] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 20:04:02.957  [网关 20:04:02] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK963 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-08 20:20:55.418  [网关 20:20:55] H7  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (0ms) 同步失败：结构校验失败：head.detailList 缺失或为空
+2026-09-08 20:20:55.433  [网关 20:20:55] 未知  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (0ms) 同步失败：结构校验失败：head.orderCode 缺失/为空；head.sumLocation 缺失
+2026-09-08 20:21:58.178  [网关 20:21:58] H7  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (0ms) 同步失败：结构校验失败：head.detailList 缺失或为空
+2026-09-08 20:21:58.194  [网关 20:21:58] 未知  /gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder  →  success=False (0ms) 同步失败：结构校验失败：head.orderCode 缺失/为空；head.sumLocation 缺失
+2026-09-09 00:21:32.022  [网关 00:21:32] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK146 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-09 00:21:40.800  [网关 00:21:40] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK146 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-09 08:16:54.887  [网关 08:16:54] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK869 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-09 08:17:02.350  [网关 08:17:02] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK869 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-09 08:17:07.347  [网关 08:17:07] H8  /gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder  →  success=False (0ms) 同步失败：波次 PP2026MOCK869 不存在：本模拟WMS未下发该波次（先在「报文编辑」用H4下发，或到主数据导入）
+2026-09-09 13:29:21.023  [状态] 已从 wms_mock_state.json 加载配置
+2026-09-09 13:29:21.144  检测到 WMS 报文 Mock 测试台 已在运行 → 打开 http://127.0.0.1:8765

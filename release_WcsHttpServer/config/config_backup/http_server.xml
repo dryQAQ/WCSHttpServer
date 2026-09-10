@@ -1,15 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- ★★★ 本文件 = 本机 Mock 联调配置模板（mock_env/config_mock/http_server.xml）★★★
+     用途：启用Mock配置.bat / 仿真台『配置』页“① 一键启用 Mock 配置”会把本文件
+     复制到 release_WcsHttpServer\config\http_server.xml（自动备份原文件后覆盖）。
+     内容依据你当前维护的 http_server.xml 逐字整理（binding 预绑定 001~065、
+     plcListenPort、rfidHeartbeatEnable 等均保持一致），地址已指向本机仿真台：
+       RFID推送 rfidPushServerIp:rfidPushServerPort(2010)  ← 仿真台监听, WCS 连入
+       查询     rfidQueryUrl → 127.0.0.1:9100               ← 仿真台监听
+       H7/H8    feedbackTestUrl/EndTestUrl → 127.0.0.1:8099  ← 仿真台监听
+       S7       plcS7Ip → 127.0.0.1（端口固定 102）
+       下发     wmsListenPort(8191) / PLC plcListenPort(102) ← WCS 监听
+     需要改端口/其它节点：直接改本文件（可自定义），改完再执行“一键启用”并重启
+     WCS_httpServer.exe；也可对照仿真台『配置』页“端口预期参考”手工改 release 配置。
+     ⚠ 注意：plcListenPort 与 S7(102) 若同为 102，同一台机器上 WCS 的 PLC 监听与
+     仿真台 S7 监听会互相占用，联调建议把 plcListenPort 改为非 102（如 2000）。 -->
 <config>
     <!-- 配置文件版本号，与软件版本匹配检查 -->
     <configVersion>1</configVersion>
     <!-- WMS 推送监听端口（WMS → WCS，修改后需重启服务） -->
     <wmsListenPort>8191</wmsListenPort>
     <!-- 正式环境满箱回传 URL（H7 满箱同步到WMS） -->
-    <feedbackUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackUrl>
+    <feedbackUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms</feedbackUrl>
     <!-- 测试环境满箱回传 URL（H7） -->
     <feedbackTestUrl>http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder</feedbackTestUrl>
     <!-- 正式环境完结回传 URL（H8 波次完结通知WMS） -->
-    <feedbackEndUrl>https://wms.pelliot.com.cn/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndUrl>
+    <feedbackEndUrl>https://wms.pelliot.com.cn/gids5/service/thirdPartyData/dz_bxh_dmwcs_wms</feedbackEndUrl>
     <!-- 测试环境完结回传 URL（H8） -->
     <feedbackEndTestUrl>http://127.0.0.1:8099/gwms5/service/openapi/productClasTask/gwisSubProductClassifyEndOrder</feedbackEndTestUrl>
     <!-- ★ 满箱/锁格/波次完成回传 method（URL 参数 method，WMS 网关接口标识） -->
@@ -17,7 +31,7 @@
     <!-- ★ 完结回传(H8) method（URL 参数 method，WMS 网关接口标识） -->
     <feedbackEndMethod>gwisSubProductClassifyEndOrder</feedbackEndMethod>
     <!-- 正式环境 AppKey（HTTP Header + URL 参数 appkey） -->
-    <appkey>dz_bxh_wcs_zs</appkey>
+    <appkey>dz_bxh_dmwcs_zs</appkey>
     <!-- 测试环境 AppKey -->
     <appkeyTest>dz_bxh_dmwcs_cs</appkeyTest>
     <!-- 是否使用测试环境（1=测试, 0=正式） -->
@@ -66,17 +80,21 @@
     <!-- fromLocation 取值来源（config=使用固定值, sobi=使用波次明细 sobi 来源库位） -->
     <h7FromLocationSource>sobi</h7FromLocationSource>
     <!-- 来源库位默认值（config 模式时使用） -->
-    <h7DefaultFromLocation>A-01-02</h7DefaultFromLocation>
+    <h7DefaultFromLocation>A-01-03</h7DefaultFromLocation>
     <!-- 目标库位默认值（无容器号时兜底） -->
     <h7DefaultTargetLocation>66</h7DefaultTargetLocation>
+    <!-- WMS 格口编码：对外格口号 = 前缀 + 格口号补零（默认 22+3位：格口号5 → 22005）；前缀留空=关闭转换 -->
+    <gridCodePrefix>22</gridCodePrefix>
+    <!-- 格口号补零宽度（默认 3，与内部/PLC 3位一致） -->
+    <gridCodeWidth>3</gridCodeWidth>
     <!-- EPC 任务内防重（true/false） -->
     <sortingEpcDedup>true</sortingEpcDedup>
     <!-- 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） -->
-    <sortingGridCapPolicy>exception</sortingGridCapPolicy>
+    <sortingGridCapPolicy>reject</sortingGridCapPolicy>
     <!-- orderQty 校验模式（strict=严格, loose=宽松） -->
-    <sortingOrderQtyValidate>loose</sortingOrderQtyValidate>
+    <sortingOrderQtyValidate>strict</sortingOrderQtyValidate>
     <!-- 冲突策略（STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配） -->
-    <sortingConflictPolicy>LOOSE_FIRST</sortingConflictPolicy>
+    <sortingConflictPolicy>STRICT_EXCEPTION</sortingConflictPolicy>
     <!-- 是否允许超收（true/false） -->
     <sortingAllowOverrecv>false</sortingAllowOverrecv>
     <!-- ① 波次下发（WMS → WCS，H4 推送波次数据） -->
@@ -85,6 +103,71 @@
     <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
     <!-- ③ 波次取消（WMS → WCS，H5 退货任务取消） -->
     <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
+    <binding grid="001">H-01-2001</binding>
+    <binding grid="002">H-01-2002</binding>
+    <binding grid="003">H-01-2003</binding>
+    <binding grid="004">H-01-2004</binding>
+    <binding grid="005">H-01-2005</binding>
+    <binding grid="006">H-01-2006</binding>
+    <binding grid="007">H-01-2007</binding>
+    <binding grid="008">H-01-2008</binding>
+    <binding grid="009">H-01-2009</binding>
+    <binding grid="010">H-01-2010</binding>
+    <binding grid="011">H-01-2011</binding>
+    <binding grid="012">H-01-2012</binding>
+    <binding grid="013">H-01-2013</binding>
+    <binding grid="014">H-01-2014</binding>
+    <binding grid="015">H-01-2015</binding>
+    <binding grid="016">H-01-2016</binding>
+    <binding grid="017">H-01-2017</binding>
+    <binding grid="018">H-01-2018</binding>
+    <binding grid="019">H-01-2019</binding>
+    <binding grid="020">H-01-2020</binding>
+    <binding grid="021">H-01-2021</binding>
+    <binding grid="022">H-01-2022</binding>
+    <binding grid="023">H-01-2023</binding>
+    <binding grid="024">H-01-2024</binding>
+    <binding grid="025">H-01-2025</binding>
+    <binding grid="026">H-01-2026</binding>
+    <binding grid="027">H-01-2027</binding>
+    <binding grid="028">H-01-2028</binding>
+    <binding grid="029">H-01-2029</binding>
+    <binding grid="030">H-01-2030</binding>
+    <binding grid="031">H-01-2031</binding>
+    <binding grid="032">H-01-2032</binding>
+    <binding grid="033">H-01-2033</binding>
+    <binding grid="034">H-01-2034</binding>
+    <binding grid="035">H-01-2035</binding>
+    <binding grid="036">H-01-2036</binding>
+    <binding grid="037">H-01-2037</binding>
+    <binding grid="038">H-01-2038</binding>
+    <binding grid="039">H-01-2039</binding>
+    <binding grid="040">H-01-2040</binding>
+    <binding grid="041">H-01-2041</binding>
+    <binding grid="042">H-01-2042</binding>
+    <binding grid="043">H-01-2043</binding>
+    <binding grid="044">H-01-2044</binding>
+    <binding grid="045">H-01-2045</binding>
+    <binding grid="046">H-01-2046</binding>
+    <binding grid="047">H-01-2047</binding>
+    <binding grid="048">H-01-2048</binding>
+    <binding grid="049">H-01-2049</binding>
+    <binding grid="050">H-01-2050</binding>
+    <binding grid="051">H-01-2051</binding>
+    <binding grid="052">H-01-2052</binding>
+    <binding grid="053">H-01-2053</binding>
+    <binding grid="054">H-01-2054</binding>
+    <binding grid="055">H-01-2055</binding>
+    <binding grid="056">H-01-2056</binding>
+    <binding grid="057">H-01-2057</binding>
+    <binding grid="058">H-01-2058</binding>
+    <binding grid="059">H-01-2059</binding>
+    <binding grid="060">H-01-2060</binding>
+    <binding grid="061">H-01-2061</binding>
+    <binding grid="062">H-01-2062</binding>
+    <binding grid="063">H-01-2063</binding>
+    <binding grid="064">H-01-2064</binding>
+    <binding grid="065">H-01-2065</binding>
     <gridName num="1">1号格口</gridName>
     <gridName num="10">10号格口</gridName>
     <gridName num="11">11号格口</gridName>
