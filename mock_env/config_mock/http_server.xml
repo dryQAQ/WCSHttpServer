@@ -55,7 +55,7 @@
     <waveTimeoutMin>0</waveTimeoutMin>
     <!-- 异常 SKU 最大重试次数 -->
     <maxRetryCount>3</maxRetryCount>
-    <!-- 期望绑定数量（波次下发校验用，默认66） -->
+    <!-- 期望绑定数量（波次下发校验用，默认1） -->
     <expectedBindCount>1</expectedBindCount>
     <!-- HTTP 回传请求超时（毫秒） -->
     <httpTimeoutMs>3000</httpTimeoutMs>
@@ -97,6 +97,13 @@
     <sortingConflictPolicy>STRICT_EXCEPTION</sortingConflictPolicy>
     <!-- 是否允许超收（true/false） -->
     <sortingAllowOverrecv>false</sortingAllowOverrecv>
+    <!-- ★ 2026-09-11 同波次重扫重投（拿起已落格的件重新上料 → 仍按原格口下发） -->
+    <rescanResendEnabled>true</rescanResendEnabled>
+    <!-- 同一 EPC 两次下发最小间隔(ms)；mock 联调可调小便于快速验证 -->
+    <rescanResendCooldownMs>1000</rescanResendCooldownMs>
+    <!-- 同一 EPC 每波次最多重投次数（超限写异常表；首投不计入） -->
+    <rescanResendMaxTimes>3</rescanResendMaxTimes>
+    <plcInFlightTimeoutMs>30000</plcInFlightTimeoutMs>
     <!-- ① 波次下发（WMS → WCS，H4 推送波次数据） -->
     <apiInsertWaveInfo>/api/DispatchSortingCommand/InsertWaveInfo</apiInsertWaveInfo>
     <!-- ② 容器绑定（WMS → WCS，H6 格口容器绑定） -->

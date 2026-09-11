@@ -173,7 +173,10 @@ public:
     QVector<SortingRecord> queryByOrderCode(const QString& orderCode, int limit = 1000);
     QVector<SortingRecord> queryAll(int limit = 1000);
     QVector<SortingRecord> queryAllWithPending(int limit = 1000);  // ★ 留空查全部：已分拣 + 待分拣
-    QVector<SortingRecord> queryByGrid(const QString& gridNum, int limit = 1000);   // ★ 2026-09-09 需求2：按格口查分拣明细
+    QVector<SortingRecord> queryByGrid(const QString& gridNum, int limit = 1000);   // ★ 2026-09-09 需求2：按格口查分拣明细（★ 2026-09-10 兼容 "7"/"007"/"22007"）
+    QVector<SortingRecord> queryBySku(const QString& sku, int limit = 1000);        // ★ 2026-09-10 需求1：按 SKU 查落格明细（EPC ↔ 实际落格号）
+    // ★ 2026-09-11 重扫重投：某波次某 EPC 的首条落格号（无记录返回空串）
+    QString getFirstSortedGrid(const QString& orderCode, const QString& epc);
     QVector<GridSummaryRecord> queryGridSummary();                                   // ★ 2026-09-09 需求2：全格口汇总（分拣数量）
     QVector<ReturnWaveItemRecord> querySkuGridMapping(const QString& sku, const QString& orderCode = "");  // ★ 按 SKU 查询格口分配
     SortingStatistics statistics();

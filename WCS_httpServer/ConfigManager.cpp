@@ -95,6 +95,11 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "sortingOrderQtyValidate") sortingOrderQtyValidate = xml.readElementText();
         else if (name == "sortingConflictPolicy")   sortingConflictPolicy = xml.readElementText();
         else if (name == "sortingAllowOverrecv")    sortingAllowOverrecv = (xml.readElementText().trimmed().toLower() == "true");
+        // ★ 2026-09-11 同波次重扫重投
+        else if (name == "rescanResendEnabled")     rescanResendEnabled = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "rescanResendCooldownMs")  rescanResendCooldownMs = xml.readElementText().toInt();
+        else if (name == "rescanResendMaxTimes")    rescanResendMaxTimes = xml.readElementText().toInt();
+        else if (name == "plcInFlightTimeoutMs")    plcInFlightTimeoutMs = xml.readElementText().toInt();
         else if (name == "binding")
         {
             // 容器绑定: <binding grid="00001">BOX001</binding>
@@ -180,7 +185,7 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("waveTimeoutMin",   QString::number(waveTimeoutMin));
     xml.writeComment(" 异常 SKU 最大重试次数 ");
     xml.writeTextElement("maxRetryCount",    QString::number(maxRetryCount));
-    xml.writeComment(" 期望绑定数量（波次下发校验用，默认66） ");
+    xml.writeComment(" 期望绑定数量（波次下发校验用，默认1） ");
     xml.writeTextElement("expectedBindCount", QString::number(expectedBindCount));
 
     // ──── 网络超时 ────
@@ -236,6 +241,15 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("sortingConflictPolicy",   sortingConflictPolicy);
     xml.writeComment(" 是否允许超收（true/false） ");
     xml.writeTextElement("sortingAllowOverrecv",     sortingAllowOverrecv ? "true" : "false");
+    // ──── ★ 2026-09-11 同波次重扫重投 ────
+    xml.writeComment(" 重扫重投开关（true=已落格件重新上料仍按原格口下发；false=旧行为不再下发） ");
+    xml.writeTextElement("rescanResendEnabled",      rescanResendEnabled ? "true" : "false");
+    xml.writeComment(" 同一 EPC 两次下发最小间隔(ms)，防 RFID 连读 ");
+    xml.writeTextElement("rescanResendCooldownMs",   QString::number(rescanResendCooldownMs));
+    xml.writeComment(" 同一 EPC 每波次最多重投次数（超限写异常表；首投不计入） ");
+    xml.writeTextElement("rescanResendMaxTimes",     QString::number(rescanResendMaxTimes));
+    xml.writeComment(" PLC 在途超时(ms)：未收到落格反馈超时后允许重投（防永久锁死） ");
+    xml.writeTextElement("plcInFlightTimeoutMs",     QString::number(plcInFlightTimeoutMs));
 
     // ──── API 路由 ────
     xml.writeComment(" ① 波次下发（WMS → WCS，H4 推送波次数据） ");

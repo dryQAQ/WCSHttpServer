@@ -14,6 +14,7 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QSet>
+#include <QHash>         // ★ 2026-09-11 重扫重投：在途时刻/冷却/重发计数（QHash）
 #include <QByteArray>
 #include <QStringList>   // ★ 2026-09-08 失败重传下拉（失败报文 msgId 列表）
 #include <QTimer>
@@ -102,7 +103,7 @@ public:
         m_containerBindings = bindings;
     }
 
-    // 设置期望绑定数量（波次下发时校验全部绑定用，默认66）
+    // 设置期望绑定数量（波次下发时校验全部绑定用，默认1）
     void setExpectedBindCount(int count) { m_expectedBindCount = count; }
     int  expectedBindCount() const { return m_expectedBindCount; }
 
@@ -331,7 +332,22 @@ private:
     QSet<QString>  m_pendingSkuQuery;        // ★ 防重：已提交 SKU 查询的 EPC 集合（避免同一 EPC 重复查询）
     QMap<QString, int> m_skuQueryRetryCount; // ★ 重试计数：每个 EPC 的 SKU 查询重试次数（key=epc, value=已重试次数）
     QMap<QString, int> m_notReadyRetryCount; // ★ 未就绪重试计数：SKU已绑定但carNum未到时的重试次数
-    QSet<QString>  m_sentEpcs;               // ★ 已发送PLC的EPC集合（防重复发送）
+
+    // ──── ★ 2026-09-11 同波次「重扫重投」（在途语义）────
+    //   语义变更：m_sentEpcs 由"本波次已发送过（永久去重）"改为"**在途**（已下发、尚未收到该件落格反馈）"。
+    //   · 发送成功 → markEpcInFlight()（记在途 + 时刻）
+    //   · PLC 落格反馈到达（主线程批处理入口，含异常分支）→ clearEpcInFlight()
+    //   · 之后该 EPC 再被 RFID 读到（操作员拿起重新上料）→ 允许按原 SKU→格口映射重新下发同一格口
+    //   以上集合均在主线程访问（RFID 推送/定时器/反馈批处理入口 lambda 均为主线程），无需加锁
+    QSet<QString>  m_sentEpcs;               // ★ 在途 EPC 集合（已下发、未收到落格反馈）
+    QHash<QString, qint64> m_sentAtMs;       // ★ 在途 EPC 下发时刻(ms)，用于在途超时判定
+    QHash<QString, qint64> m_lastPlcSendMs;  // ★ 同一 EPC 最近一次下发时刻(ms)，用于重扫冷却
+    QHash<QString, int>    m_rescanResendTimes;  // ★ 同一 EPC 本波次重发次数（上限保护）
+
+    bool isEpcInFlight(const QString& epc);       // 是否在途（含 plcInFlightTimeoutMs 超时判定）
+    void markEpcInFlight(const QString& epc);     // 标记在途（发送成功后调用）
+    void clearEpcInFlight(const QString& epc);    // 落格反馈到达 → 退出在途（之后允许重扫重投）
+    void clearAllEpcRuntimeState();               // 波次切换/新波次/完结清理：在途+时刻+重发计数
 
     // ──── ★ 2026-09-08 RFID 发送"不阻塞"保障 ────
     //   RFID 挂起集合：EPC 已就绪（SKU+carNum 齐）但处于非执行态（未开工/完结中等）→ 挂起，
@@ -393,7 +409,7 @@ private:
     // ──── 格口容器绑定 ────
     QMap<QString, QString>  m_containerBindings;  // latticehole(格口号) → boxcode(容器号)
     mutable std::mutex       m_containerMutex;     // 保护 m_containerBindings（const方法中需加锁）
-    int                      m_expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT;  // 期望绑定数量（波次下发时校验全部绑定用，默认66）
+    int                      m_expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT;  // 期望绑定数量（波次下发时校验全部绑定用，默认1）
 
     // ──── 格口分拣记录（锁格回传用）────
     QMap<QString, QVector<GridSortRecord>> m_gridSortRecords;  // 格口号 → 分拣明细列表

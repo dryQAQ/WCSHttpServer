@@ -23076,3 +23076,194 @@
 2026-09-10 04:33:06.097 [0x00002034] ERROR PLC - [TID-1788962416359-31654170][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
 2026-09-10 04:33:10.240 [0x00002034] ERROR PLC - [TID-1788962416359-31654170][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
 2026-09-10 04:33:14.376 [0x00002034] ERROR PLC - [TID-1788962416359-31654170][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 11:29:31.823 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::PlcManager:30] PLC管理器已创建 sendPool=8
+2026-09-10 11:29:31.836 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::OnPrepareListen:884] PLC监听端口准备就绪 port=2000
+2026-09-10 11:29:31.837 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::start:115] PLC服务已启动 port=2000 等待PLC连接...
+2026-09-10 11:29:33.872 [0x00007bc4] ERROR PLC - [TID-1789010971823-ee6d4951][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 11:29:33.872 [0x00007bc4] WARN  PLC - [TID-1789010971823-ee6d4951][PlcManager::connectS7:615] S7首次连接失败 ip=127.0.0.1 err=OK（心跳线程将自动重连）
+2026-09-10 11:29:33.872 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::connectS7:622] S7心跳线程已启动（等待重连） ip=127.0.0.1
+2026-09-10 11:29:33.873 [0x00007978] INFO  PLC - [TID-1789010973873-c88dafdd][PlcManager::OnS7HeartThread:785] S7心跳线程已启动
+2026-09-10 11:29:35.874 [0x00007978] WARN  PLC - [TID-1789010973873-c88dafdd][PlcManager::OnS7HeartThread:799] S7心跳检测到断线，开始自动重连 ip=127.0.0.1（此后每~40s汇报一次）
+2026-09-10 11:29:38.009 [0x00007978] ERROR PLC - [TID-1789010973873-c88dafdd][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 11:29:38.009 [0x00007978] ERROR PLC - [TID-1789010973873-c88dafdd][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续  1次未成功） ip=127.0.0.1
+2026-09-10 11:29:42.145 [0x00007978] ERROR PLC - [TID-1789010973873-c88dafdd][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 11:29:46.282 [0x00007978] ERROR PLC - [TID-1789010973873-c88dafdd][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 11:29:50.398 [0x00007978] ERROR PLC - [TID-1789010973873-c88dafdd][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 11:29:50.398 [0x00007978] INFO  PLC - [TID-1789010973873-c88dafdd][PlcManager::OnS7HeartThread:817] S7心跳线程已退出
+2026-09-10 11:29:50.398 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][CSiemensPLC::disconnect:45] S7连接已断开
+2026-09-10 11:29:50.398 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::disconnectS7:660] S7连接已断开
+2026-09-10 11:29:50.399 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::stop:122] PLC服务停止 开始 running=1
+2026-09-10 11:29:50.399 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::stop:134] PLC服务停止 断开连接数=0
+2026-09-10 11:29:50.399 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::stop:144] PLC服务停止 连接已清空，执行 Server.Stop()
+2026-09-10 11:29:50.502 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::OnShutdown:972] PLC服务关闭
+2026-09-10 11:29:50.502 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::stop:148] PLC服务停止 Server.Stop() 完成
+2026-09-10 11:29:50.502 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::stop:156] PLC服务停止 反馈刷新完成，stop() 返回
+2026-09-10 11:29:50.510 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::~PlcManager:52] [析构] PlcManager 开始销毁
+2026-09-10 11:29:50.510 [0x00007bc4] INFO  PLC - [TID-1789010971823-ee6d4951][PlcManager::~PlcManager:71] [析构] PlcManager 销毁完成 tcpSend=0 tcpErr=0 recv=0
+2026-09-10 23:13:35.822 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::PlcManager:30] PLC管理器已创建 sendPool=8
+2026-09-10 23:13:35.838 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::OnPrepareListen:884] PLC监听端口准备就绪 port=2000
+2026-09-10 23:13:35.840 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::start:115] PLC服务已启动 port=2000 等待PLC连接...
+2026-09-10 23:13:37.870 [0x0000aba8] ERROR PLC - [TID-1789053215821-5138f55d][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:13:37.870 [0x0000aba8] WARN  PLC - [TID-1789053215821-5138f55d][PlcManager::connectS7:615] S7首次连接失败 ip=127.0.0.1 err=OK（心跳线程将自动重连）
+2026-09-10 23:13:37.870 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::connectS7:622] S7心跳线程已启动（等待重连） ip=127.0.0.1
+2026-09-10 23:13:37.870 [0x00001ca4] INFO  PLC - [TID-1789053217870-45fd4199][PlcManager::OnS7HeartThread:785] S7心跳线程已启动
+2026-09-10 23:13:39.871 [0x00001ca4] WARN  PLC - [TID-1789053217870-45fd4199][PlcManager::OnS7HeartThread:799] S7心跳检测到断线，开始自动重连 ip=127.0.0.1（此后每~40s汇报一次）
+2026-09-10 23:13:42.002 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:13:42.002 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续  1次未成功） ip=127.0.0.1
+2026-09-10 23:13:46.139 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:13:50.278 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:13:54.399 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:13:58.519 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:02.678 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:06.817 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:10.944 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:15.067 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:19.210 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:23.336 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:27.482 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:31.605 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:35.716 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:39.855 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:43.239 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::enableAllGrids:875] 全部格口已恢复 count=0 (新波次开始)
+2026-09-10 23:14:43.979 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:48.116 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:52.255 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:14:56.386 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:00.520 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:04.637 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:04.637 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续 21次未成功） ip=127.0.0.1
+2026-09-10 23:15:08.763 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:12.915 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:17.054 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:21.199 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:25.350 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:29.479 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:33.621 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:37.760 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:41.883 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:46.014 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:50.135 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:54.264 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:15:58.416 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:02.528 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:06.667 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:10.792 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:14.941 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:19.079 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:23.196 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:27.341 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:27.341 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续 41次未成功） ip=127.0.0.1
+2026-09-10 23:16:31.458 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:35.589 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:39.714 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:43.855 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:48.010 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:52.126 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:16:56.273 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:00.417 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:04.551 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:08.694 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:12.835 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:16.973 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:21.126 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:25.260 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:29.396 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:33.539 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:37.670 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:41.821 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:45.934 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:50.046 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:50.046 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续 61次未成功） ip=127.0.0.1
+2026-09-10 23:17:54.184 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:17:58.327 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:18:02.445 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:18:06.587 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:18:10.740 [0x00001ca4] ERROR PLC - [TID-1789053217870-45fd4199][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:18:10.740 [0x00001ca4] INFO  PLC - [TID-1789053217870-45fd4199][PlcManager::OnS7HeartThread:817] S7心跳线程已退出
+2026-09-10 23:18:10.740 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][CSiemensPLC::disconnect:45] S7连接已断开
+2026-09-10 23:18:10.740 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::disconnectS7:660] S7连接已断开
+2026-09-10 23:18:10.740 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::stop:122] PLC服务停止 开始 running=1
+2026-09-10 23:18:10.740 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::stop:134] PLC服务停止 断开连接数=0
+2026-09-10 23:18:10.741 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::stop:144] PLC服务停止 连接已清空，执行 Server.Stop()
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::OnShutdown:972] PLC服务关闭
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::stop:148] PLC服务停止 Server.Stop() 完成
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::stop:156] PLC服务停止 反馈刷新完成，stop() 返回
+2026-09-10 23:18:10.851 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::~PlcManager:52] [析构] PlcManager 开始销毁
+2026-09-10 23:18:10.851 [0x0000aba8] INFO  PLC - [TID-1789053215821-5138f55d][PlcManager::~PlcManager:71] [析构] PlcManager 销毁完成 tcpSend=0 tcpErr=0 recv=0
+2026-09-10 23:19:49.638 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::PlcManager:30] PLC管理器已创建 sendPool=8
+2026-09-10 23:19:49.651 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::OnPrepareListen:884] PLC监听端口准备就绪 port=2000
+2026-09-10 23:19:49.652 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::start:115] PLC服务已启动 port=2000 等待PLC连接...
+2026-09-10 23:19:51.684 [0x0000a3e0] ERROR PLC - [TID-1789053589638-8a6e6cb8][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:19:51.684 [0x0000a3e0] WARN  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::connectS7:615] S7首次连接失败 ip=127.0.0.1 err=OK（心跳线程将自动重连）
+2026-09-10 23:19:51.684 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::connectS7:622] S7心跳线程已启动（等待重连） ip=127.0.0.1
+2026-09-10 23:19:51.684 [0x00003080] INFO  PLC - [TID-1789053591684-c137c3bb][PlcManager::OnS7HeartThread:785] S7心跳线程已启动
+2026-09-10 23:19:53.685 [0x00003080] WARN  PLC - [TID-1789053591684-c137c3bb][PlcManager::OnS7HeartThread:799] S7心跳检测到断线，开始自动重连 ip=127.0.0.1（此后每~40s汇报一次）
+2026-09-10 23:19:55.820 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:19:55.820 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续  1次未成功） ip=127.0.0.1
+2026-09-10 23:19:59.940 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:04.079 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:08.211 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:12.348 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:16.495 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:20.617 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:24.735 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:28.886 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:33.021 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:37.159 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:41.294 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:45.420 [0x00003080] ERROR PLC - [TID-1789053591684-c137c3bb][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:20:45.420 [0x00003080] INFO  PLC - [TID-1789053591684-c137c3bb][PlcManager::OnS7HeartThread:817] S7心跳线程已退出
+2026-09-10 23:20:45.420 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][CSiemensPLC::disconnect:45] S7连接已断开
+2026-09-10 23:20:45.420 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::disconnectS7:660] S7连接已断开
+2026-09-10 23:20:45.420 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::stop:122] PLC服务停止 开始 running=1
+2026-09-10 23:20:45.420 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::stop:134] PLC服务停止 断开连接数=0
+2026-09-10 23:20:45.420 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::stop:144] PLC服务停止 连接已清空，执行 Server.Stop()
+2026-09-10 23:20:45.523 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::OnShutdown:972] PLC服务关闭
+2026-09-10 23:20:45.523 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::stop:148] PLC服务停止 Server.Stop() 完成
+2026-09-10 23:20:45.523 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::stop:156] PLC服务停止 反馈刷新完成，stop() 返回
+2026-09-10 23:20:45.530 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::~PlcManager:52] [析构] PlcManager 开始销毁
+2026-09-10 23:20:45.531 [0x0000a3e0] INFO  PLC - [TID-1789053589638-8a6e6cb8][PlcManager::~PlcManager:71] [析构] PlcManager 销毁完成 tcpSend=0 tcpErr=0 recv=0
+2026-09-10 23:37:07.983 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::PlcManager:30] PLC管理器已创建 sendPool=8
+2026-09-10 23:37:07.997 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::OnPrepareListen:884] PLC监听端口准备就绪 port=2000
+2026-09-10 23:37:07.998 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::start:115] PLC服务已启动 port=2000 等待PLC连接...
+2026-09-10 23:37:10.033 [0x0000afec] ERROR PLC - [TID-1789054627983-f4df3933][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:37:10.033 [0x0000afec] WARN  PLC - [TID-1789054627983-f4df3933][PlcManager::connectS7:615] S7首次连接失败 ip=127.0.0.1 err=OK（心跳线程将自动重连）
+2026-09-10 23:37:10.033 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::connectS7:622] S7心跳线程已启动（等待重连） ip=127.0.0.1
+2026-09-10 23:37:10.033 [0x00009188] INFO  PLC - [TID-1789054630033-1a4f06ba][PlcManager::OnS7HeartThread:785] S7心跳线程已启动
+2026-09-10 23:37:12.034 [0x00009188] WARN  PLC - [TID-1789054630033-1a4f06ba][PlcManager::OnS7HeartThread:799] S7心跳检测到断线，开始自动重连 ip=127.0.0.1（此后每~40s汇报一次）
+2026-09-10 23:37:14.159 [0x00009188] ERROR PLC - [TID-1789054630033-1a4f06ba][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:37:14.159 [0x00009188] ERROR PLC - [TID-1789054630033-1a4f06ba][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续  1次未成功） ip=127.0.0.1
+2026-09-10 23:37:16.159 [0x00009188] INFO  PLC - [TID-1789054630033-1a4f06ba][PlcManager::OnS7HeartThread:817] S7心跳线程已退出
+2026-09-10 23:37:16.159 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][CSiemensPLC::disconnect:45] S7连接已断开
+2026-09-10 23:37:16.159 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::disconnectS7:660] S7连接已断开
+2026-09-10 23:37:16.159 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::stop:122] PLC服务停止 开始 running=1
+2026-09-10 23:37:16.159 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::stop:134] PLC服务停止 断开连接数=0
+2026-09-10 23:37:16.159 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::stop:144] PLC服务停止 连接已清空，执行 Server.Stop()
+2026-09-10 23:37:16.263 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::OnShutdown:972] PLC服务关闭
+2026-09-10 23:37:16.264 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::stop:148] PLC服务停止 Server.Stop() 完成
+2026-09-10 23:37:16.264 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::stop:156] PLC服务停止 反馈刷新完成，stop() 返回
+2026-09-10 23:37:16.274 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::~PlcManager:52] [析构] PlcManager 开始销毁
+2026-09-10 23:37:16.274 [0x0000afec] INFO  PLC - [TID-1789054627983-f4df3933][PlcManager::~PlcManager:71] [析构] PlcManager 销毁完成 tcpSend=0 tcpErr=0 recv=0
+2026-09-10 23:39:59.592 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::PlcManager:30] PLC管理器已创建 sendPool=8
+2026-09-10 23:39:59.612 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::OnPrepareListen:884] PLC监听端口准备就绪 port=2000
+2026-09-10 23:39:59.614 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::start:115] PLC服务已启动 port=2000 等待PLC连接...
+2026-09-10 23:40:01.633 [0x00005b94] ERROR PLC - [TID-1789054799592-9dc4a3b6][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:40:01.633 [0x00005b94] WARN  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::connectS7:615] S7首次连接失败 ip=127.0.0.1 err=OK（心跳线程将自动重连）
+2026-09-10 23:40:01.633 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::connectS7:622] S7心跳线程已启动（等待重连） ip=127.0.0.1
+2026-09-10 23:40:01.633 [0x00002128] INFO  PLC - [TID-1789054801633-06d84da8][PlcManager::OnS7HeartThread:785] S7心跳线程已启动
+2026-09-10 23:40:03.634 [0x00002128] WARN  PLC - [TID-1789054801633-06d84da8][PlcManager::OnS7HeartThread:799] S7心跳检测到断线，开始自动重连 ip=127.0.0.1（此后每~40s汇报一次）
+2026-09-10 23:40:05.755 [0x00002128] ERROR PLC - [TID-1789054801633-06d84da8][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:40:05.755 [0x00002128] ERROR PLC - [TID-1789054801633-06d84da8][PlcManager::OnS7HeartThread:812] S7心跳重连失败（已连续  1次未成功） ip=127.0.0.1
+2026-09-10 23:40:09.888 [0x00002128] ERROR PLC - [TID-1789054801633-06d84da8][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:40:14.008 [0x00002128] ERROR PLC - [TID-1789054801633-06d84da8][CSiemensPLC::connectTo:32] S7连接失败 ip=127.0.0.1 err= TCP : Connection refused
+2026-09-10 23:40:14.008 [0x00002128] INFO  PLC - [TID-1789054801633-06d84da8][PlcManager::OnS7HeartThread:817] S7心跳线程已退出
+2026-09-10 23:40:14.008 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][CSiemensPLC::disconnect:45] S7连接已断开
+2026-09-10 23:40:14.009 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::disconnectS7:660] S7连接已断开
+2026-09-10 23:40:14.009 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::stop:122] PLC服务停止 开始 running=1
+2026-09-10 23:40:14.009 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::stop:134] PLC服务停止 断开连接数=0
+2026-09-10 23:40:14.009 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::stop:144] PLC服务停止 连接已清空，执行 Server.Stop()
+2026-09-10 23:40:14.111 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::OnShutdown:972] PLC服务关闭
+2026-09-10 23:40:14.111 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::stop:148] PLC服务停止 Server.Stop() 完成
+2026-09-10 23:40:14.111 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::stop:156] PLC服务停止 反馈刷新完成，stop() 返回
+2026-09-10 23:40:14.117 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::~PlcManager:52] [析构] PlcManager 开始销毁
+2026-09-10 23:40:14.117 [0x00005b94] INFO  PLC - [TID-1789054799592-9dc4a3b6][PlcManager::~PlcManager:71] [析构] PlcManager 销毁完成 tcpSend=0 tcpErr=0 recv=0

@@ -4962,3 +4962,15 @@
 2026-09-09 22:05:26.881 [0x0000a730] INFO  WCS - 	[WaveMgr] 状态转换 3(分拣中) -> 7(完结中)
 2026-09-09 22:05:26.881 [0x0000a730] INFO  WCS - 	[WaveMgr] 状态转换 7(完结中) -> 8(已完成)
 2026-09-09 22:05:26.881 [0x0000a730] INFO  WCS - 	[WaveMgr] 恢复波次 order=PP2026MOCK627 qty=1950 SKU=130 target=8(已完成)(查看模式) sorted=960 exception=0 fullbox=1
+2026-09-10 11:29:33.976 [0x00007bc4] INFO  WCS - [TID-1789010971823-ee6d4951][MainWindow::onStartStop:1849] 配置摘要: 端口=8191/2000 URL=http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder env=test warehouse=H goodsOwner=BXH_CS waveTimeout=0 bindCount=1
+2026-09-10 23:13:38.012 [0x0000aba8] INFO  WCS - [TID-1789053215821-5138f55d][MainWindow::onStartStop:1896] 配置摘要: 端口=8191/2000 URL=http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder env=test warehouse=H goodsOwner=BXH_CS waveTimeout=0 bindCount=1
+2026-09-10 23:19:51.794 [0x0000a3e0] INFO  WCS - [TID-1789053589638-8a6e6cb8][MainWindow::onStartStop:1897] 配置摘要: 端口=8191/2000 URL=http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder env=test warehouse=H goodsOwner=BXH_CS waveTimeout=0 bindCount=1
+2026-09-10 23:19:59.307 [0x0000a3e0] INFO  WCS - 	[WaveMgr] 完结条件满足 orderCode= status=0(空闲) 手动触发完结
+2026-09-10 23:19:59.307 [0x0000a3e0] WARN  WCS - <382>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 0(空闲) -> 7(完结中)
+2026-09-10 23:19:59.307 [0x0000a3e0] WARN  WCS - <638>	<WaveManager::completeToEnding>,[WaveMgr] 手动触发完结 状态迁移失败 current=0(空闲) orderCode=
+2026-09-10 23:20:00.324 [0x0000a3e0] INFO  WCS - [TID-1789053589638-8a6e6cb8][MainWindow::onStartStop:1897] 配置摘要: 端口=8191/2000 URL=http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder env=test warehouse=H goodsOwner=BXH_CS waveTimeout=0 bindCount=1
+2026-09-10 23:20:03.516 [0x0000a3e0] INFO  WCS - 	[WaveMgr] 完结条件满足 orderCode= status=0(空闲) 手动触发完结
+2026-09-10 23:20:03.516 [0x0000a3e0] WARN  WCS - <382>	<WaveManager::setState>,[WaveMgr] 状态转换拒绝 0(空闲) -> 7(完结中)
+2026-09-10 23:20:03.516 [0x0000a3e0] WARN  WCS - <638>	<WaveManager::completeToEnding>,[WaveMgr] 手动触发完结 状态迁移失败 current=0(空闲) orderCode=
+2026-09-10 23:37:10.152 [0x0000afec] INFO  WCS - [TID-1789054627983-f4df3933][MainWindow::onStartStop:1897] 配置摘要: 端口=8191/2000 URL=http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder env=test warehouse=H goodsOwner=BXH_CS waveTimeout=0 bindCount=1
+2026-09-10 23:40:01.743 [0x00005b94] INFO  WCS - [TID-1789054799592-9dc4a3b6][MainWindow::onStartStop:1897] 配置摘要: 端口=8191/2000 URL=http://127.0.0.1:8099/gwms5/service/openapi/product/skuClassificationTask/gwisSubProductClassifyOrder env=test warehouse=H goodsOwner=BXH_CS waveTimeout=0 bindCount=1

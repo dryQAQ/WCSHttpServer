@@ -303,10 +303,24 @@ HttpServer::HttpServer(QObject* parent)
         [this](const QVector<PlcFeedbackEntry>& entries) {
             if (!m_pWaveMgr) return;
 
+            // ★ 2026-09-11 重扫重投：PLC 落格反馈已到达 → 该 EPC 退出"在途"集合。
+            //   覆盖本批次所有分支（成功/无匹配/无绑定/冲突/status 2·3），即"本次投递已结束"，
+            //   之后该件再被 RFID 读到（拿起重新上料）即可按原格口映射重新下发。
+            //   注：此处为反馈批处理的主线程入口（PlcManager 的 QTimer flushFeedbackBatch 同线程），
+            //       与 m_sentEpcs 的其它访问点同线程，无需加锁。
+            //   同时快照出"本次落格属于重扫重投"的 EPC，供线程池内判断（避免跨线程访问成员容器）
+            QSet<QString> rescanEpcs;
+            for (const PlcFeedbackEntry& e : entries)
+            {
+                clearEpcInFlight(e.code);
+                if (m_rescanResendTimes.contains(e.code))
+                    rescanEpcs.insert(e.code);
+            }
+
             // ★ 提交到 PLC 反馈接收专用线程池（不阻塞主线程）
             if (m_pPlcRecvPool)
             {
-                m_pPlcRecvPool->commitNoWait([this, entries]() {
+                m_pPlcRecvPool->commitNoWait([this, entries, rescanEpcs]() {
                     AppConfig& cfg = ConfigManager::instance()->config();
                     int waveStatus = m_pWaveMgr->status();
 
@@ -472,10 +486,57 @@ HttpServer::HttpServer(QObject* parent)
                         // ──── EPC 任务内防重（orderCode+epc）────
                         // ★ 2026-09-09 需求8：计数以 PLC 实时反馈为准——重复反馈也计 1 件（markSorted 累计+1），
                         //   但跳过明细写入（m_gridSortRecords/DB 仍防重，H7 不重复行）
+                        // ★ 2026-09-11 重扫重投：若该 EPC 是被 WCS 重新下发的（操作员把已落格的件拿起重新上料），
+                        //   落格的是**同一实物件** → 不再重复计件（保持"箱内 1 件 = 账 1 件"），
+                        //   仅做日志留痕 + 落格号一致性告警（不改账）
                         if (cfg.sortingEpcDedup)
                         {
                             if (m_pWaveMgr->isCodeSorted(e.code))
                             {
+                                if (rescanEpcs.contains(e.code))
+                                {
+                                    const QString orderCodeNow = m_pWaveMgr->orderCode();
+                                    const QString firstGrid = m_pSortingDb
+                                        ? m_pSortingDb->getFirstSortedGrid(orderCodeNow, e.code)
+                                        : QString();
+                                    HTTP_LOG_INFO("[重扫] 重扫落格（不重复计件）code=%s order=%s 本次落格=%s 首落=%s sorted=%d",
+                                        e.code.toLocal8Bit().data(), orderCodeNow.toLocal8Bit().data(),
+                                        e.grid.toLocal8Bit().data(),
+                                        firstGrid.isEmpty() ? "(无记录)" : firstGrid.toLocal8Bit().data(),
+                                        m_pWaveMgr->sorted());
+
+                                    if (!firstGrid.isEmpty() &&
+                                        parseWmsGridCodeToInt(firstGrid) != parseWmsGridCodeToInt(e.grid))
+                                    {
+                                        // 重扫后落到非首落格口（多格口映射/原格口不可用改选）→ 告警 + 异常留痕
+                                        HTTP_LOG_WARN("[重扫] 重扫落格号与首落不一致 code=%s order=%s 首落=%s 本次=%s"
+                                                      "（账仍记首落格口，请现场核查）",
+                                            e.code.toLocal8Bit().data(), orderCodeNow.toLocal8Bit().data(),
+                                            firstGrid.toLocal8Bit().data(), e.grid.toLocal8Bit().data());
+                                        emit logMessage(QString::fromUtf8("[重扫] EPC %1 重扫落格到格口%2，但首落为格口%3"
+                                                                          "——账仍记首落格口，请现场核查")
+                                            .arg(e.code).arg(e.grid).arg(firstGrid), true);
+                                        if (m_pSortingDb && m_pSortingDb->isOpen())
+                                        {
+                                            ExceptionRecord exRe;
+                                            exRe.type      = QString::fromUtf8("重扫格口不一致");
+                                            exRe.orderCode = orderCodeNow;
+                                            exRe.epc       = e.code;
+                                            exRe.sku       = sku;
+                                            exRe.reason    = QString::fromUtf8("重扫落格号=%1 与首落格号=%2 不一致（账仍记首落）")
+                                                                 .arg(e.grid).arg(firstGrid);
+                                            exRe.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                                            m_pSortingDb->insertException(exRe);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        emit logMessage(QString::fromUtf8("[重扫] EPC %1 已重新落格到原格口%2（件数不重复计）")
+                                            .arg(e.code).arg(e.grid));
+                                    }
+                                    continue;
+                                }
+
                                 HTTP_LOG_WARN("EPC防重拦截 code=%s order=%s 重复反馈计件(不写明细)，跳过",
                                     e.code.toLocal8Bit().data(),
                                     m_pWaveMgr->orderCode().toLocal8Bit().data());
@@ -618,13 +679,20 @@ HttpServer::HttpServer(QObject* parent)
             HTTP_LOG_INFO("[锁格→满箱] 完成 grid=%s order=%s", grid.toLocal8Bit().data(), orderCode.toLocal8Bit().data());
         }, Qt::QueuedConnection);
 
-    // ★ 2026-09-09 需求1：PLC 解锁（S7 边沿）——货在进行中格口已锁格，工人绑定新容器号(H6)再解锁时，
-    //   后续落格/满箱使用新容器号。此处处理：刷新绑定面板 + 若锁格时因非执行态被跳过而遗留的记录，
-    //   解锁后按当前（新）绑定补发 H7（lookupGridBoxCode 现查新容器号）
+    // ★ 2026-09-09 需求1/现场修复：PLC 解锁（S7 边沿）——**不解除 WCS 满箱禁用**（客户口径 B：
+    //   仍等 WMS 重发 H6 绑定新容器后才恢复分配），但要让操作员能区分"物理锁格"与"已解锁待重绑"：
+    //   · 刷新绑定面板（该格由黄"锁格"→ 橙"已解锁·待重绑"）
+    //   · 若锁格时因非执行态被跳过而遗留记录，解锁后按当前绑定尝试补发 H7（无有效绑定则自然跳过并提示）
     connect(m_pPlcMgr, &PlcManager::gridUnlocked, this,
         [this](const QString& grid) {
-            HTTP_LOG_INFO("[解锁] PLC解锁信号 grid=%s", grid.toLocal8Bit().data());
-            emit logMessage(QString("[S7] 解锁 grid=%1——后续按当前绑定容器号记录/回传").arg(grid));
+            bool bStillDisabled = m_pPlcMgr && m_pPlcMgr->isGridDisabled(grid.toInt());
+            HTTP_LOG_INFO("[解锁] PLC解锁信号 grid=%s WCS禁用=%d（%s）",
+                grid.toLocal8Bit().data(), bStillDisabled ? 1 : 0,
+                bStillDisabled ? "等待 WMS 重发 H6 绑定后恢复分配" : "已可用");
+            emit logMessage(bStillDisabled
+                ? QString("[S7] 解锁 grid=%1 —— 等待 WMS 重绑(H6) 后恢复分配")
+                      .arg(grid)
+                : QString("[S7] 解锁 grid=%1 —— 格口已可用").arg(grid));
             emit bindingUpdated();
 
             // 该格仍留有未上传分拣记录（锁格时波次非执行态被跳过）→ 解锁后补发 H7
@@ -1006,6 +1074,22 @@ QVector<OutboxRecord> HttpServer::getWaveEndOutbox(const QString& orderCode)
 // ============================================================================
 void HttpServer::clearAllGridBinds()
 {
+    // ★ 2026-09-09（客户要求）：清理旧绑定【之前】逐格留痕日志（格口号/旧箱号），
+    //   确保"清空"动作后仍能追溯每个格口原先绑的是什么箱子
+    {
+        std::lock_guard<std::mutex> lock(m_containerMutex);
+        if (!m_containerBindings.isEmpty())
+        {
+            for (auto it = m_containerBindings.constBegin(); it != m_containerBindings.constEnd(); ++it)
+            {
+                HTTP_LOG_INFO("解绑留痕 grid=%s 旧箱=%s 原因=人工清空格口绑定 动作=DB归档+内存清空",
+                    it.key().toLocal8Bit().data(), it.value().toLocal8Bit().data());
+                LOG_INFO("[解绑留痕] grid=%s 旧箱=%s 原因=人工清空绑定",
+                    it.key().toLocal8Bit().data(), it.value().toLocal8Bit().data());
+            }
+        }
+    }
+
     int cleared = 0;
     {
         std::lock_guard<std::mutex> lock(m_containerMutex);
@@ -1606,7 +1690,7 @@ void HttpServer::switchAwayCurrentWave()
     m_pendingSkuQuery.clear();
     m_skuQueryRetryCount.clear();
     m_notReadyRetryCount.clear();
-    m_sentEpcs.clear();
+    clearAllEpcRuntimeState();   // ★ 2026-09-11 在途/冷却/重发计数一并清空
     // ★ 满箱锁格禁用的格口保持禁用（物理状态未变），该波次重新落库/恢复时统一处理
 }
 
@@ -1825,7 +1909,7 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
     m_pendingSkuQuery.clear();
     m_skuQueryRetryCount.clear();
     m_notReadyRetryCount.clear();
-    m_sentEpcs.clear();
+    clearAllEpcRuntimeState();   // ★ 2026-09-11 在途/冷却/重发计数一并清空
 }
 
 // ============================================================================
@@ -2453,6 +2537,17 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         auto it = m_containerBindings.find(normalizedGrid);
         if (it != m_containerBindings.end() && it.value() != boxcode)
         {
+            // ★ 2026-09-09（客户要求）：覆盖旧绑定前留痕（格口号/旧箱/新箱/波次/原因）
+            HTTP_LOG_INFO("解绑留痕 grid=%s 旧箱=%s 新箱=%s order=%s 原因=WMS重发H6换箱 动作=覆盖内存绑定（旧绑定DB归档）",
+                normalizedGrid.toLocal8Bit().data(),
+                it.value().toLocal8Bit().data(),
+                boxcode.toLocal8Bit().data(),
+                orderCode.toLocal8Bit().data());
+            LOG_INFO("[解绑留痕] grid=%s 旧箱=%s 新箱=%s order=%s 原因=H6换箱",
+                normalizedGrid.toLocal8Bit().data(),
+                it.value().toLocal8Bit().data(),
+                boxcode.toLocal8Bit().data(),
+                orderCode.toLocal8Bit().data());
             HTTP_LOG_INFO("BindingLatticePort 切箱 latticehole=%s old=%s new=%s",
                 normalizedGrid.toLocal8Bit().data(),
                 it.value().toLocal8Bit().data(),
@@ -2604,6 +2699,16 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
     {
         std::lock_guard<std::mutex> lock(m_containerMutex);
         int count = m_containerBindings.size();
+        // ★ 2026-09-09（客户要求）：清理前逐格留痕（格口号/旧箱号/波次/原因）
+        for (auto it = m_containerBindings.constBegin(); it != m_containerBindings.constEnd(); ++it)
+        {
+            HTTP_LOG_INFO("解绑留痕 grid=%s 旧箱=%s order=%s 原因=波次取消(H5)清理 动作=DB归档+内存清空",
+                it.key().toLocal8Bit().data(), it.value().toLocal8Bit().data(),
+                orderCode.toLocal8Bit().data());
+            LOG_INFO("[解绑留痕] grid=%s 旧箱=%s order=%s 原因=波次取消",
+                it.key().toLocal8Bit().data(), it.value().toLocal8Bit().data(),
+                orderCode.toLocal8Bit().data());
+        }
         m_containerBindings.clear();
         HTTP_LOG_INFO("CancelWave 已清空容器绑定(内存) count=%d orderCode=%s（DB历史已归档留档）",
             count, orderCode.toLocal8Bit().data());
@@ -3305,10 +3410,10 @@ void HttpServer::replayPendingRfidPlcEpcs()
             HTTP_LOG_INFO("RFID挂起补发跳过（缓存过期/未就绪） epc=%s", epc.toLocal8Bit().data());
             continue;
         }
-        // 已成功发送过 → 跳过（防重复投递）
-        if (m_sentEpcs.contains(epc))
+        // 仍在途（已下发未落格）→ 跳过（防重复指令）；已落格的件允许重扫重投
+        if (isEpcInFlight(epc))
         {
-            HTTP_LOG_INFO("RFID挂起补发跳过（已发送过） epc=%s", epc.toLocal8Bit().data());
+            HTTP_LOG_INFO("RFID挂起补发跳过（在途） epc=%s", epc.toLocal8Bit().data());
             continue;
         }
         if (trySendToPlcForEpc(epc))
@@ -3697,19 +3802,44 @@ void HttpServer::onFullboxReplyFinished(const QString& msgId, bool success, cons
         // 找到绑定该 boxcode 的格口，归档旧绑定
         if (bIsCurrent)
         {
-            std::lock_guard<std::mutex> lock(m_containerMutex);
-            for (auto it = m_containerBindings.begin(); it != m_containerBindings.end(); ++it)
+            // 先在锁内定位绑定该箱号的格口（不在锁内做日志/DB，避免长时间持锁阻塞绑定与落格）
+            QString boundGrid;
             {
-                if (it.value() == boxCode)
+                std::lock_guard<std::mutex> lock(m_containerMutex);
+                for (auto it = m_containerBindings.begin(); it != m_containerBindings.end(); ++it)
                 {
-                    QString gridNum = it.key();
-                    if (m_pSortingDb)
-                        m_pSortingDb->archiveGridBinds(gridNum);
-                    HTTP_LOG_INFO("满箱回传（H7） 容器已归档 grid=%s box=%s",
-                        gridNum.toLocal8Bit().data(), boxCode.toLocal8Bit().data());
-                    emit logMessage(QString("[满箱回传] 容器已归档 grid=%1 box=%2")
-                        .arg(gridNum).arg(boxCode));
-                    break;
+                    if (it.value() == boxCode) { boundGrid = it.key(); break; }
+                }
+            }
+
+            if (!boundGrid.isEmpty())
+            {
+                // ★ 2026-09-09（客户要求）：清理旧绑定【之前】先留痕日志——
+                //   记录 格口号/旧箱号/波次/msgId/原因/动作，确保解绑后仍可追溯
+                HTTP_LOG_INFO("解绑留痕 grid=%s 旧箱=%s order=%s msgId=%s 原因=满箱回传(H7)成功 动作=DB归档(active→archived)+内存解绑 后续=等待WMS重发H6绑定新箱",
+                    boundGrid.toLocal8Bit().data(), boxCode.toLocal8Bit().data(),
+                    orderCode.toLocal8Bit().data(), msgId.toLocal8Bit().data());
+                LOG_INFO("[解绑留痕] grid=%s 旧箱=%s order=%s msgId=%s 原因=满箱回传成功 动作=归档+内存解绑",
+                    boundGrid.toLocal8Bit().data(), boxCode.toLocal8Bit().data(),
+                    orderCode.toLocal8Bit().data(), msgId.toLocal8Bit().data());
+                emit logMessage(QString("[容器绑定] 格口%1 满箱解绑：旧箱 %2（已归档；等待 WMS 重发 H6 绑定新箱后恢复分配）")
+                    .arg(boundGrid).arg(boxCode));
+
+                // ① DB 归档（active → archived，含归档时间，可长期追溯；锁外执行）
+                if (m_pSortingDb)
+                    m_pSortingDb->archiveGridBinds(boundGrid);
+
+                // ② 内存解绑（客户口径：满箱成功即清内存旧绑定，等 H6 新箱才可用，
+                //    避免满箱/补发时误用已满已归档的旧箱号）
+                {
+                    std::lock_guard<std::mutex> lock(m_containerMutex);
+                    auto it2 = m_containerBindings.find(boundGrid);
+                    if (it2 != m_containerBindings.end() && it2.value() == boxCode)
+                    {
+                        m_containerBindings.erase(it2);
+                        HTTP_LOG_INFO("满箱回传（H7） 容器已归档并从内存解绑 grid=%s box=%s（等待H6新容器）",
+                            boundGrid.toLocal8Bit().data(), boxCode.toLocal8Bit().data());
+                    }
                 }
             }
         }
@@ -4247,10 +4377,10 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
         m_pendingSkuQuery.clear();
         m_skuQueryRetryCount.clear();
         m_notReadyRetryCount.clear();
-        m_sentEpcs.clear();
+        clearAllEpcRuntimeState();   // ★ 2026-09-11 在途/冷却/重发计数一并清空
         // ★ 2026-09-07 客户确认：完结后不清空容器绑定——绑定信息保留在内存/数据库，
         //   供追溯与切回查看；下一波次由 H6 按格口重新绑定覆盖
-        HTTP_LOG_INFO("波次完结清理完成 order=%s（格口记录/计数/待查SKU/重试/已发送EPC 清空；容器绑定保留）",
+        HTTP_LOG_INFO("波次完结清理完成 order=%s（格口记录/计数/待查SKU/重试/在途EPC 清空；容器绑定保留）",
             outMsg.orderCode.toLocal8Bit().data());
 
         // ★ 通知 MainWindow：完结回传处理完毕，可以停止服务
@@ -4633,6 +4763,23 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
         }
     }
 
+    // ★ 2026-09-11 重扫重投：本批中"已经下发过 PLC 指令"的 EPC 再次推送 = 二次上传（拿起重新上料）
+    //   → 先把计时起点归零，使 1s「RFID推送→PLC发送」超时窗口从**本次重扫**起算。
+    //   否则会沿用上一次推送的 receivedAt（例如上一次被冷却拦截、未真正下发时），
+    //   本次重扫会被误判"发送超时"而入异常口，导致重投失败。
+    if (m_pEpcCache)
+    {
+        for (auto it3 = batchMap.constBegin(); it3 != batchMap.constEnd(); ++it3)
+        {
+            if (m_lastPlcSendMs.contains(it3.key()))   // 本波次已下发过 → 二次上传
+            {
+                m_pEpcCache->resetTiming(it3.key());
+                HTTP_LOG_INFO("重扫重投 二次上传计时归零 epc=%s（1s 超时窗口从本次重扫起算）",
+                    it3.key().toLocal8Bit().data());
+            }
+        }
+    }
+
     // ★ 批量写入 EpcCache（含 carNum，TTL 自动管理，保留已有 SKU 绑定数据）
     if (m_pEpcCache && !batchMap.isEmpty())
     {
@@ -4649,8 +4796,7 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
     // ★ 立即触发 SKU 查询（使用新线程异步执行，不阻塞 RFID 推送响应）
     //   接收即查：只要服务启动收到 EPC 就查绑定（与主线工作流状态互不影响）
     if (!epcNeedSkuQuery.isEmpty())
-    {
-        HTTP_LOG_INFO("RFID推送 触发SKU查询 epcCount=%d epcList=[%s]",
+    {        HTTP_LOG_INFO("RFID推送 触发SKU查询 epcCount=%d epcList=[%s]",
             epcNeedSkuQuery.size(), epcNeedSkuQuery.join(",").toLocal8Bit().data());
         emit logMessage(QString("[RFID] 触发 SKU 查询 %1 条").arg(epcNeedSkuQuery.size()));
         if (m_pHttpClient)
@@ -4692,10 +4838,12 @@ QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
                 it.value().second.toLocal8Bit().data());
         }
 
-        // ★ 防重复：已发送的 EPC 跳过（避免 scheduleNotReadyRetry 延迟重试时重复发送）
-        if (m_sentEpcs.contains(epc))
+        // ★ 防重复指令：仍在途（已下发、未收到落格反馈）时跳过 —— 防 RFID 双读/抖动；
+        //   ★ 2026-09-11 重扫重投：已落格（反馈已到 → 出在途）的件再次推送到这里时不再跳过，
+        //   由 trySendToPlcForEpc 按原 SKU→格口映射重新下发同一格口
+        if (isEpcInFlight(epc))
         {
-            HTTP_LOG_INFO("RFID推送 已发送跳过 epc=%s (已在 m_sentEpcs 中)", 
+            HTTP_LOG_INFO("RFID推送 在途跳过 epc=%s (已下发待落格反馈，防重复指令)",
                 epc.toLocal8Bit().data());
             sentCount++;
             continue;
@@ -4785,7 +4933,8 @@ void HttpServer::scheduleSkuQueryRetry(const QStringList& epcList)
 // 使用 QTimer::singleShot 延迟 NOT_READY_RETRY_INTERVAL_MS 毫秒后重新检查
 // 如果 carNum 已到 → 发送 PLC；如果仍不到 → 递增重试计数
 // 超过 NOT_READY_RETRY_MAX 次 → 写入异常记录表
-// 已发送的 EPC（m_sentEpcs）跳过，防重复发送
+// 在途 EPC（m_sentEpcs：已下发未落格）跳过，防重复指令
+// ★ 2026-09-11 重扫重投：已落格（出在途）的 EPC 不再跳过，由 trySendToPlcForEpc 重新下发原格口
 // ============================================================================
 void HttpServer::scheduleNotReadyRetry(const QString& epc)
 {
@@ -4817,10 +4966,10 @@ void HttpServer::scheduleNotReadyRetry(const QString& epc)
 
     // ★ 延迟后重新检查
     QTimer::singleShot(NOT_READY_RETRY_INTERVAL_MS, this, [this, epc]() {
-        // ★ 防重复：如果已发送，跳过
-        if (m_sentEpcs.contains(epc))
+        // ★ 防重复：仍在途（已下发、未收到落格反馈）时跳过
+        if (isEpcInFlight(epc))
         {
-            HTTP_LOG_INFO("未就绪重试 已发送跳过 epc=%s (carNum已到且已发送PLC)",
+            HTTP_LOG_INFO("未就绪重试 在途跳过 epc=%s (已下发待落格反馈)",
                 epc.toLocal8Bit().data());
             m_notReadyRetryCount.remove(epc);
             return;
@@ -5057,6 +5206,64 @@ void HttpServer::onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap
 // 通过 EpcCache 获取 barcode + carNum，再从 GridBuffer 获取 gridNum
 // 返回 true 表示已发送 PLC 指令
 // ============================================================================
+// ============================================================================
+// ★ 2026-09-11 同波次「重扫重投」——在途集合管理
+//   在途 = 已向 PLC 下发、尚未收到该件落格反馈；用途：防重复指令（RFID 双读/抖动）。
+//   反馈到达即"出在途" → 该件被拿起重新上料（再次 RFID 推送）时，允许按原 SKU→格口
+//   映射重新下发**同一格口**（不再被旧的"本波次已发送过"永久去重拦住）。
+//   计数防重（isCodeSorted）保持不变：同波次同 EPC 仍只计 1 件、不新增流水、不进 H7 明细。
+//   线程：以上集合仅在主线程访问（RFID 推送 / QTimer 重试 / 反馈批处理入口 lambda）
+// ============================================================================
+void HttpServer::markEpcInFlight(const QString& epc)
+{
+    if (epc.isEmpty()) return;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    m_sentEpcs.insert(epc);
+    m_sentAtMs[epc]      = now;
+    m_lastPlcSendMs[epc] = now;
+}
+
+void HttpServer::clearEpcInFlight(const QString& epc)
+{
+    if (epc.isEmpty()) return;
+    if (m_sentEpcs.remove(epc))   // Qt5 QSet::remove 返回 bool
+    {
+        HTTP_LOG_INFO("在途解除（已收到PLC落格反馈）epc=%s——之后可重扫重投",
+            epc.toLocal8Bit().data());
+    }
+    m_sentAtMs.remove(epc);
+}
+
+bool HttpServer::isEpcInFlight(const QString& epc)
+{
+    if (epc.isEmpty() || !m_sentEpcs.contains(epc)) return false;
+
+    const AppConfig& cfg = ConfigManager::instance()->config();
+    const int ttlMs = cfg.plcInFlightTimeoutMs > 0 ? cfg.plcInFlightTimeoutMs : PLC_INFLIGHT_TIMEOUT_MS;
+    const qint64 sentAt = m_sentAtMs.value(epc, 0);
+    if (sentAt <= 0) return true;   // 无下发时刻记录 → 保守按在途处理（优先防重复指令）
+
+    const qint64 ageMs = QDateTime::currentMSecsSinceEpoch() - sentAt;
+    if (ageMs <= ttlMs) return true;
+
+    // 在途超时（PLC 迟迟未反馈）→ 视为本次投递结束，允许重扫重投，避免永久锁死
+    m_sentEpcs.remove(epc);
+    m_sentAtMs.remove(epc);
+    HTTP_LOG_WARN("在途超时解除 epc=%s 已过%lldms > %dms（PLC未反馈，允许重扫重投）",
+        epc.toLocal8Bit().data(), (long long)ageMs, ttlMs);
+    return false;
+}
+
+void HttpServer::clearAllEpcRuntimeState()
+{
+    const int inFlight = m_sentEpcs.size();
+    m_sentEpcs.clear();
+    m_sentAtMs.clear();
+    m_lastPlcSendMs.clear();
+    m_rescanResendTimes.clear();
+    HTTP_LOG_INFO("在途/冷却/重发计数已清空 inFlightBefore=%d（波次切换或完结清理）", inFlight);
+}
+
 bool HttpServer::trySendToPlcForEpc(const QString& epc)
 {
     if (!m_pEpcCache || !m_pPlcMgr || !m_pBuffer)
@@ -5188,6 +5395,60 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
         return false;
     }
 
+    // ★ 2026-09-11 重扫重投保护（仅对"非首次下发"生效）：总开关 + 冷却 + 每波次重发次数上限
+    //   场景：操作员把已落格的件拿起重新上料 → 允许按原格口映射重投，但需限频/限量防指令风暴
+    {
+        const AppConfig& cfg = ConfigManager::instance()->config();
+        const qint64 nowMs  = QDateTime::currentMSecsSinceEpoch();
+        const qint64 lastMs = m_lastPlcSendMs.value(epc, 0);
+
+        if (lastMs > 0)   // 该 EPC 本波次已下发过 → 本次属于"重扫重投"
+        {
+            if (!cfg.rescanResendEnabled)
+            {
+                HTTP_LOG_INFO("重扫重投已关闭（rescanResendEnabled=false）epc=%s 不再下发", epc.toLocal8Bit().data());
+                return false;
+            }
+            const int cooldownMs = cfg.rescanResendCooldownMs > 0 ? cfg.rescanResendCooldownMs
+                                                                  : RESCAN_RESEND_COOLDOWN_MS;
+            if (nowMs - lastMs < cooldownMs)
+            {
+                HTTP_LOG_INFO("重扫重投 冷却中跳过 epc=%s 距上次下发%lldms < %dms",
+                    epc.toLocal8Bit().data(), (long long)(nowMs - lastMs), cooldownMs);
+                return false;
+            }
+            const int maxTimes = cfg.rescanResendMaxTimes > 0 ? cfg.rescanResendMaxTimes
+                                                             : RESCAN_RESEND_MAX_TIMES;
+            const int times = m_rescanResendTimes.value(epc, 0);
+            if (times >= maxTimes)
+            {
+                HTTP_LOG_WARN("重扫重投 已达上限 epc=%s times=%d/%d 不再下发（人工处理）",
+                    epc.toLocal8Bit().data(), times, maxTimes);
+                emit logMessage(QString::fromUtf8("[重扫] EPC %1 重发次数已达上限 %2，不再下发（请人工处理）")
+                    .arg(epc).arg(maxTimes), true);
+                if (m_pSortingDb && m_pSortingDb->isOpen())
+                {
+                    ExceptionRecord ex;
+                    ex.type      = QString::fromUtf8("重扫超限");
+                    ex.orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+                    ex.epc       = epc;
+                    ex.sku       = sku;
+                    ex.reason    = QString::fromUtf8("同一 EPC 本波次重扫重投已达 %1 次上限（映射=[%2]），不再下发")
+                                       .arg(maxTimes).arg(entry.gridNum);
+                    ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                    m_pSortingDb->insertException(ex);
+                }
+                return false;
+            }
+
+            m_rescanResendTimes[epc] = times + 1;
+            const QString rescanLog = QString::fromUtf8("[重扫] EPC=%1 已落格→按原格口映射重新下发 grid=%2（本波次第%3次）")
+                                          .arg(epc).arg(entry.gridNum).arg(times + 1);
+            HTTP_LOG_INFO("%s", rescanLog.toLocal8Bit().data());
+            emit logMessage(rescanLog, false);
+        }
+    }
+
     // ★ 计时终点：发送动作执行后即结束 PLC_SEND_TIMEOUT_MS 计时（无论成败）
     //   1s 限制衡量的是「收到→发出PLC指令」的延迟，发出则计时结束；
     //   发送结果（成功/失败）由 sendOk 独立判断，与计时互不干扰
@@ -5196,14 +5457,30 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
     qint64 sendElapsed = m_pEpcCache ? m_pEpcCache->getHandleSendMs(epc) : -1;   // 开始处理→发送 耗时
     if (!sendOk)
     {
-        // ★ 发送失败（可能因格口禁用或PLC未连接），不标记为已发送
-        HTTP_LOG_WARN("PLC发送失败 epc=%s sku=%s grid=%s carNum=%s seq=%s elapsed=%lldms (格口禁用或PLC未连接，不标记已发送)",
+        // ★ 发送失败：可能原因 ① 映射内格口全部"满箱未重绑(禁用)"→ 按客户口径不发；② PLC 未连接
+        //   不标记为已发送，并写异常表留痕（便于现场核对"这件为什么没发指令"）
+        HTTP_LOG_WARN("PLC发送未成功 epc=%s sku=%s grid=%s carNum=%s seq=%s elapsed=%lldms (格口满箱未重绑/物理锁格/PLC未连接，不标记已发送)",
             epc.toLocal8Bit().data(), sku.toLocal8Bit().data(),
             entry.gridNum.toLocal8Bit().data(), carNum.toLocal8Bit().data(),
             seq.toLocal8Bit().data(), sendElapsed);
-        emit logMessage(QString("[PLC] 发送失败 epc=%1 sku=%2 格口%3 小车%4 seq=%5 耗时%6ms")
-            .arg(epc).arg(sku).arg(entry.gridNum).arg(carNum).arg(seq).arg(sendElapsed), true);
-        // ★ 2026-09-09 需求7：发送失败入异常，计时归0——二次上传重新计时
+        emit logMessage(QString("[格口] 无可用格口，未发指令 epc=%1 sku=%2 映射=[%3] 小车%4 seq=%5（等到 WMS 重绑(H6)或人工处理）")
+            .arg(epc).arg(sku).arg(entry.gridNum).arg(carNum).arg(seq), true);
+
+        // ★ 异常留痕（type=无可用格口）：现场可在"分拣记录查询"看到原因
+        if (m_pSortingDb && m_pSortingDb->isOpen())
+        {
+            ExceptionRecord ex;
+            ex.type      = QString::fromUtf8("无可用格口");
+            ex.orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+            ex.epc       = epc;
+            ex.sku       = sku;
+            ex.reason    = QString::fromUtf8("映射=[%1] 内格口满箱未重绑(禁用)或物理锁格，未发送PLC指令；等待WMS重发H6绑定或人工处理")
+                               .arg(entry.gridNum);
+            ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+            m_pSortingDb->insertException(ex);
+        }
+
+        // ★ 2026-09-09 需求7：发送未成功入异常，计时归0——二次上传重新计时
         if (m_pEpcCache)
             m_pEpcCache->resetTiming(epc);
         return false;
@@ -5216,8 +5493,8 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
     emit logMessage(QString("[PLC] 发送 %1 → 格口%2 小车%3 (sku=%4 seq=%5) 耗时%6ms")
         .arg(epc).arg(entry.gridNum).arg(carNum).arg(sku).arg(seq).arg(sendElapsed));
 
-    // ★ 标记已发送，防止重复发送
-    m_sentEpcs.insert(epc);
+    // ★ 标记在途（已下发、待落格反馈）——反馈到达即由 clearEpcInFlight 解除，之后允许重扫重投
+    markEpcInFlight(epc);
 
     return true;
 }

@@ -33064,3 +33064,359 @@
 2026-09-10 04:33:12.605 [0x00008d4c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=7859 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
 2026-09-10 04:33:13.552 [0x0000a730] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
 2026-09-10 04:33:15.605 [0x000044d8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=7860 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 11:29:31.347 [0x00007bc4] INFO  root - <215>	<main>,[启动] 程序启动 exeDir=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer
+2026-09-10 11:29:31.347 [0x00007bc4] INFO  root - <216>	<main>,[启动] 目录检查完成（config/log/data）
+2026-09-10 11:29:31.353 [0x00007bc4] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 11:29:31.353 [0x00007bc4] INFO  root - <219>	<main>,[启动] 配置加载完成
+2026-09-10 11:29:31.405 [0x00007bc4] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 11:29:31.823 [0x00007bc4] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 11:29:33.874 [0x00007bc4] INFO  root - <57>	<RfidPushClient::start>,RFID客户端发起连接 ip=127.0.0.1 port=2010 keepAlive=10000/5000ms result=1
+2026-09-10 11:29:33.961 [0x00007bc4] INFO  root - <224>	<main>,[启动] 主窗口已显示（最大化）；设备(PLC/RFID)自动连接中，任务接收由界面按钮控制（开机自动开始接收任务一次，见 define.h AUTO_START_RECEIVE_ON_BOOT）
+2026-09-10 11:29:35.890 [0x000021c0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=1 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 11:29:36.864 [0x00007bc4] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 11:29:38.879 [0x000049fc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=2 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 11:29:39.868 [0x00007bc4] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 11:29:41.893 [0x00005814] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=3 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 11:29:42.871 [0x00007bc4] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 11:29:44.900 [0x00007294] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=4 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 11:29:45.868 [0x00007bc4] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 11:29:47.889 [0x00007fb8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=5 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 11:29:48.870 [0x00007bc4] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 11:29:49.245 [0x00007bc4] INFO  root - <696>	<HttpServer::~HttpServer>,[析构] HttpServer 开始销毁
+2026-09-10 11:29:49.245 [0x00007bc4] INFO  root - <702>	<HttpServer::~HttpServer>,[析构] step1 停止接收 完成
+2026-09-10 11:29:49.245 [0x00007bc4] INFO  root - <890>	<HttpServer::stopDevices>,[析构] step2a 出站定时器已停止
+2026-09-10 11:29:50.398 [0x00007bc4] INFO  root - <895>	<HttpServer::stopDevices>,[析构] step2b S7已断开
+2026-09-10 11:29:50.502 [0x00007bc4] INFO  root - <897>	<HttpServer::stopDevices>,[析构] step2c PLC TCP已停止
+2026-09-10 11:29:50.502 [0x00007bc4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=6 阶段op=5 errCode=0(对端正常关闭)（3s后自动重连）
+2026-09-10 11:29:50.503 [0x00007bc4] INFO  root - <90>	<RfidPushClient::stop>,RFID推送客户端已停止
+2026-09-10 11:29:50.503 [0x00007bc4] INFO  root - <902>	<HttpServer::stopDevices>,[析构] step2d RFID已停止
+2026-09-10 11:29:50.503 [0x00007bc4] INFO  root - <910>	<HttpServer::stopDevices>,[析构] step2e Worker已停止 running=0
+2026-09-10 11:29:50.503 [0x00007bc4] INFO  root - <704>	<HttpServer::~HttpServer>,[析构] step2 设备已停止(PLC/RFID/Worker)
+2026-09-10 11:29:50.504 [0x00007bc4] INFO  root - <710>	<HttpServer::~HttpServer>,[析构] step3 数据库已关闭
+2026-09-10 11:29:50.504 [0x00007bc4] INFO  root - <716>	<HttpServer::~HttpServer>,[析构] step4 EpcCache 已删除
+2026-09-10 11:29:50.509 [0x00007bc4] INFO  root - <721>	<HttpServer::~HttpServer>,[析构] step5 业务线程池已删除
+2026-09-10 11:29:50.510 [0x00007bc4] INFO  root - <727>	<HttpServer::~HttpServer>,[析构] step6 PLC反馈池已删除
+2026-09-10 11:29:50.510 [0x00007bc4] INFO  root - <731>	<HttpServer::~HttpServer>,[析构] step7 TaskQueue 已删除
+2026-09-10 11:29:50.510 [0x00007bc4] INFO  root - <733>	<HttpServer::~HttpServer>,[析构] step8 GridBuffer 已删除，Qt子对象将自动释放
+2026-09-10 23:13:35.013 [0x0000aba8] INFO  root - <215>	<main>,[启动] 程序启动 exeDir=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer
+2026-09-10 23:13:35.014 [0x0000aba8] INFO  root - <216>	<main>,[启动] 目录检查完成（config/log/data）
+2026-09-10 23:13:35.020 [0x0000aba8] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:13:35.020 [0x0000aba8] INFO  root - <219>	<main>,[启动] 配置加载完成
+2026-09-10 23:13:35.113 [0x0000aba8] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:13:35.821 [0x0000aba8] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:13:37.871 [0x0000aba8] INFO  root - <57>	<RfidPushClient::start>,RFID客户端发起连接 ip=127.0.0.1 port=2010 keepAlive=10000/5000ms result=1
+2026-09-10 23:13:37.996 [0x0000aba8] INFO  root - <224>	<main>,[启动] 主窗口已显示（最大化）；设备(PLC/RFID)自动连接中，任务接收由界面按钮控制（开机自动开始接收任务一次，见 define.h AUTO_START_RECEIVE_ON_BOOT）
+2026-09-10 23:13:39.914 [0x00001560] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=1 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:13:40.870 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:13:42.919 [0x000091c4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=2 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:13:43.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:13:45.904 [0x00007b44] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=3 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:13:46.870 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:13:48.880 [0x000092d8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=4 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:13:49.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:13:51.886 [0x00007eac] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=5 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:13:52.866 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:13:54.895 [0x00000db4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=6 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:13:55.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:13:57.893 [0x000095a0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=7 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:13:58.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:00.916 [0x0000aed0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=8 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:01.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:03.904 [0x0000aab0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=9 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:04.869 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:06.926 [0x00008790] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=10 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:07.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:09.902 [0x0000b09c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=11 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:10.866 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:12.912 [0x0000a6b0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=12 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:13.863 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:15.886 [0x000099dc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=13 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:16.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:18.914 [0x000082ac] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=14 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:19.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:21.893 [0x000083ac] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=15 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:22.865 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:24.888 [0x00009c68] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=16 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:25.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:27.920 [0x00007b60] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=17 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:28.867 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:30.897 [0x000080e0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=18 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:31.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:33.883 [0x0000a264] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=19 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:34.871 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:36.909 [0x000090bc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=20 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:37.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:39.903 [0x00000d48] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=21 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:40.869 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:42.909 [0x0000a32c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=22 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:43.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:45.887 [0x00009b64] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=23 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:46.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:48.925 [0x00008cd0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=24 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:49.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:51.912 [0x00003e90] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=25 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:52.869 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:54.888 [0x00001a84] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=26 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:55.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:14:57.895 [0x0000679c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=27 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:14:58.865 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:00.910 [0x00006a00] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=28 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:01.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:03.898 [0x0000aec4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=29 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:04.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:06.915 [0x00001070] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=30 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:07.863 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:09.905 [0x00002278] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=31 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:10.865 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:12.915 [0x0000af94] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=32 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:13.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:15.896 [0x00000f04] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=33 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:16.867 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:18.898 [0x0000a26c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=34 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:19.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:21.888 [0x000099ac] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=35 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:22.868 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:24.899 [0x0000a02c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=36 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:25.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:27.877 [0x0000ae90] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=37 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:28.868 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:30.891 [0x000072d0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=38 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:31.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:33.898 [0x000066cc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=39 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:34.868 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:36.904 [0x00009da0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=40 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:37.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:39.891 [0x0000a25c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=41 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:40.871 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:42.898 [0x0000a638] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=42 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:43.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:45.921 [0x00002180] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=43 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:46.871 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:48.902 [0x0000ac58] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=44 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:49.865 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:51.893 [0x0000a8fc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=45 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:52.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:54.917 [0x0000b208] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=46 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:55.866 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:15:57.908 [0x0000ae94] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=47 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:15:58.868 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:00.898 [0x00009470] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=48 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:01.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:03.886 [0x000098ec] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=49 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:04.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:06.916 [0x00003c94] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=50 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:07.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:09.899 [0x0000a4bc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=51 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:10.866 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:12.900 [0x0000a890] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=52 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:13.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:15.908 [0x00009728] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=53 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:16.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:18.907 [0x00006864] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=54 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:19.865 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:21.919 [0x000030d0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=55 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:22.867 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:24.914 [0x0000a814] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=56 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:25.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:27.900 [0x0000ae2c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=57 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:28.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:30.927 [0x000073ec] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=58 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:31.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:33.907 [0x00004ad0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=59 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:34.870 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:36.927 [0x00006b74] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=60 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:37.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:39.885 [0x0000328c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=61 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:40.868 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:42.888 [0x0000a9b0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=62 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:43.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:45.897 [0x00002228] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=63 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:46.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:48.930 [0x00000c74] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=64 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:49.863 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:51.906 [0x00003660] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=65 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:52.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:54.915 [0x000090cc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=66 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:55.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:16:57.894 [0x00009bac] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=67 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:16:58.870 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:00.917 [0x0000a288] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=68 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:01.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:03.896 [0x00006b4c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=69 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:04.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:06.912 [0x0000aed0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=70 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:07.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:09.895 [0x000062c8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=71 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:10.872 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:12.912 [0x0000a17c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=72 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:13.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:15.901 [0x0000a6e0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=73 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:16.866 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:18.903 [0x0000275c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=74 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:19.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:21.906 [0x000086b8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=75 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:22.869 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:24.913 [0x00009f5c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=76 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:25.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:27.886 [0x00009558] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=77 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:28.868 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:30.886 [0x000091f8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=78 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:31.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:33.884 [0x0000a804] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=79 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:34.867 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:36.897 [0x0000a6f8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=80 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:37.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:39.902 [0x000085e4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=81 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:40.871 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:42.914 [0x000099b4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=82 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:43.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:45.887 [0x0000a41c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=83 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:46.867 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:48.900 [0x00003344] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=84 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:49.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:51.905 [0x00001fe8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=85 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:52.871 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:54.900 [0x00000d48] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=86 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:55.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:17:57.917 [0x00009c28] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=87 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:17:58.870 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:18:00.892 [0x0000ab04] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=88 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:18:01.864 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:18:03.897 [0x000089b8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=89 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:18:04.869 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:18:06.899 [0x0000a824] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=90 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:18:07.863 [0x0000aba8] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:18:09.689 [0x0000aba8] INFO  root - <699>	<HttpServer::~HttpServer>,[析构] HttpServer 开始销毁
+2026-09-10 23:18:09.690 [0x0000aba8] INFO  root - <705>	<HttpServer::~HttpServer>,[析构] step1 停止接收 完成
+2026-09-10 23:18:09.690 [0x0000aba8] INFO  root - <909>	<HttpServer::stopDevices>,[析构] step2a 出站定时器已停止
+2026-09-10 23:18:09.913 [0x00001a84] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=91 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:18:10.740 [0x0000aba8] INFO  root - <914>	<HttpServer::stopDevices>,[析构] step2b S7已断开
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  root - <916>	<HttpServer::stopDevices>,[析构] step2c PLC TCP已停止
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  root - <90>	<RfidPushClient::stop>,RFID推送客户端已停止
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  root - <921>	<HttpServer::stopDevices>,[析构] step2d RFID已停止
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  root - <929>	<HttpServer::stopDevices>,[析构] step2e Worker已停止 running=0
+2026-09-10 23:18:10.842 [0x0000aba8] INFO  root - <707>	<HttpServer::~HttpServer>,[析构] step2 设备已停止(PLC/RFID/Worker)
+2026-09-10 23:18:10.845 [0x0000aba8] INFO  root - <713>	<HttpServer::~HttpServer>,[析构] step3 数据库已关闭
+2026-09-10 23:18:10.846 [0x0000aba8] INFO  root - <719>	<HttpServer::~HttpServer>,[析构] step4 EpcCache 已删除
+2026-09-10 23:18:10.850 [0x0000aba8] INFO  root - <724>	<HttpServer::~HttpServer>,[析构] step5 业务线程池已删除
+2026-09-10 23:18:10.851 [0x0000aba8] INFO  root - <730>	<HttpServer::~HttpServer>,[析构] step6 PLC反馈池已删除
+2026-09-10 23:18:10.851 [0x0000aba8] INFO  root - <734>	<HttpServer::~HttpServer>,[析构] step7 TaskQueue 已删除
+2026-09-10 23:18:10.851 [0x0000aba8] INFO  root - <736>	<HttpServer::~HttpServer>,[析构] step8 GridBuffer 已删除，Qt子对象将自动释放
+2026-09-10 23:19:49.106 [0x0000a3e0] INFO  root - <215>	<main>,[启动] 程序启动 exeDir=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer
+2026-09-10 23:19:49.106 [0x0000a3e0] INFO  root - <216>	<main>,[启动] 目录检查完成（config/log/data）
+2026-09-10 23:19:49.107 [0x0000a3e0] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:19:49.107 [0x0000a3e0] INFO  root - <219>	<main>,[启动] 配置加载完成
+2026-09-10 23:19:49.154 [0x0000a3e0] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:19:49.638 [0x0000a3e0] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:19:51.685 [0x0000a3e0] INFO  root - <57>	<RfidPushClient::start>,RFID客户端发起连接 ip=127.0.0.1 port=2010 keepAlive=10000/5000ms result=1
+2026-09-10 23:19:51.776 [0x0000a3e0] INFO  root - <224>	<main>,[启动] 主窗口已显示（最大化）；设备(PLC/RFID)自动连接中，任务接收由界面按钮控制（开机自动开始接收任务一次，见 define.h AUTO_START_RECEIVE_ON_BOOT）
+2026-09-10 23:19:53.728 [0x00008ac0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=1 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:19:54.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:19:56.711 [0x0000628c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=2 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:19:57.677 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:19:59.724 [0x00007c5c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=3 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:00.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:02.705 [0x00009ac8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=4 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:03.687 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:05.746 [0x0000718c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=5 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:06.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:08.697 [0x00009568] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=6 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:09.685 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:11.719 [0x00009e2c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=7 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:12.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:14.728 [0x00009190] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=8 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:15.688 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:17.712 [0x0000ad00] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=9 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:18.677 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:20.696 [0x0000ab68] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=10 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:21.679 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:23.715 [0x00002de4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=11 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:24.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:26.712 [0x0000a7f8] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=12 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:27.687 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:29.729 [0x0000b0dc] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=13 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:30.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:32.695 [0x00002b5c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=14 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:33.684 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:35.719 [0x00000c68] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=15 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:36.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:38.718 [0x00009918] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=16 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:39.676 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:41.712 [0x000083e4] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=17 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:42.680 [0x0000a3e0] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:20:44.025 [0x0000a3e0] INFO  root - <699>	<HttpServer::~HttpServer>,[析构] HttpServer 开始销毁
+2026-09-10 23:20:44.025 [0x0000a3e0] INFO  root - <705>	<HttpServer::~HttpServer>,[析构] step1 停止接收 完成
+2026-09-10 23:20:44.025 [0x0000a3e0] INFO  root - <909>	<HttpServer::stopDevices>,[析构] step2a 出站定时器已停止
+2026-09-10 23:20:44.715 [0x00008d88] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=18 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:20:45.420 [0x0000a3e0] INFO  root - <914>	<HttpServer::stopDevices>,[析构] step2b S7已断开
+2026-09-10 23:20:45.523 [0x0000a3e0] INFO  root - <916>	<HttpServer::stopDevices>,[析构] step2c PLC TCP已停止
+2026-09-10 23:20:45.523 [0x0000a3e0] INFO  root - <90>	<RfidPushClient::stop>,RFID推送客户端已停止
+2026-09-10 23:20:45.523 [0x0000a3e0] INFO  root - <921>	<HttpServer::stopDevices>,[析构] step2d RFID已停止
+2026-09-10 23:20:45.524 [0x0000a3e0] INFO  root - <929>	<HttpServer::stopDevices>,[析构] step2e Worker已停止 running=0
+2026-09-10 23:20:45.524 [0x0000a3e0] INFO  root - <707>	<HttpServer::~HttpServer>,[析构] step2 设备已停止(PLC/RFID/Worker)
+2026-09-10 23:20:45.526 [0x0000a3e0] INFO  root - <713>	<HttpServer::~HttpServer>,[析构] step3 数据库已关闭
+2026-09-10 23:20:45.526 [0x0000a3e0] INFO  root - <719>	<HttpServer::~HttpServer>,[析构] step4 EpcCache 已删除
+2026-09-10 23:20:45.530 [0x0000a3e0] INFO  root - <724>	<HttpServer::~HttpServer>,[析构] step5 业务线程池已删除
+2026-09-10 23:20:45.530 [0x0000a3e0] INFO  root - <730>	<HttpServer::~HttpServer>,[析构] step6 PLC反馈池已删除
+2026-09-10 23:20:45.530 [0x0000a3e0] INFO  root - <734>	<HttpServer::~HttpServer>,[析构] step7 TaskQueue 已删除
+2026-09-10 23:20:45.530 [0x0000a3e0] INFO  root - <736>	<HttpServer::~HttpServer>,[析构] step8 GridBuffer 已删除，Qt子对象将自动释放
+2026-09-10 23:37:07.437 [0x0000afec] INFO  root - <215>	<main>,[启动] 程序启动 exeDir=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer
+2026-09-10 23:37:07.437 [0x0000afec] INFO  root - <216>	<main>,[启动] 目录检查完成（config/log/data）
+2026-09-10 23:37:07.438 [0x0000afec] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:37:07.438 [0x0000afec] INFO  root - <219>	<main>,[启动] 配置加载完成
+2026-09-10 23:37:07.489 [0x0000afec] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:37:07.982 [0x0000afec] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:37:10.033 [0x0000afec] INFO  root - <57>	<RfidPushClient::start>,RFID客户端发起连接 ip=127.0.0.1 port=2010 keepAlive=10000/5000ms result=1
+2026-09-10 23:37:10.135 [0x0000afec] INFO  root - <224>	<main>,[启动] 主窗口已显示（最大化）；设备(PLC/RFID)自动连接中，任务接收由界面按钮控制（开机自动开始接收任务一次，见 define.h AUTO_START_RECEIVE_ON_BOOT）
+2026-09-10 23:37:12.081 [0x00004b88] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=1 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:37:13.020 [0x0000afec] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:37:14.286 [0x0000afec] INFO  root - <699>	<HttpServer::~HttpServer>,[析构] HttpServer 开始销毁
+2026-09-10 23:37:14.286 [0x0000afec] INFO  root - <705>	<HttpServer::~HttpServer>,[析构] step1 停止接收 完成
+2026-09-10 23:37:14.286 [0x0000afec] INFO  root - <909>	<HttpServer::stopDevices>,[析构] step2a 出站定时器已停止
+2026-09-10 23:37:15.073 [0x000076e0] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=2 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:37:16.159 [0x0000afec] INFO  root - <914>	<HttpServer::stopDevices>,[析构] step2b S7已断开
+2026-09-10 23:37:16.160 [0x0000afec] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:37:16.264 [0x0000afec] INFO  root - <916>	<HttpServer::stopDevices>,[析构] step2c PLC TCP已停止
+2026-09-10 23:37:16.264 [0x0000afec] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=3 阶段op=5 errCode=0(对端正常关闭)（3s后自动重连）
+2026-09-10 23:37:16.265 [0x0000afec] INFO  root - <90>	<RfidPushClient::stop>,RFID推送客户端已停止
+2026-09-10 23:37:16.265 [0x0000afec] INFO  root - <921>	<HttpServer::stopDevices>,[析构] step2d RFID已停止
+2026-09-10 23:37:16.265 [0x0000afec] INFO  root - <929>	<HttpServer::stopDevices>,[析构] step2e Worker已停止 running=0
+2026-09-10 23:37:16.265 [0x0000afec] INFO  root - <707>	<HttpServer::~HttpServer>,[析构] step2 设备已停止(PLC/RFID/Worker)
+2026-09-10 23:37:16.267 [0x0000afec] INFO  root - <713>	<HttpServer::~HttpServer>,[析构] step3 数据库已关闭
+2026-09-10 23:37:16.267 [0x0000afec] INFO  root - <719>	<HttpServer::~HttpServer>,[析构] step4 EpcCache 已删除
+2026-09-10 23:37:16.272 [0x0000afec] INFO  root - <724>	<HttpServer::~HttpServer>,[析构] step5 业务线程池已删除
+2026-09-10 23:37:16.272 [0x0000afec] INFO  root - <730>	<HttpServer::~HttpServer>,[析构] step6 PLC反馈池已删除
+2026-09-10 23:37:16.274 [0x0000afec] INFO  root - <734>	<HttpServer::~HttpServer>,[析构] step7 TaskQueue 已删除
+2026-09-10 23:37:16.274 [0x0000afec] INFO  root - <736>	<HttpServer::~HttpServer>,[析构] step8 GridBuffer 已删除，Qt子对象将自动释放
+2026-09-10 23:39:58.661 [0x00005b94] INFO  root - <215>	<main>,[启动] 程序启动 exeDir=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer
+2026-09-10 23:39:58.661 [0x00005b94] INFO  root - <216>	<main>,[启动] 目录检查完成（config/log/data）
+2026-09-10 23:39:58.671 [0x00005b94] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:39:58.671 [0x00005b94] INFO  root - <219>	<main>,[启动] 配置加载完成
+2026-09-10 23:39:58.720 [0x00005b94] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:39:59.590 [0x00005b94] INFO  root - <295>	<ConfigManager::load>,[配置] 配置文件已加载: D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml（成功）
+2026-09-10 23:40:01.634 [0x00005b94] INFO  root - <57>	<RfidPushClient::start>,RFID客户端发起连接 ip=127.0.0.1 port=2010 keepAlive=10000/5000ms result=1
+2026-09-10 23:40:01.721 [0x00005b94] INFO  root - <224>	<main>,[启动] 主窗口已显示（最大化）；设备(PLC/RFID)自动连接中，任务接收由界面按钮控制（开机自动开始接收任务一次，见 define.h AUTO_START_RECEIVE_ON_BOOT）
+2026-09-10 23:40:03.646 [0x00002158] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=1 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:40:04.639 [0x00005b94] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:40:06.656 [0x00001a2c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=2 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:40:07.625 [0x00005b94] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:40:09.651 [0x00005d30] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=3 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:40:10.629 [0x00005b94] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:40:12.671 [0x00005e6c] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=4 阶段op=2 errCode=10061(连接被拒绝:服务端未监听该端口)（3s后自动重连）
+2026-09-10 23:40:13.290 [0x00005b94] INFO  root - <699>	<HttpServer::~HttpServer>,[析构] HttpServer 开始销毁
+2026-09-10 23:40:13.290 [0x00005b94] INFO  root - <705>	<HttpServer::~HttpServer>,[析构] step1 停止接收 完成
+2026-09-10 23:40:13.290 [0x00005b94] INFO  root - <909>	<HttpServer::stopDevices>,[析构] step2a 出站定时器已停止
+2026-09-10 23:40:14.009 [0x00005b94] INFO  root - <914>	<HttpServer::stopDevices>,[析构] step2b S7已断开
+2026-09-10 23:40:14.010 [0x00005b94] WARN  root - <114>	<RfidPushClient::onReconnectTimer>,RFID断线重连 ip=127.0.0.1 port=2010
+2026-09-10 23:40:14.111 [0x00005b94] INFO  root - <916>	<HttpServer::stopDevices>,[析构] step2c PLC TCP已停止
+2026-09-10 23:40:14.111 [0x00005b94] WARN  root - <169>	<RfidPushClient::OnClose>,RFID连接断开 conn=5 阶段op=5 errCode=0(对端正常关闭)（3s后自动重连）
+2026-09-10 23:40:14.111 [0x00005b94] INFO  root - <90>	<RfidPushClient::stop>,RFID推送客户端已停止
+2026-09-10 23:40:14.111 [0x00005b94] INFO  root - <921>	<HttpServer::stopDevices>,[析构] step2d RFID已停止
+2026-09-10 23:40:14.112 [0x00005b94] INFO  root - <929>	<HttpServer::stopDevices>,[析构] step2e Worker已停止 running=0
+2026-09-10 23:40:14.112 [0x00005b94] INFO  root - <707>	<HttpServer::~HttpServer>,[析构] step2 设备已停止(PLC/RFID/Worker)
+2026-09-10 23:40:14.113 [0x00005b94] INFO  root - <713>	<HttpServer::~HttpServer>,[析构] step3 数据库已关闭
+2026-09-10 23:40:14.113 [0x00005b94] INFO  root - <719>	<HttpServer::~HttpServer>,[析构] step4 EpcCache 已删除
+2026-09-10 23:40:14.116 [0x00005b94] INFO  root - <724>	<HttpServer::~HttpServer>,[析构] step5 业务线程池已删除
+2026-09-10 23:40:14.117 [0x00005b94] INFO  root - <730>	<HttpServer::~HttpServer>,[析构] step6 PLC反馈池已删除
+2026-09-10 23:40:14.117 [0x00005b94] INFO  root - <734>	<HttpServer::~HttpServer>,[析构] step7 TaskQueue 已删除
+2026-09-10 23:40:14.117 [0x00005b94] INFO  root - <736>	<HttpServer::~HttpServer>,[析构] step8 GridBuffer 已删除，Qt子对象将自动释放

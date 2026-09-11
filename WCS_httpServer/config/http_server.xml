@@ -97,10 +97,13 @@
     <!--      设为正数时，超时后强制回传（即使有未分拣条码）                 -->
     <!--    maxRetryCount:  异常 SKU 最大重试次数                          -->
     <!--      超出后标记为永久异常                                         -->
+    <!--    expectedBindCount: 期望绑定数量（波次下发校验用，默认1）        -->
     <!--    修改后立即生效                                                 -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <waveTimeoutMin>0</waveTimeoutMin>
     <maxRetryCount>3</maxRetryCount>
+    <!-- 期望绑定数量（波次下发校验用，默认1） -->
+    <expectedBindCount>1</expectedBindCount>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 五、网络超时(ms)                                                 -->
@@ -195,6 +198,11 @@
     <!--    sortingConflictPolicy: 分类vs发货冲突策略                    -->
     <!--      STRICT_EXCEPTION=入异常口 / LOOSE_FIRST=取首个匹配         -->
     <!--    sortingAllowOverrecv: 是否允许超收（快捷开关，true覆盖上限策略） -->
+    <!--    rescanResendEnabled: 同波次重扫重投（拿起已落格的件重新上料）      -->
+    <!--      true=仍按原格口映射重新下发；false=旧行为（不再下发）          -->
+    <!--    rescanResendCooldownMs: 同一 EPC 两次下发最小间隔(ms)，防连读     -->
+    <!--    rescanResendMaxTimes:   同一 EPC 每波次最多重投次数（超限写异常表；首投不计入）-->
+    <!--    plcInFlightTimeoutMs:   PLC 在途超时(ms)，超时后允许重投          -->
     <!--    修改后需重启服务                                            -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <sortingEpcDedup>true</sortingEpcDedup>
@@ -202,6 +210,11 @@
     <sortingOrderQtyValidate>strict</sortingOrderQtyValidate>
     <sortingConflictPolicy>STRICT_EXCEPTION</sortingConflictPolicy>
     <sortingAllowOverrecv>false</sortingAllowOverrecv>
+    <!-- ★ 2026-09-11 同波次重扫重投 -->
+    <rescanResendEnabled>true</rescanResendEnabled>
+    <rescanResendCooldownMs>1000</rescanResendCooldownMs>
+    <rescanResendMaxTimes>3</rescanResendMaxTimes>
+    <plcInFlightTimeoutMs>30000</plcInFlightTimeoutMs>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 十三、格口显示名（可选）                                          -->

@@ -8,6 +8,7 @@
 #include <QSqlRecord>
 #include <QDebug>
 #include "define.h"
+#include "WmsGridCode.h"   // ★ 2026-09-10 格口输入归一（"7"/"007"/"22007" → 内部 3 位 key）
 
 // 数据库操作专用日志宏（写入 ./log/DataBase/DataBase.log）
 // （宏定义已移至 LogService.h 统一管理）
@@ -615,18 +616,27 @@ QVector<SortingRecord> SortingDatabase::queryAll(int limit)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ★ 2026-09-09 需求2：按格口查询分拣明细 / 全格口分拣数量汇总
+// ★ 2026-09-10/11 查询统一：格口输入在 DB 层再兜底归一（"7"/"007"/"22007" → "007"）
+//   归一实现全系统唯一：WmsGridCode.h::normalizeGridKey()（UI 侧同一函数）
 // ═════════════════════════════════════════════════════════════════════════════
+
 QVector<SortingRecord> SortingDatabase::queryByGrid(const QString& gridNum, int limit)
 {
+    // 统一归一到内部格口 key 后再查（UI 传入的已是同一 key，此处幂等兜底）
+    const QString rawInput = gridNum.trimmed();
+    const QString gridKey  = normalizeGridKey(rawInput);
+
     return runOnDbThread([&]() -> QVector<SortingRecord> {
         QVector<SortingRecord> result;
-        if (!m_bOpened || gridNum.isEmpty()) return result;
+        if (!m_bOpened || gridKey.isEmpty()) return result;
         QSqlDatabase db = QSqlDatabase::database("SortingDB");
         if (!db.isOpen()) return result;
 
         QSqlQuery q(db);
         q.prepare(SQL_QUERY_BY_GRID);
-        q.addBindValue(gridNum);
+        q.addBindValue(gridKey);     // ?1 归一内部 key（"007"）
+        q.addBindValue(rawInput);    // ?2 用户原始输入（兼容历史存 WMS 编码/裸数字的数据）
+        q.addBindValue(gridKey);     // ?3 整数比较（CAST(grid_num AS INTEGER) = CAST(? AS INTEGER)）
         q.addBindValue(limit);
         if (!q.exec()) return result;
         while (q.next()) {
@@ -646,9 +656,70 @@ QVector<SortingRecord> SortingDatabase::queryByGrid(const QString& gridNum, int 
             rec.boxcode    = q.value(12).toString();
             result.append(rec);
         }
-        Data_INFO("[SortingDB] queryByGrid grid=%s limit=%d resultCount=%d",
-            gridNum.toLocal8Bit().data(), limit, result.size());
+        Data_INFO("[SortingDB] queryByGrid input=%s key=%s limit=%d resultCount=%d",
+            rawInput.toLocal8Bit().data(), gridKey.toLocal8Bit().data(), limit, result.size());
         return result;
+    });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-10 需求1：按 SKU 查询该 SKU 下所有 EPC 及其实际落格号
+//   数据源 sorting_records（每条落格 = 1 个 EPC）；与 querySkuGridMapping（计划格口）配合展示
+// ═════════════════════════════════════════════════════════════════════════════
+QVector<SortingRecord> SortingDatabase::queryBySku(const QString& sku, int limit)
+{
+    const QString skuInput = sku.trimmed();
+
+    return runOnDbThread([&]() -> QVector<SortingRecord> {
+        QVector<SortingRecord> result;
+        if (!m_bOpened || skuInput.isEmpty()) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_QUERY_BY_SKU);
+        q.addBindValue(skuInput);
+        q.addBindValue(limit);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            SortingRecord rec;
+            rec.id = q.value(0).toInt();
+            rec.orderCode = q.value(1).toString();
+            rec.barcode = q.value(2).toString();     // EPC
+            rec.sku = q.value(3).toString();
+            rec.gridNum = q.value(4).toString();     // 实际落格号
+            rec.carNum = q.value(5).toString();
+            rec.firstCar = q.value(6).toString();
+            rec.lastCar  = q.value(7).toString();
+            rec.gridCount = q.value(8).toInt();
+            rec.volu = q.value(9).toString();
+            rec.sortTime = q.value(10).toString();
+            rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();
+            result.append(rec);
+        }
+        Data_INFO("[SortingDB] queryBySku sku=%s limit=%d resultCount=%d",
+            skuInput.toLocal8Bit().data(), limit, result.size());
+        return result;
+    });
+}
+
+// ★ 2026-09-11 重扫重投：某波次某 EPC 的首条落格号（无记录返回空串）
+//   用途：重扫落格时比对"本次落格号 vs 首落格号"，不一致则告警 + 异常留痕（不改账）
+QString SortingDatabase::getFirstSortedGrid(const QString& orderCode, const QString& epc)
+{
+    return runOnDbThread([&]() -> QString {
+        if (!m_bOpened || orderCode.isEmpty() || epc.isEmpty()) return QString();
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isValid() || !db.isOpen()) return QString();
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SELECT_FIRST_GRID_BY_EPC);
+        q.addBindValue(orderCode);
+        q.addBindValue(epc);
+        if (q.exec() && q.next())
+            return q.value(0).toString();
+        return QString();
     });
 }
 

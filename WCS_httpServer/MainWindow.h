@@ -101,7 +101,7 @@ private:
     QPushButton* m_btnStartStop    = nullptr;  // 「开始接收任务/结束任务」按钮
     QLabel*      m_lblServerStatus = nullptr;  // 服务状态指示（●接收中/●停止中/●未接收任务）
     QLabel*      m_lblPort         = nullptr;  // 监听端口显示
-    QSpinBox*    m_spinBindCount   = nullptr;  // 期望绑定数量（波次下发时校验全部绑定用，默认66）
+    QSpinBox*    m_spinBindCount   = nullptr;  // 期望绑定数量（波次下发时校验全部绑定用，默认1）
     QLabel*      m_lblBindCountHint = nullptr;  // 期望绑定数量提示标签
 
     // ──── TCP 连接状态 UI ────
@@ -155,6 +155,7 @@ private:
     int          m_bindingCols     = 4;        // 每行列数
     int          m_bindingRows     = BINDING_SLOT_COUNT / m_bindingCols;
     QLabel*      m_lblBoundCount   = nullptr;  // 已绑定数量
+    QLabel*      m_lblLockedCount  = nullptr;  // ★ 2026-09-11 已锁格数量（黄色，紧跟"已绑定"显示）
     QLabel*      m_lblUnboundCount = nullptr;  // 未绑定数量
     bool         m_bindingDirty    = false;     // ★ 绑定数据变更标记（避免无效刷新）
 

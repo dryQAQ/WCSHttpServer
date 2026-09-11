@@ -442,50 +442,68 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
             continue;
         }
 
-        // ★ 2026-09-09 需求5：多格口锁格选格
-        //   - 无锁格 → 取首个匹配（unlocked[0] 即列表首个）
-        //   - 部分锁格 → 取首个未锁格
-        //   - 全部锁格 → 取首个匹配（照发，日志 WARN 便于追溯）
-        if (vecGrid.size() > 1)
+        // ★ 2026-09-09 选格（客户口径，两阶段）：
+        //   ① WCS 禁用格口（满箱后旧箱已归档、等待 WMS 重发 H6 重绑）一律不参与分配；
+        //      若映射内【全部】格口都处于该状态 → 不发指令（记日志/异常，等重绑或人工处理），
+        //      避免把货投到已满箱、无可用容器的格口（含单格口映射场景）
+        //   ② 在可用格口内按需求5选格：无锁格→首个匹配；部分锁格→首个未锁格；全部锁格→首个匹配
+        QString selReason;
+        const int mapCount = (int)vecGrid.size();
         {
-            std::vector<int> unlocked;
-            for (int g : vecGrid)
-            {
-                if (!isGridLocked(g))
-                    unlocked.push_back(g);
-            }
-            if (unlocked.empty())
-            {
-                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 全部格口已锁格 code=%s grids=%s 按需求取首个匹配 grid=%d",
-                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(), vecGrid[0]);
-                vecGrid = { vecGrid[0] };
-            }
-            else
-            {
-                vecGrid = { unlocked[0] };   // 首个未锁格（无锁格时即首个匹配）
-            }
-        }
-
-        // ★ 禁用格口过滤（满箱锁格后禁用，WMS重新绑定H6前跳过）
-        //   ★ 需求5口径：全部禁用（=全部锁格）也取首个匹配照发，不再跳过丢件
-        {
-            std::vector<int> enabled;
+            std::vector<int> avail;   // 可用 = 未被 WCS 禁用（满箱未重绑）
             for (int g : vecGrid)
             {
                 if (!isGridDisabled(g))
-                    enabled.push_back(g);
+                    avail.push_back(g);
             }
-            if (enabled.empty())
+
+            if (avail.empty())
             {
-                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 选中格口已禁用 code=%s grid=%d 按需求取首个匹配照发（全部锁格/禁用）",
-                    code.toLocal8Bit().data(), vecGrid[0]);
-                vecGrid = { vecGrid[0] };
+                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 映射内全部格口满箱未重绑(禁用) code=%s grids=%s —— 不发指令，等待WMS重发H6或人工处理",
+                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+                failCount++;
+                continue;   // ★ 决策③：禁用格口不发（单格口映射同样跳过）
+            }
+
+            if (avail.size() > 1)
+            {
+                std::vector<int> unlocked;
+                for (int g : avail)
+                {
+                    if (!isGridLocked(g))
+                        unlocked.push_back(g);
+                }
+                if (unlocked.empty())
+                {
+                    selReason = QString::fromUtf8("多格口[%1]可用格口全部物理锁格→取首个匹配%2").arg(gridStr).arg(avail[0]);
+                    PLC_LOG_WARN("sendBatchCodesWithEpcCache: 可用格口全部物理锁格 code=%s grids=%s 按需求取首个匹配 grid=%d",
+                        code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(), avail[0]);
+                    vecGrid = { avail[0] };
+                }
+                else
+                {
+                    if (unlocked.size() < avail.size())
+                        selReason = QString::fromUtf8("多格口[%1]部分物理锁格→首个未锁格%2").arg(gridStr).arg(unlocked[0]);
+                    else if ((int)avail.size() < mapCount)
+                        selReason = QString::fromUtf8("多格口[%1]部分格口满箱未重绑→可用中取首个%2").arg(gridStr).arg(unlocked[0]);
+                    else
+                        selReason = QString::fromUtf8("多格口[%1]无锁格→取首个匹配").arg(gridStr);
+                    vecGrid = { unlocked[0] };
+                }
             }
             else
             {
-                vecGrid = enabled;
+                selReason = isGridLocked(avail[0])
+                    ? QString::fromUtf8("单格口映射[%1]物理锁格中→按需求照发").arg(gridStr)
+                    : QString::fromUtf8("单格口映射[%1]").arg(gridStr);
+                vecGrid = { avail[0] };
             }
         }
+
+        // ★ 2026-09-09 选格结果日志：现场核对"这件货为什么去这个格口"（映射/锁格/禁用/最终选中）
+        PLC_LOG_INFO("选格 code=%s 映射=[%s] 选中格=%d 原因=%s",
+            code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+            vecGrid.empty() ? -1 : vecGrid[0], selReason.toLocal8Bit().data());
 
         // ★ 从回调获取 RFID 小车号，默认 DEFAULT_CAR_NUM
         int car = DEFAULT_CAR_NUM;

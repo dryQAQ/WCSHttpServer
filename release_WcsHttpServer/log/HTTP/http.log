@@ -61226,3 +61226,65 @@ volu:1234
 2026-09-10 04:32:14.270 [0x0000a730] INFO  HTTP - 	健康检查 accept=0 close=0 active=0 requests=0 queue=0 bizPool=90/90 tasks=0 plcRecvTasks=0 epcCache=0
 2026-09-10 04:33:14.267 [0x0000a730] INFO  HTTP - [TID-1788962414274-3864965f][HttpServer::persistDailyPeak:3411] 效率统计 峰值落库 date=2026-09-09 peakPerMinute=90
 2026-09-10 04:33:14.267 [0x0000a730] INFO  HTTP - 	健康检查 accept=0 close=0 active=0 requests=0 queue=0 bizPool=90/90 tasks=0 plcRecvTasks=0 epcCache=0
+2026-09-10 11:29:31.824 [0x00007bc4] INFO  HTTP - [TID-1789010971823-ee6d4951][HttpServer::HttpServer:55] 分拣记录数据库已打开 path=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/data/sorting_records.db
+2026-09-10 11:29:31.826 [0x00007bc4] INFO  HTTP - 	业务线程池已创建 threads=90
+2026-09-10 11:29:31.826 [0x00007bc4] INFO  HTTP - 	PLC反馈接收专用线程池已创建 threads=4
+2026-09-10 11:29:31.837 [0x00007bc4] INFO  HTTP - [TID-1789010971823-ee6d4951][HttpServer::startDevices:757] PLC监听服务已启动 port=2000（等待PLC连接）
+2026-09-10 11:29:33.874 [0x00007bc4] INFO  HTTP - [TID-1789010971823-ee6d4951][HttpServer::startDevices:778] RFID推送客户端发起连接 ip=127.0.0.1 port=2010
+2026-09-10 11:29:33.874 [0x00007bc4] INFO  HTTP - [TID-1789010971823-ee6d4951][HttpServer::startDevices:791] 设备层启动完成（PLC/RFID 常驻；WMS 任务接收由"开始接收任务"控制）
+2026-09-10 11:29:33.964 [0x00007bc4] INFO  HTTP - 	HP-Socket配置: workerThreads=16 maxConn=600 keepAlive=30000ms
+2026-09-10 11:29:33.967 [0x00007bc4] INFO  HTTP - [TID-1789010971823-ee6d4951][HttpServer::restoreWaveFromDB:946] 检测到上一波次未完成 orderCode=PP2026MOCK630 status=3 items=65 updatedAt=2026-09-09 14:01:59.142（不恢复到当前任务流）
+2026-09-10 11:29:50.511 [0x00007bc4] INFO  HTTP - [TID-1789010971823-ee6d4951][HttpClient::~HttpClient:19] [析构] HttpClient 开始销毁 pending=0
+2026-09-10 11:29:50.511 [0x00007bc4] INFO  HTTP - [TID-1789010971823-ee6d4951][HttpClient::~HttpClient:36] [析构] HttpClient 销毁完成
+2026-09-10 23:13:35.822 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpServer::HttpServer:55] 分拣记录数据库已打开 path=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/data/sorting_records.db
+2026-09-10 23:13:35.825 [0x0000aba8] INFO  HTTP - 	业务线程池已创建 threads=90
+2026-09-10 23:13:35.825 [0x0000aba8] INFO  HTTP - 	PLC反馈接收专用线程池已创建 threads=4
+2026-09-10 23:13:35.840 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpServer::startDevices:760] PLC监听服务已启动 port=2000（等待PLC连接）
+2026-09-10 23:13:37.871 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpServer::startDevices:781] RFID推送客户端发起连接 ip=127.0.0.1 port=2010
+2026-09-10 23:13:37.871 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpServer::startDevices:794] 设备层启动完成（PLC/RFID 常驻；WMS 任务接收由"开始接收任务"控制）
+2026-09-10 23:13:38.000 [0x0000aba8] INFO  HTTP - 	HP-Socket配置: workerThreads=16 maxConn=600 keepAlive=30000ms
+2026-09-10 23:13:38.002 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpServer::restoreWaveFromDB:965] 检测到上一波次未完成 orderCode=PP2026MOCK630 status=3 items=65 updatedAt=2026-09-09 14:01:59.142（不恢复到当前任务流）
+2026-09-10 23:14:35.816 [0x0000aba8] INFO  HTTP - 	健康检查 accept=0 close=0 active=0 requests=0 queue=0 bizPool=90/90 tasks=0 plcRecvTasks=0 epcCache=0
+2026-09-10 23:14:43.239 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpServer::startNewWaveTask:1632] 新任务：当前本就空闲（无波次）
+2026-09-10 23:14:43.239 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpServer::startNewWaveTask:1656] 新任务 格口已恢复，容器绑定保留 0 个（供下一波次沿用，WMS 新 H6 会覆盖）
+2026-09-10 23:15:35.816 [0x0000aba8] INFO  HTTP - 	健康检查 accept=0 close=0 active=0 requests=0 queue=0 bizPool=90/90 tasks=0 plcRecvTasks=0 epcCache=0
+2026-09-10 23:16:35.821 [0x0000aba8] INFO  HTTP - 	健康检查 accept=0 close=0 active=0 requests=0 queue=0 bizPool=90/90 tasks=0 plcRecvTasks=0 epcCache=0
+2026-09-10 23:17:35.821 [0x0000aba8] INFO  HTTP - 	健康检查 accept=0 close=0 active=0 requests=0 queue=0 bizPool=90/90 tasks=0 plcRecvTasks=0 epcCache=0
+2026-09-10 23:18:10.851 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpClient::~HttpClient:19] [析构] HttpClient 开始销毁 pending=0
+2026-09-10 23:18:10.851 [0x0000aba8] INFO  HTTP - [TID-1789053215821-5138f55d][HttpClient::~HttpClient:36] [析构] HttpClient 销毁完成
+2026-09-10 23:19:49.638 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::HttpServer:55] 分拣记录数据库已打开 path=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/data/sorting_records.db
+2026-09-10 23:19:49.640 [0x0000a3e0] INFO  HTTP - 	业务线程池已创建 threads=90
+2026-09-10 23:19:49.641 [0x0000a3e0] INFO  HTTP - 	PLC反馈接收专用线程池已创建 threads=4
+2026-09-10 23:19:49.652 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::startDevices:760] PLC监听服务已启动 port=2000（等待PLC连接）
+2026-09-10 23:19:51.685 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::startDevices:781] RFID推送客户端发起连接 ip=127.0.0.1 port=2010
+2026-09-10 23:19:51.685 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::startDevices:794] 设备层启动完成（PLC/RFID 常驻；WMS 任务接收由"开始接收任务"控制）
+2026-09-10 23:19:51.781 [0x0000a3e0] INFO  HTTP - 	HP-Socket配置: workerThreads=16 maxConn=600 keepAlive=30000ms
+2026-09-10 23:19:51.785 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::restoreWaveFromDB:965] 检测到上一波次未完成 orderCode=PP2026MOCK630 status=3 items=65 updatedAt=2026-09-09 14:01:59.142（不恢复到当前任务流）
+2026-09-10 23:19:59.306 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::flushUnreportedFullboxes:3482] 完结前满箱补发完成 order= flushed=0
+2026-09-10 23:19:59.307 [0x0000a3e0] WARN  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::sendEnd:3972] 完结回传触发失败（H8） 条件不满足或状态迁移拒绝 status=0
+2026-09-10 23:20:00.314 [0x0000a3e0] INFO  HTTP - 	HP-Socket配置: workerThreads=16 maxConn=600 keepAlive=30000ms
+2026-09-10 23:20:00.317 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::restoreWaveFromDB:965] 检测到上一波次未完成 orderCode=PP2026MOCK630 status=3 items=65 updatedAt=2026-09-09 14:01:59.142（不恢复到当前任务流）
+2026-09-10 23:20:03.516 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::flushUnreportedFullboxes:3482] 完结前满箱补发完成 order= flushed=0
+2026-09-10 23:20:03.516 [0x0000a3e0] WARN  HTTP - [TID-1789053589638-8a6e6cb8][HttpServer::sendEnd:3972] 完结回传触发失败（H8） 条件不满足或状态迁移拒绝 status=0
+2026-09-10 23:20:45.531 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpClient::~HttpClient:19] [析构] HttpClient 开始销毁 pending=0
+2026-09-10 23:20:45.531 [0x0000a3e0] INFO  HTTP - [TID-1789053589638-8a6e6cb8][HttpClient::~HttpClient:36] [析构] HttpClient 销毁完成
+2026-09-10 23:37:07.983 [0x0000afec] INFO  HTTP - [TID-1789054627983-f4df3933][HttpServer::HttpServer:55] 分拣记录数据库已打开 path=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/data/sorting_records.db
+2026-09-10 23:37:07.986 [0x0000afec] INFO  HTTP - 	业务线程池已创建 threads=90
+2026-09-10 23:37:07.986 [0x0000afec] INFO  HTTP - 	PLC反馈接收专用线程池已创建 threads=4
+2026-09-10 23:37:07.998 [0x0000afec] INFO  HTTP - [TID-1789054627983-f4df3933][HttpServer::startDevices:760] PLC监听服务已启动 port=2000（等待PLC连接）
+2026-09-10 23:37:10.033 [0x0000afec] INFO  HTTP - [TID-1789054627983-f4df3933][HttpServer::startDevices:781] RFID推送客户端发起连接 ip=127.0.0.1 port=2010
+2026-09-10 23:37:10.034 [0x0000afec] INFO  HTTP - [TID-1789054627983-f4df3933][HttpServer::startDevices:794] 设备层启动完成（PLC/RFID 常驻；WMS 任务接收由"开始接收任务"控制）
+2026-09-10 23:37:10.139 [0x0000afec] INFO  HTTP - 	HP-Socket配置: workerThreads=16 maxConn=600 keepAlive=30000ms
+2026-09-10 23:37:10.143 [0x0000afec] INFO  HTTP - [TID-1789054627983-f4df3933][HttpServer::restoreWaveFromDB:965] 检测到上一波次未完成 orderCode=PP2026MOCK630 status=3 items=65 updatedAt=2026-09-09 14:01:59.142（不恢复到当前任务流）
+2026-09-10 23:37:16.275 [0x0000afec] INFO  HTTP - [TID-1789054627983-f4df3933][HttpClient::~HttpClient:19] [析构] HttpClient 开始销毁 pending=0
+2026-09-10 23:37:16.275 [0x0000afec] INFO  HTTP - [TID-1789054627983-f4df3933][HttpClient::~HttpClient:36] [析构] HttpClient 销毁完成
+2026-09-10 23:39:59.593 [0x00005b94] INFO  HTTP - [TID-1789054799592-9dc4a3b6][HttpServer::HttpServer:55] 分拣记录数据库已打开 path=D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/data/sorting_records.db
+2026-09-10 23:39:59.598 [0x00005b94] INFO  HTTP - 	业务线程池已创建 threads=90
+2026-09-10 23:39:59.598 [0x00005b94] INFO  HTTP - 	PLC反馈接收专用线程池已创建 threads=4
+2026-09-10 23:39:59.614 [0x00005b94] INFO  HTTP - [TID-1789054799592-9dc4a3b6][HttpServer::startDevices:760] PLC监听服务已启动 port=2000（等待PLC连接）
+2026-09-10 23:40:01.634 [0x00005b94] INFO  HTTP - [TID-1789054799592-9dc4a3b6][HttpServer::startDevices:781] RFID推送客户端发起连接 ip=127.0.0.1 port=2010
+2026-09-10 23:40:01.634 [0x00005b94] INFO  HTTP - [TID-1789054799592-9dc4a3b6][HttpServer::startDevices:794] 设备层启动完成（PLC/RFID 常驻；WMS 任务接收由"开始接收任务"控制）
+2026-09-10 23:40:01.725 [0x00005b94] INFO  HTTP - 	HP-Socket配置: workerThreads=16 maxConn=600 keepAlive=30000ms
+2026-09-10 23:40:01.731 [0x00005b94] INFO  HTTP - [TID-1789054799592-9dc4a3b6][HttpServer::restoreWaveFromDB:965] 检测到上一波次未完成 orderCode=PP2026MOCK630 status=3 items=65 updatedAt=2026-09-09 14:01:59.142（不恢复到当前任务流）
+2026-09-10 23:40:14.117 [0x00005b94] INFO  HTTP - [TID-1789054799592-9dc4a3b6][HttpClient::~HttpClient:19] [析构] HttpClient 开始销毁 pending=0
+2026-09-10 23:40:14.118 [0x00005b94] INFO  HTTP - [TID-1789054799592-9dc4a3b6][HttpClient::~HttpClient:36] [析构] HttpClient 销毁完成

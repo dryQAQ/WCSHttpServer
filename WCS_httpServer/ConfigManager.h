@@ -45,7 +45,7 @@ struct AppConfig
     // ──── 波次配置 ────
     int     waveTimeoutMin    = WAVE_TIMEOUT_MIN_DEFAULT; // 波次超时(分钟, 0=不超时)
     int     maxRetryCount     = WAVE_MAX_RETRY;           // 异常 SKU 最大重试次数
-    int     expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT; // 期望绑定数量（波次下发时校验全部绑定用，默认66）
+    int     expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT; // 期望绑定数量（波次下发时校验全部绑定用，默认1）
 
     // ──── 网络超时 ────
     int     httpTimeoutMs         = HTTP_TIMEOUT_MS;          // HTTP 请求超时(ms)
@@ -79,6 +79,11 @@ struct AppConfig
 
     // ──── S7 分拣增强配置（修改后需重启服务）────
     bool    sortingEpcDedup     = SORTING_EPC_DEDUP;          // EPC 任务内防重（true/false）
+    // ★ 2026-09-11 同波次重扫重投（拿起已落格的件重新上料 → 仍按原格口下发）
+    bool    rescanResendEnabled = RESCAN_RESEND_ENABLED;      // 重扫重投开关
+    int     rescanResendCooldownMs = RESCAN_RESEND_COOLDOWN_MS; // 同一 EPC 两次下发最小间隔(ms)
+    int     rescanResendMaxTimes   = RESCAN_RESEND_MAX_TIMES;   // 同一 EPC 每波次最多重发次数
+    int     plcInFlightTimeoutMs   = PLC_INFLIGHT_TIMEOUT_MS;   // PLC 在途超时(ms)，超时后允许重投
     QString sortingGridCapPolicy = SORTING_GRID_CAP_POLICY;   // 格口上限策略（reject/exception/allow）
     QString sortingOrderQtyValidate = SORTING_ORDERQTY_VALIDATE; // orderQty校验模式（strict/loose）
     QString sortingConflictPolicy = SORTING_CONFLICT_POLICY;   // 冲突策略（STRICT_EXCEPTION/LOOSE_FIRST）

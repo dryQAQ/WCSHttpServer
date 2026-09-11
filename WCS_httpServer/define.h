@@ -189,7 +189,7 @@
 // 容器格口绑定 → MainWindow 容器绑定面板
 // ═══════════════════════════════════════════════════════════════════════════
 #define BINDING_SLOT_COUNT        66      // 容器格口总数（= 分拣机格口数，可扩展）
-#define DEFAULT_EXPECTED_BIND_COUNT 66     // 期望绑定数量默认值（波次下发时校验全部绑定用，可配置）
+#define DEFAULT_EXPECTED_BIND_COUNT 1      // 期望绑定数量默认值（波次下发时校验全部绑定用；★ 2026-09-11 现场口径=1）
 #define FEEDBACK_DISPLAY_MAX       3      // PLC 反馈批量展示上限（日志中最多显示前N条详情）
 #define GRID_KEY_PADDING           3      // 格口号零填充宽度（WMS 格式: "001"~"066"，与绑定/PLC/存储 key 一致）
 
@@ -241,6 +241,16 @@
 #define NOT_READY_RETRY_INTERVAL_MS 5000     // 未就绪重试间隔(ms)，默认5秒
 #define EPC_CACHE_ALERT_THRESHOLD   10000    // EpcCache 条目数告警阈值（健康日志观测：理论容量=推送速率×300sTTL，超阈值预警）
 #define PLC_SEND_TIMEOUT_MS         1000     // RFID推送→PLC发送超时阈值(ms)，超过则入异常格口（现场实时性要求≤1s）
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-11 同波次「重扫重投」配置（拿起已落格的件重新上料 → 仍按原格口下发）
+//   背景：此前 m_sentEpcs 以"本波次已发送过"永久去重，导致重投的件收不到格口指令；
+//   改为「在途去重」：PLC 落格反馈到达即出在途，之后再被 RFID 读到允许按原格口重投。
+// ═══════════════════════════════════════════════════════════════════════════
+#define RESCAN_RESEND_ENABLED       true     // 重扫重投开关（false=回退"已发送过不再下发"的旧行为）
+#define RESCAN_RESEND_COOLDOWN_MS   1000     // 同一 EPC 两次下发的最小间隔(ms)，防 RFID 连读/抖动（过快重投不被吞）
+#define RESCAN_RESEND_MAX_TIMES     3        // 同一 EPC 每波次最多重投次数（超限写异常表留痕；首投不计入）
+#define PLC_INFLIGHT_TIMEOUT_MS     30000    // PLC 在途超时(ms)：迟迟未收到落格反馈时，超时后允许重投（防永久锁死）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WMS 回传响应日志截断（防止超长响应体撑满日志文件）
@@ -346,14 +356,41 @@
 // 按波次号查询 — 输入波次号，返回该波次下的所有分拣记录（按时间倒序）→ 状态=已分拣
 #define SQL_QUERY_BY_ORDER         SQL_SELECT_FIELDS "FROM sorting_records WHERE order_code = ? ORDER BY id DESC LIMIT ?"
 // ★ 2026-09-09 需求2：按格口查询分拣明细（输入格口号，返回该格所有分拣记录）
-#define SQL_QUERY_BY_GRID          SQL_SELECT_FIELDS "FROM sorting_records WHERE grid_num = ? ORDER BY id DESC LIMIT ?"
+// ★ 2026-09-10 查询兼容：输入支持三种写法，统一归一后再匹配
+//   ① 内部 3 位 key "007"（PLC反馈/绑定/DB 存储格式）
+//   ② 裸数字 "7"（旧数据/人工习惯）
+//   ③ WMS 格口编码 "22007"（22+3位，现场 WMS 侧写法）
+//   绑定顺序：?1=归一内部key("007")  ?2=用户原始输入  ?3=归一内部key(整数比较用)  ?4=limit
+#define SQL_QUERY_BY_GRID \
+    SQL_SELECT_FIELDS "FROM sorting_records " \
+    "WHERE grid_num = ? "                                    /* 归一内部 key 精确匹配 "007" */ \
+    "   OR grid_num = ? "                                    /* 用户原始输入（兼容历史存 WMS 编码的数据） */ \
+    "   OR CAST(grid_num AS INTEGER) = CAST(? AS INTEGER) "  /* 整数比较：兼容 "7" / "007" 混存 */ \
+    "ORDER BY id DESC LIMIT ?"
+// ★ 2026-09-10 需求1：按 SKU 查询落格明细（该 SKU 下所有 EPC 及其实际落格号）
+//   每条落格记录 = 1 个 EPC，grid_num 即该 EPC 的实际落格号
+#define SQL_QUERY_BY_SKU \
+    SQL_SELECT_FIELDS "FROM sorting_records " \
+    "WHERE TRIM(sku) = TRIM(?) COLLATE NOCASE ORDER BY id DESC LIMIT ?"
+// ★ 2026-09-11 重扫重投：查某波次某 EPC 的**首条**落格号（重扫落格号一致性告警用）
+#define SQL_SELECT_FIRST_GRID_BY_EPC \
+    "SELECT grid_num FROM sorting_records WHERE order_code = ? AND barcode = ? ORDER BY id ASC LIMIT 1"
 // ★ 2026-09-09 需求2：全格口汇总（每格一行：格口号/分拣件数/SKU数/最近容器号/最近分拣时间）
+// ★ 2026-09-10 归一：按格口整数归组（"7"/"007" 不再重复成两行），显示统一为 3 位 key
 #define SQL_QUERY_GRID_SUMMARY \
-    "SELECT s.grid_num, COUNT(*) AS cnt, COUNT(DISTINCT s.sku) AS sku_cnt, " \
-    "  (SELECT s2.boxcode FROM sorting_records s2 WHERE s2.grid_num = s.grid_num " \
-    "   ORDER BY s2.id DESC LIMIT 1) AS box, " \
+    "SELECT " \
+    "  CASE WHEN CAST(s.grid_num AS INTEGER) > 0 " \
+    "       THEN printf('%03d', CAST(s.grid_num AS INTEGER)) ELSE s.grid_num END AS grid_key, " \
+    "  COUNT(*) AS cnt, COUNT(DISTINCT s.sku) AS sku_cnt, " \
+    "  (SELECT s2.boxcode FROM sorting_records s2 " \
+    "    WHERE s2.grid_num = s.grid_num " \
+    "       OR CAST(s2.grid_num AS INTEGER) = CAST(s.grid_num AS INTEGER) " \
+    "    ORDER BY s2.id DESC LIMIT 1) AS box, " \
     "  MAX(s.sort_time) AS last_t " \
-    "FROM sorting_records s GROUP BY s.grid_num ORDER BY s.grid_num"
+    "FROM sorting_records s " \
+    "GROUP BY CASE WHEN CAST(s.grid_num AS INTEGER) > 0 " \
+    "              THEN printf('%03d', CAST(s.grid_num AS INTEGER)) ELSE s.grid_num END " \
+    "ORDER BY 1"
 // 查询全部记录 — 不设条件，返回最新的分拣记录（按时间倒序）→ 状态=已分拣
 #define SQL_QUERY_ALL              SQL_SELECT_FIELDS "FROM sorting_records ORDER BY id DESC LIMIT ?"
 

@@ -16,6 +16,11 @@
 #include <QFrame>
 #include <QScrollArea>
 #include <QVector>
+#include <QMap>            // ★ 2026-09-10 SKU查询：波次→计划格口分组
+#include <QSet>            // ★ 2026-09-10 SKU查询：实际落格格口去重
+#include <QStringList>     // ★ 2026-09-10 SKU查询：计划格口列表
+#include <QFont>           // ★ 2026-09-10 实际落格号异常高亮
+#include <QColor>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QTextCursor>
@@ -37,6 +42,18 @@
 //   插头/删尾均为轻量操作（经现场实测 600~800ms/件 速率下占用可忽略）。
 // ============================================================================
 static const int LIVE_TABLE_MAX_ROWS = 5000;
+
+// ============================================================================
+// ★ 2026-09-10 查询更新：格口号归一（显示与匹配统一口径）
+//   现场三种写法 → 统一内部 3 位 key（与 PLC 反馈 / 绑定 / DB 存储一致）：
+//     "7"（裸数字） / "007"（补零） / "22007"（WMS 格口编码 22+3位） → "007"
+//   ★ 2026-09-11：统一委托 WmsGridCode.h::normalizeGridKey()（全系统单一实现，
+//     含"前缀未配置"兜底）；UI 侧只做调用，不做任何与输入写法相关的差异处理。
+// ============================================================================
+static QString gridKeyOf(const QString& gridStr)
+{
+    return normalizeGridKey(gridStr);
+}
 
 static void pushLiveRow(QTableWidget* tbl, const QStringList& cells, bool warnRed = false)
 {
@@ -381,7 +398,7 @@ void MainWindow::setupUI()
     m_lblPort = new QLabel(QString("端口: %1").arg(cfgMgr->config().wmsListenPort));
     m_lblPort->setAlignment(Qt::AlignCenter);
 
-    // ★ 期望绑定数量输入（默认66，每批次可配置不同数量）
+    // ★ 期望绑定数量输入（默认1，每批次可配置不同数量）
     //   ★ 2026-09-08 UI需求1：该组控件**界面上不再显示**（值仍由 XML expectedBindCount 生效）；
     //   控件保留创建与配置同步逻辑，便于后续需要时一行恢复显示
     QHBoxLayout* bindCountRow = new QHBoxLayout();
@@ -391,7 +408,7 @@ void MainWindow::setupUI()
     m_spinBindCount->setMinimum(1);
     m_spinBindCount->setMaximum(999);
     m_spinBindCount->setValue(cfgMgr->config().expectedBindCount);
-    m_spinBindCount->setToolTip(QCoreApplication::translate("MainWindow", "波次下发时校验绑定数量，默认66。每批次可修改"));
+    m_spinBindCount->setToolTip(QCoreApplication::translate("MainWindow", "波次下发时校验绑定数量，默认1。每批次可修改"));
     m_spinBindCount->setStyleSheet("QSpinBox { font-size: 13px; padding: 2px; }");
     m_spinBindCount->setFixedWidth(80);
     bindCountRow->addStretch();
@@ -702,19 +719,26 @@ void MainWindow::setupUI()
         "border-radius: 4px; padding: 6px 16px; }"
         "QPushButton:hover { background-color: #C62828; }");
     btnClearBinds->setToolTip(QString::fromUtf8("清空全部格口当前容器绑定（恢复初始状态）；历史记录归档保留在数据库，可追溯/可沿用"));
-    QLabel* bindHint = new QLabel("绿色=已绑定  灰色=未绑定  黄色=满箱锁格");
+    // ★ 2026-09-11 图例补充橙色态（已解锁·待重绑）
+    QLabel* bindHint = new QLabel(QString::fromUtf8("绿色=已绑定  灰色=未绑定  黄色=满箱锁格  橙色=已解锁·待重绑"));
     bindHint->setStyleSheet("font-size: 12px; color: #888;");
     bindBtnRow->addWidget(btnRefreshBind);
     bindBtnRow->addWidget(btnClearBinds);
     bindBtnRow->addWidget(bindHint);
     bindBtnRow->addStretch();
 
-    // 已绑定/未绑定计数
+    // 已绑定/已锁格/未绑定计数
     m_lblBoundCount = new QLabel();
+    m_lblLockedCount = new QLabel();   // ★ 2026-09-11：已锁格数量（黄色）
     m_lblUnboundCount = new QLabel();
     m_lblBoundCount->setStyleSheet("font-size: 13px; font-weight: bold; color: #4CAF50; padding: 0 8px;");
+    // ★ 黄色 = 与格口"锁格"黄标（#FFC107 底、白字）同色系的计数标：底同色 + 深琥珀字（小字号可读）
+    m_lblLockedCount->setStyleSheet(
+        "font-size: 13px; font-weight: bold; color: #5D4000; background-color: #FFC107;"
+        " border-radius: 7px; padding: 1px 8px;");
     m_lblUnboundCount->setStyleSheet("font-size: 13px; font-weight: bold; color: #E53935; padding: 0 8px;");
     bindBtnRow->addWidget(m_lblBoundCount);
+    bindBtnRow->addWidget(m_lblLockedCount);   // 紧跟「已绑定」显示
     bindBtnRow->addWidget(m_lblUnboundCount);
 
     connect(btnRefreshBind, &QPushButton::clicked, this, &MainWindow::onRefreshBindings);
@@ -865,7 +889,7 @@ void MainWindow::setupUI()
 
     // ★ SKU编码输入（默认隐藏，按SKU查询时显示）
     m_editQuerySku = new QLineEdit();
-    m_editQuerySku->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入SKU编码查询格口分配"));
+    m_editQuerySku->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入SKU编码（显示分配格口 + 每个EPC的实际落格号）"));
     m_editQuerySku->setMinimumWidth(180);
     m_editQuerySku->setVisible(false);
     queryCondRow->addWidget(m_editQuerySku);
@@ -966,7 +990,7 @@ void MainWindow::setupUI()
         m_editQueryBarcode->setVisible(!isSkuMode);
         m_editQuerySku->setVisible(isSkuMode);
         if (index == 2)
-            m_editQueryBarcode->setPlaceholderText(QString::fromUtf8("输入格口号查询该格明细（留空查全格口汇总）"));
+            m_editQueryBarcode->setPlaceholderText(QString::fromUtf8("输入格口号查询该格明细（7 / 007 / 22007 均可；留空查全格口汇总）"));
         else
             m_editQueryBarcode->setPlaceholderText(QString::fromUtf8("输入EPC编码查询（留空查全部）"));
     });
@@ -1234,7 +1258,7 @@ void MainWindow::openConfigEditor()
     QLabel* tip = new QLabel(QString::fromUtf8(
         "配置文件：%1\n\n"
         "保存后立即生效：回传URL/AppKey/method、环境开关(useTestEnv)、HTTP超时、RFID查询地址/鉴权、\n"
-        "RFID心跳开关/间隔、波次超时、重试次数、期望绑定数量。\n"
+        "RFID心跳开关/间隔、波次超时、重试次数、期望绑定数量、重扫重投(rescanResend*)。\n"
         "需重启生效：WMS监听端口、PLC地址/端口、RFID服务端IP/端口、线程池大小、格口显示名。\n"
         "编辑窗口打开期间请勿同时执行会写配置的操作（如绑定变更），以免被覆盖。")
         .arg(cfgPath));
@@ -1337,7 +1361,7 @@ void MainWindow::setupCore()
     m_pServer->loadContainerBindings(cfg.containerBindings);
     m_bindingDirty = true;  // ★ 初始加载后标记为脏，开始接收后首次刷新时更新面板
 
-    // ★ 设置期望绑定数量（从配置文件加载，默认66）
+    // ★ 设置期望绑定数量（从配置文件加载，默认1）
     m_pServer->setExpectedBindCount(cfg.expectedBindCount);
 
     // ★ 回传客户端配置（H7/H8 回传 + RFID SKU-EPC 绑定查询）
@@ -1795,6 +1819,7 @@ void MainWindow::onStartStop()
                 m_bindingBoxLabels[i]->setText("--");
         }
         if (m_lblBoundCount)  m_lblBoundCount->setText("已绑定: 0");
+        if (m_lblLockedCount) m_lblLockedCount->setText(QString::fromUtf8("已锁格: 0"));
         if (m_lblUnboundCount) m_lblUnboundCount->setText("未绑定: 66");
 
         // ★ 结束任务时重置"开始分拣"按钮为初始灰色禁用状态
@@ -1883,6 +1908,10 @@ void MainWindow::onStartStop()
                 appendLog(QString(" RFID查询接口:    %1\n\n").arg(cfg.rfidQueryUrl));
                 appendLog(QString(" RFID推送服务端:  %1:%2 (WCS主动连接)\n\n").arg(cfg.rfidPushServerIp).arg(cfg.rfidPushServerPort));
                 appendLog(QString(" 日志:            保留%1天\n").arg(cfg.logRetainDays));
+                // ★ 2026-09-11 重扫重投口径（拿起已落格的件重新上料 → 仍按原格口下发）
+                appendLog(QString(" 重扫重投:        %1 (冷却%2ms / 每波次上限%3次 / 在途超时%4ms)\n\n")
+                    .arg(cfg.rescanResendEnabled ? QString::fromUtf8("开启") : QString::fromUtf8("关闭"))
+                    .arg(cfg.rescanResendCooldownMs).arg(cfg.rescanResendMaxTimes).arg(cfg.plcInFlightTimeoutMs));
                 appendLog(QString(" 配置文件版本:    %1 (软件版本: %2)\n\n").arg(cfg.configVersion).arg(CONFIG_VERSION));
                 if (cfg.configVersion != CONFIG_VERSION)
                 {
@@ -2281,6 +2310,8 @@ void MainWindow::updateBindingPanel()
 
     QMap<QString, QString> bindings = m_pServer->getContainerBindings();
     int boundCount = 0;
+    int lockedCount = 0;          // ★ 2026-09-11：已锁格数量（黄色，PLC 物理锁格中/满箱锁格）
+    int pendingRebindCount = 0;   // ★ 2026-09-09：已物理解锁但仍等待 WMS 重绑(H6)的格口数
 
     for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
     {
@@ -2292,16 +2323,34 @@ void MainWindow::updateBindingPanel()
         QLabel* lblBox    = m_bindingBoxLabels[i];
         if (!lblStatus || !lblBox) continue;
 
-        // ★ 2026-09-06 三态颜色：锁格=黄(满箱锁格禁用)、已绑定=绿、未绑定=红
-        bool bLocked = m_pPlcMgr && m_pPlcMgr->isGridDisabled(gridNum);
+        // ★ 2026-09-09 四态显示（客户现场：物理解锁后仍显示"锁格"）：
+        //   ① 物理锁格中（S7 DB77 锁格位）           → 黄 "锁格"
+        //   ② 已物理解锁但 WCS 仍禁用（等 H6 重绑）  → 橙 "已解锁·待重绑"
+        //   ③ 未禁用且有容器绑定                     → 绿 箱号
+        //   ④ 其余                                   → 灰 "未绑定"
+        bool bPhysLocked = m_pPlcMgr && m_pPlcMgr->isGridLocked(gridNum);
+        bool bDisabled   = m_pPlcMgr && m_pPlcMgr->isGridDisabled(gridNum);
 
-        if (bLocked)
+        if (bPhysLocked)
         {
             boundCount++;
+            lockedCount++;   // ★ 2026-09-11：黄色"锁格"格口计数
             lblStatus->setStyleSheet(
                 "font-size: 10px; color: white; border-radius: 6px; background-color: #FFC107;");
-            lblStatus->setToolTip(QString("格口%1 已满箱锁格（黄色）：禁止继续分配/落格，等待 WMS 重新绑定(H6)").arg(gridKey));
+            lblStatus->setToolTip(QString("格口%1 物理锁格中（黄色）：PLC 已锁定该格口（S7 锁格位置位）").arg(gridKey));
             lblBox->setText(boxCode.isEmpty() ? QString::fromUtf8("锁格") : boxCode);
+            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
+        }
+        else if (bDisabled)
+        {
+            // ★ 现场已解锁，但满箱后尚未收到 WMS 重发 H6 绑定 → 暂不参与分配（等待重绑）
+            boundCount++;
+            pendingRebindCount++;
+            lblStatus->setStyleSheet(
+                "font-size: 10px; color: white; border-radius: 6px; background-color: #FF9800;");
+            lblStatus->setToolTip(QString("格口%1 已解锁·待重绑（橙色）：现场已物理解锁；"
+                                          "满箱后旧容器已归档，等待 WMS 重新下发容器绑定(H6)后恢复分配").arg(gridKey));
+            lblBox->setText(boxCode.isEmpty() ? QString::fromUtf8("待重绑") : boxCode);
             lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
         }
         else if (!boxCode.isEmpty())
@@ -2325,7 +2374,27 @@ void MainWindow::updateBindingPanel()
 
     int unboundCount = BINDING_SLOT_COUNT - boundCount;
     m_lblBoundCount->setText(QString("已绑定: %1").arg(boundCount));
+    // ★ 2026-09-11 已锁格计数（黄色，紧跟"已绑定"）：PLC 物理锁格中（S7 锁格位=1，满箱锁格）
+    //   口径：黄色"锁格"格口数；橙色"已解锁·待重绑"单独在 tooltip 中给出（未计入本数）
+    if (m_lblLockedCount)
+    {
+        m_lblLockedCount->setText(QString::fromUtf8("已锁格: %1").arg(lockedCount));
+        QString tip = QString::fromUtf8("已锁格: %1（黄色）——PLC 已锁定该格口（S7 锁格位置位/满箱），"
+                                        "禁止继续分配与落格，等待 WMS 重发容器绑定(H6)后恢复")
+                          .arg(lockedCount);
+        if (pendingRebindCount > 0)
+            tip += QString::fromUtf8("\n另有 %1 个格口为「已解锁·待重绑」（橙色）：已物理解锁，等待 WMS 重发 H6").arg(pendingRebindCount);
+        m_lblLockedCount->setToolTip(tip);
+    }
     m_lblUnboundCount->setText(QString("未绑定: %1").arg(unboundCount));
+    // ★ 2026-09-09：待重绑格口数量提示（橙色格口，已解锁但等 H6 重绑）
+    if (m_lblUnboundCount)
+    {
+        m_lblUnboundCount->setToolTip(pendingRebindCount > 0
+            ? QString::fromUtf8("未绑定: %1（其中 %2 个为「已解锁·待重绑」：等待 WMS 重发 H6 容器绑定）")
+                  .arg(unboundCount).arg(pendingRebindCount)
+            : QString::fromUtf8("未绑定: %1").arg(unboundCount));
+    }
 }
 
 // ============================================================================
@@ -3110,7 +3179,12 @@ void MainWindow::onQueryRecords()
         else
         {
             // ── 该格分拣明细 ──
-            QVector<SortingRecord> recs = db->queryByGrid(grid, SORTING_QUERY_MAX_RESULTS);
+            // ★ 2026-09-10/11 查询兼容：输入 "7"（裸数字）/ "007"（补零）/ "22007"（WMS编码）等写法，
+            //   统一在内部归一成同一个内部格口 key 后再查询——UI 表现与结果完全一致（无差异）
+            const QString gridKey = gridKeyOf(grid);
+            const QString wmsCode = gridToWmsCode(gridKey);   // 内部 key → WMS 编码（"007" → "22007"）
+
+            QVector<SortingRecord> recs = db->queryByGrid(gridKey, SORTING_QUERY_MAX_RESULTS);
             m_tblRecords->setColumnCount(10);
             m_tblRecords->setHorizontalHeaderLabels({
                 QString::fromUtf8("序号"),
@@ -3135,7 +3209,10 @@ void MainWindow::onQueryRecords()
                 m_tblRecords->setItem(i, 1, new QTableWidgetItem(rec.orderCode));
                 m_tblRecords->setItem(i, 2, new QTableWidgetItem(rec.barcode));
                 m_tblRecords->setItem(i, 3, new QTableWidgetItem(rec.sku));
-                m_tblRecords->setItem(i, 4, new QTableWidgetItem(rec.gridNum));
+                // 格口号统一按内部 3 位 key 显示（历史脏数据原样显示）
+                auto* gridItem = new QTableWidgetItem(gridKeyOf(rec.gridNum));
+                gridItem->setToolTip(QString::fromUtf8("WMS编码: %1").arg(gridToWmsCode(gridKeyOf(rec.gridNum))));
+                m_tblRecords->setItem(i, 4, gridItem);
                 m_tblRecords->setItem(i, 5, new QTableWidgetItem(rec.boxcode));
                 auto* c6 = new QTableWidgetItem(QString::number(rec.gridCount));
                 c6->setTextAlignment(Qt::AlignCenter);
@@ -3148,9 +3225,16 @@ void MainWindow::onQueryRecords()
                 m_tblRecords->setItem(i, 9, statusItem);
             }
             m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
-            m_lblRecordCount->setText(QString::fromUtf8("格口 [%1] 分拣数量：%2 件")
-                .arg(grid).arg(recs.size()));
-            appendLog(QString::fromUtf8("[查询] 格口 [%1] 分拣数量：%2 件").arg(grid).arg(recs.size()));
+            m_lblRecordCount->setText(QString::fromUtf8("格口 [%1]（WMS编码 %2）分拣数量：%3 件")
+                .arg(gridKey).arg(wmsCode).arg(recs.size()));
+            // ★ 2026-09-11：日志不体现原始输入写法（"7"/"007"/"22007" 完全一致，UI 无差异）
+            appendLog(QString::fromUtf8("[查询] 格口 [%1]（WMS编码 %2）分拣数量：%3 件")
+                .arg(gridKey).arg(wmsCode).arg(recs.size()));
+            if (recs.isEmpty())
+            {
+                appendLog(QString::fromUtf8("[查询] 格口 [%1] 无分拣记录")
+                    .arg(gridKey), true);
+            }
         }
 
         // 更新数据库统计
@@ -3173,71 +3257,212 @@ void MainWindow::onQueryRecords()
             return;
         }
 
+        // ★ 2026-09-10 需求1：按 SKU 查询格口分配 + 该 SKU 下所有 EPC 及其实际落格号
+        //   ① querySkuGridMapping：WMS 下发的计划格口（计划视角）
+        //   ② queryBySku：sorting_records 落格明细，每条=1 个 EPC，grid_num 即实际落格号（实绩视角）
+        //   一行 = 一个 EPC ↔ 其实际落格号（无落格的计划格口单独出一行"待分拣"）
         QVector<ReturnWaveItemRecord> items = db->querySkuGridMapping(sku);
+        QVector<SortingRecord> details = db->queryBySku(sku, SORTING_QUERY_MAX_RESULTS);
 
-        // ★ 切换表格列头为 SKU 格口分配模式
-        m_tblRecords->setColumnCount(9);
-        m_tblRecords->setHorizontalHeaderLabels({
-            QString::fromUtf8("序号"),
-            QString::fromUtf8("波次号"),
-            QString::fromUtf8("SKU编码"),
-            QString::fromUtf8("格口号"),
-            QString::fromUtf8("格口类型"),
-            QString::fromUtf8("计划数量"),
-            QString::fromUtf8("已分拣数量"),
-            QString::fromUtf8("库位"),
-            QString::fromUtf8("容器号")
-        });
+        // 波次 → 该 SKU 的计划格口列表（判断"实际落格号是否计划外"）
+        QMap<QString, QStringList> planGridsByWave;
+        for (const ReturnWaveItemRecord& it : items)
+            planGridsByWave[it.orderCode] << gridKeyOf(it.gridNum);
 
-        m_tblRecords->setRowCount(0);
-        m_tblRecords->setRowCount(items.size());
-
-        for (int i = 0; i < items.size(); ++i)
+        // 行数据（先组装再渲染，便于展开/去重/配色）
+        struct SkuRow
         {
-            const ReturnWaveItemRecord& item = items[i];
+            QString wave, epc, actualGrid, planGrid, gridTypeText;
+            QString planQty, sortedQty, volu, box, time, status;
+            bool    mismatch = false;   // 实际落格号不在计划格口内
+            bool    pending  = false;   // 计划存在但尚无落格 EPC
+        };
+        QVector<SkuRow> rows;
+        QVector<bool> used(details.size(), false);
+        QSet<QString> actualGridSet;    // 实际落格号去重（跨波次同格口算一个）
+        QSet<QString> planGridSet;      // 计划格口去重（同上）
+        int planRowCount = 0;
 
-            auto* item0 = new QTableWidgetItem(QString::number(i + 1));
-            item0->setTextAlignment(Qt::AlignCenter);
-            m_tblRecords->setItem(i, 0, item0);
+        // ① 计划视角：每个计划格口展开其已落格 EPC
+        for (const ReturnWaveItemRecord& item : items)
+        {
+            const QString planKey = gridKeyOf(item.gridNum);
+            planGridSet.insert(planKey);
 
-            m_tblRecords->setItem(i, 1, new QTableWidgetItem(item.orderCode));
-            m_tblRecords->setItem(i, 2, new QTableWidgetItem(item.inco));
-            m_tblRecords->setItem(i, 3, new QTableWidgetItem(item.gridNum));
-
-            // 格口类型：分类/异常/发货
             QString gridTypeText;
             if (item.gridType == "0")      gridTypeText = QString::fromUtf8("分类");
             else if (item.gridType == "1") gridTypeText = QString::fromUtf8("异常");
             else if (item.gridType == "2") gridTypeText = QString::fromUtf8("发货");
             else                           gridTypeText = item.gridType;
-            m_tblRecords->setItem(i, 4, new QTableWidgetItem(gridTypeText));
 
-            auto* item5 = new QTableWidgetItem(QString::number(item.planQty));
-            item5->setTextAlignment(Qt::AlignCenter);
-            m_tblRecords->setItem(i, 5, item5);
+            int matched = 0;
+            for (int k = 0; k < details.size(); ++k)
+            {
+                if (used[k]) continue;
+                const SortingRecord& d = details[k];
+                if (d.orderCode != item.orderCode) continue;
+                if (gridKeyOf(d.gridNum) != planKey) continue;   // 归一后比较："007" == "7"
 
-            auto* item6 = new QTableWidgetItem(QString::number(item.sortedQty));
-            item6->setTextAlignment(Qt::AlignCenter);
-            m_tblRecords->setItem(i, 6, item6);
+                used[k] = true;
+                ++matched;
+                actualGridSet.insert(gridKeyOf(d.gridNum));
 
-            m_tblRecords->setItem(i, 7, new QTableWidgetItem(item.volu));
-            m_tblRecords->setItem(i, 8, new QTableWidgetItem(item.obxCode));
+                SkuRow r;
+                r.wave         = d.orderCode;
+                r.epc          = d.barcode;                      // EPC编码
+                r.actualGrid   = gridKeyOf(d.gridNum);           // 实际落格号
+                r.planGrid     = planKey;                        // 计划格口
+                r.gridTypeText = gridTypeText;
+                r.planQty      = QString::number(item.planQty);
+                r.sortedQty    = QString::number(item.sortedQty);
+                r.volu         = d.volu.isEmpty() ? item.volu : d.volu;
+                r.box          = d.boxcode.isEmpty() ? item.obxCode : d.boxcode;   // 落格容器优先
+                r.time         = d.sortTime;
+                r.status       = QString::fromUtf8("已分拣");
+                rows.append(r);
+            }
+
+            if (matched == 0)
+            {
+                // 计划有这个格口但尚无 EPC 落格 → 保留一行，状态"待分拣"
+                SkuRow r;
+                r.wave         = item.orderCode;
+                r.planGrid     = planKey;
+                r.gridTypeText = gridTypeText;
+                r.planQty      = QString::number(item.planQty);
+                r.sortedQty    = QString::number(item.sortedQty);
+                r.volu         = item.volu;
+                r.box          = item.obxCode;
+                r.status       = QString::fromUtf8("待分拣");
+                r.pending      = true;
+                rows.append(r);
+            }
+            ++planRowCount;
         }
 
-        // 更新统计标签
-        if (items.size() > 1)
+        // ② 实绩视角补漏：已落格但不属于任何计划格口的 EPC（实际落格号 ≠ 计划格口）
+        for (int k = 0; k < details.size(); ++k)
         {
-            // 同品多格口：高亮显示
-            m_lblRecordCount->setText(QString::fromUtf8("SKU编码 [%1] 分配到 %2 个格口（同品多格口）")
-                .arg(sku).arg(items.size()));
-            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #FF8C00; font-weight: bold;");
+            if (used[k]) continue;
+            const SortingRecord& d = details[k];
+
+            SkuRow r;
+            r.wave       = d.orderCode;
+            r.epc        = d.barcode;
+            r.actualGrid = gridKeyOf(d.gridNum);
+            r.planGrid   = planGridsByWave.value(d.orderCode).join("/");
+            r.volu       = d.volu;
+            r.box        = d.boxcode;
+            r.time       = d.sortTime;
+            r.status     = QString::fromUtf8("已分拣");
+            if (!r.planGrid.isEmpty())
+            {
+                r.planGrid += QString::fromUtf8("（计划外）");
+                r.mismatch  = true;
+            }
+            rows.append(r);
+            actualGridSet.insert(r.actualGrid);
         }
-        else
+
+        // ── 渲染：13 列（新增「EPC编码」「实际落格号」）──
+        m_tblRecords->setColumnCount(13);
+        m_tblRecords->setHorizontalHeaderLabels({
+            QString::fromUtf8("序号"),
+            QString::fromUtf8("波次号"),
+            QString::fromUtf8("SKU编码"),
+            QString::fromUtf8("EPC编码"),
+            QString::fromUtf8("实际落格号"),
+            QString::fromUtf8("计划格口"),
+            QString::fromUtf8("格口类型"),
+            QString::fromUtf8("计划数量"),
+            QString::fromUtf8("已分拣数量"),
+            QString::fromUtf8("库位"),
+            QString::fromUtf8("容器号"),
+            QString::fromUtf8("分拣时间"),
+            QString::fromUtf8("状态")
+        });
+        m_tblRecords->setRowCount(0);
+        m_tblRecords->setRowCount(rows.size());
+
+        int epcRowCount = 0;
+        for (int i = 0; i < rows.size(); ++i)
         {
-            m_lblRecordCount->setText(QString::fromUtf8("SKU编码 [%1] 分配到 %2 个格口")
-                .arg(sku).arg(items.size()));
-            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
+            const SkuRow& r = rows[i];
+
+            auto* c0 = new QTableWidgetItem(QString::number(i + 1));
+            c0->setTextAlignment(Qt::AlignCenter);
+            m_tblRecords->setItem(i, 0, c0);
+
+            m_tblRecords->setItem(i, 1, new QTableWidgetItem(r.wave));
+            m_tblRecords->setItem(i, 2, new QTableWidgetItem(sku));
+
+            if (r.pending)
+            {
+                auto* epcItem = new QTableWidgetItem(QString::fromUtf8("—"));
+                epcItem->setTextAlignment(Qt::AlignCenter);
+                epcItem->setForeground(QColor("#999999"));
+                m_tblRecords->setItem(i, 3, epcItem);
+                m_tblRecords->setItem(i, 4, new QTableWidgetItem(QString()));
+            }
+            else
+            {
+                ++epcRowCount;
+                m_tblRecords->setItem(i, 3, new QTableWidgetItem(r.epc));
+
+                auto* gridItem = new QTableWidgetItem(r.actualGrid);       // 实际落格号
+                gridItem->setTextAlignment(Qt::AlignCenter);
+                gridItem->setToolTip(QString::fromUtf8("EPC %1 实际落格：%2（WMS编码 %3）")
+                    .arg(r.epc).arg(r.actualGrid).arg(gridToWmsCode(r.actualGrid)));
+                if (r.mismatch)
+                {
+                    // 实际落格号与计划格口不一致 → 橙色加粗，便于人工核查
+                    gridItem->setForeground(QColor("#FF8C00"));
+                    QFont f = gridItem->font();
+                    f.setBold(true);
+                    gridItem->setFont(f);
+                }
+                m_tblRecords->setItem(i, 4, gridItem);
+            }
+
+            auto* planItem = new QTableWidgetItem(r.planGrid);
+            planItem->setTextAlignment(Qt::AlignCenter);
+            m_tblRecords->setItem(i, 5, planItem);
+            m_tblRecords->setItem(i, 6, new QTableWidgetItem(r.gridTypeText));
+
+            auto* c7 = new QTableWidgetItem(r.planQty);
+            c7->setTextAlignment(Qt::AlignCenter);
+            m_tblRecords->setItem(i, 7, c7);
+
+            auto* c8 = new QTableWidgetItem(r.sortedQty);
+            c8->setTextAlignment(Qt::AlignCenter);
+            m_tblRecords->setItem(i, 8, c8);
+
+            m_tblRecords->setItem(i, 9,  new QTableWidgetItem(r.volu));
+            m_tblRecords->setItem(i, 10, new QTableWidgetItem(r.box));
+            m_tblRecords->setItem(i, 11, new QTableWidgetItem(r.time));
+
+            auto* statusItem = new QTableWidgetItem(r.status);
+            statusItem->setTextAlignment(Qt::AlignCenter);
+            if (r.pending)
+                statusItem->setForeground(QColor("#999999"));
+            else if (r.mismatch)
+                statusItem->setForeground(QColor("#FF8C00"));
+            else
+                statusItem->setForeground(QColor("#228B22"));
+            m_tblRecords->setItem(i, 12, statusItem);
         }
+        m_tblRecords->resizeRowsToContents();
+
+        // ── 统计标签 ──
+        QString label = QString::fromUtf8("SKU编码 [%1]：计划 %2 条明细（%3 个格口）｜EPC落格明细 %4 条，实际落在 %5 个格口")
+            .arg(sku).arg(planRowCount).arg(planGridSet.size()).arg(epcRowCount).arg(actualGridSet.size());
+        if (details.size() >= SORTING_QUERY_MAX_RESULTS)
+            label += QString::fromUtf8("（已达单次查询上限 %1 条，可能截断）").arg(SORTING_QUERY_MAX_RESULTS);
+        m_lblRecordCount->setText(label);
+        // 同品多格口：高亮显示（沿用原口径）
+        m_lblRecordCount->setStyleSheet(planGridSet.size() > 1
+            ? "font-size: 12px; color: #FF8C00; font-weight: bold;"
+            : "font-size: 12px; color: #555;");
 
         // 更新数据库统计
         SortingStatistics stats = db->statistics();
@@ -3247,7 +3472,8 @@ void MainWindow::onQueryRecords()
             .arg(stats.totalWaves)
             .arg(stats.totalGrids));
 
-        appendLog(QString::fromUtf8("[查询] SKU编码 [%1] 查询到 %2 个格口分配").arg(sku).arg(items.size()));
+        appendLog(QString::fromUtf8("[查询] SKU编码 [%1]：计划 %2 条明细（%3 个格口），EPC落格明细 %4 条（实际落在 %5 个格口）")
+            .arg(sku).arg(planRowCount).arg(planGridSet.size()).arg(epcRowCount).arg(actualGridSet.size()));
         return;
     }
 
