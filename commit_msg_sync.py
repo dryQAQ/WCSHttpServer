@@ -6,13 +6,21 @@ commit_msg_sync.py — 把手动提交的提交信息写入「提交信息.md」
 用法（提交完成后执行）：
     python commit_msg_sync.py                 # 增量：把「上次同步之后」到 HEAD 的提交写入 md
     python commit_msg_sync.py --all           # 全量：把**整个 git 历史**写入 md（可重复执行，不会重复追加）
-    python commit_msg_sync.py --dry-run       # 只打印将要写入的内容，不改文件
+    python commit_msg_sync.py --all --dry-run # 先看看会写入哪些、跳过哪些
     python commit_msg_sync.py --status        # 只看同步状态（锚点/已收录条数/待同步条数）
     python commit_msg_sync.py --count 1       # 只写最近 1 条
     python commit_msg_sync.py --from <sha>    # 指定起始提交（不含）
+    python commit_msg_sync.py --include-meta  # 连"元信息提交"也写入（默认过滤，见下）
     python commit_msg_sync.py --no-files      # 不写"变更文件"清单（历史长时更精简）
     python commit_msg_sync.py --max 100       # 最多写入 100 条（配合 --all 控制文件大小）
     python commit_msg_sync.py --md <路径>      # 指定 md 文件（默认仓库根目录 提交信息.md）
+
+自动过滤（默认开启，避免元信息污染）：
+    · 跳过"只改了 提交信息.md 和/或 commit_msg_sync.py"的提交（同步账目本身）
+    · 跳过标题命中内置正则的提交：同步提交信息 / 提交信息.md / commit_msg_sync
+    · 需要全部写入时加 --include-meta；想追加自定义跳过词用 --skip-pattern <正则>；
+      传 --skip-pattern "" 表示只用「改动文件」规则（不套用内置标题规则）
+    · 被跳过的提交仍会推进锚点，不会每次重复检查
 
 工作原理：
     · md 的「## 二、提交记录」章节内有一对标记（脚本管理）：
@@ -45,6 +53,15 @@ SECTION_HEAD = "## 二、提交记录"
 ENTRY_HEAD_RE = re.compile(r"^###\s+(.*?)\s*｜\s*([0-9a-fA-F]{7,40})\s*｜\s*(.*)$")
 SEP = "\x1f"          # git log 字段分隔
 REC = "\x1e"          # git log 记录分隔
+
+# ── 元信息过滤：这些提交只与"提交信息存档/同步脚本"自身有关，默认不写入 md（避免污染历史记录）──
+#    判定规则：① 提交标题命中 SKIP_SUBJECT_PATTERNS，或 ② 本次改动文件全部落在 META_FILES 内
+META_FILES = ("提交信息.md", "commit_msg_sync.py")
+SKIP_SUBJECT_PATTERNS = (
+    r"同步提交信息",          # [mod] 同步提交信息.md：补录 …
+    r"提交信息\.md",          # 标题里直接提到存档文件
+    r"commit_msg_sync",       # 标题里提到同步脚本
+)
 
 
 # ────────────────────────────── git 基础 ──────────────────────────────
@@ -131,6 +148,25 @@ def read_changed_files(cwd, sha, limit):
         return [], 0
     files = [ln.strip() for ln in out.splitlines() if ln.strip()]
     return files[:limit], len(files)
+
+
+def all_changed_files(cwd, sha):
+    """某提交的全部改动文件（不受条数限制，供元信息判定）"""
+    code, out, _ = git(["show", "--no-color", "--name-only", "--pretty=format:", sha], cwd)
+    if code != 0:
+        return []
+    return [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+
+def is_meta_commit(cwd, c, patterns):
+    """是否属"元信息提交"（只改了存档 md / 同步脚本，或标题命中过滤词）→ 默认不写入 md"""
+    for p in patterns:
+        if re.search(p, c["subject"], flags=re.I):
+            return True, "标题命中过滤词 /%s/" % p
+    files = all_changed_files(cwd, c["sha"])
+    if files and all(f in META_FILES for f in files):
+        return True, "改动仅涉及 %s" % "、".join(META_FILES)
+    return False, ""
 
 
 def fence_for(text):
@@ -268,9 +304,21 @@ def main():
     ap.add_argument("--max", dest="max_entries", type=int, default=0, help="最多写入 N 条（0=不限制）")
     ap.add_argument("--no-files", action="store_true", help="不写变更文件清单")
     ap.add_argument("--file-limit", type=int, default=40, help="每条提交最多列出多少个变更文件（默认 40）")
+    ap.add_argument("--include-meta", action="store_true",
+                    help="不过滤元信息提交（默认跳过：只改 提交信息.md/commit_msg_sync.py 的提交，或标题含同步字样的提交）")
+    ap.add_argument("--skip-pattern", action="append", default=[],
+                    help="追加要跳过的标题匹配（正则，可多次）；传空串表示只用「改动文件」规则")
     ap.add_argument("--dry-run", action="store_true", help="只打印将要写入的内容，不修改文件")
     ap.add_argument("--status", action="store_true", help="只显示同步状态，不修改文件")
     args = ap.parse_args()
+
+    # 过滤开关：默认开启；--include-meta 完全关闭；--skip-pattern "" 只保留"改动文件"规则
+    filter_enabled = not args.include_meta
+    user_patterns = [p for p in args.skip_pattern if p]
+    if "" in args.skip_pattern:
+        skip_patterns = user_patterns                      # 用户显式清空内置标题规则
+    else:
+        skip_patterns = list(SKIP_SUBJECT_PATTERNS) + user_patterns
 
     root = find_repo_root(os.path.dirname(os.path.abspath(__file__))) or find_repo_root(os.getcwd())
     if not root:
@@ -329,10 +377,38 @@ def main():
         print("无新提交（范围 %s 为空）" % range_desc)
         return 0
 
+    # ── 过滤元信息提交（同步 md / 脚本自身的记账提交），避免污染历史记录 ──
+    skipped = []
+    if filter_enabled:
+        kept = []
+        for c in commits:
+            meta, why = is_meta_commit(root, c, skip_patterns)
+            if meta:
+                skipped.append((c, why))
+            else:
+                kept.append(c)
+        commits = kept
+    if skipped:
+        print("已跳过 %d 条元信息提交（不写入 md）：" % len(skipped))
+        for c, why in skipped:
+            print("  - %s  %s   [%s]" % (c["short"], c["subject"], why))
+    if not commits:
+        print("过滤后无可写入的提交（范围 %s）；如需包含元信息提交请加 --include-meta" % range_desc)
+        if not args.dry_run:
+            new_text = set_anchor(md_text, head)
+            if new_text != md_text:
+                write_md(md_path, new_text)
+                print("锚点已更新为 HEAD（%s），下次不会重复检查这些提交" % head[:7])
+        return 0
+
     new_entries = [(c["short"], build_entry(root, c, file_limit)) for c in commits]
     new_shas = {s.lower() for s, _ in new_entries}
-    # 新条目在前（最新在最上面）；自动区里已有的旧条目按原顺序保留，同 SHA 不重复
-    merged = new_entries + [(s, t) for s, t in existing if s.lower() not in new_shas]
+    if args.all:
+        # 全量 = 按 git 历史重建自动区（顺带清掉此前已写入的元信息条目）
+        merged = new_entries
+    else:
+        # 增量：新条目在前（最新在最上面），自动区已有条目按原顺序保留，同 SHA 不重复
+        merged = new_entries + [(s, t) for s, t in existing if s.lower() not in new_shas]
 
     print("将写入 %d 条提交（范围 %s，最新在最上面）；写完后自动区合计 %d 条" %
           (len(new_entries), range_desc, len(merged)))
