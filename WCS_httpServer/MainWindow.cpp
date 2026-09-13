@@ -1187,6 +1187,36 @@ void MainWindow::setupUI()
     addFieldPair("留痕:",     excTraceCell,      "RFID扫描:", m_lblRfidScanCount);
     addFieldPair("效率:",     m_lblEfficiency,   "峰值效率:", m_lblPeakEff);
     addFieldPair("波次时长:", m_lblElapsed,      "上波次:",   m_lblLastWave);
+    // ★ 2026-09-13 超计划预警：数字 + 「查看」按钮（点击查看落了几件/哪个格口容器/计划几件/多余几件）
+    {
+        QWidget* overplanCell = new QWidget();
+        QHBoxLayout* overplanLayout = new QHBoxLayout(overplanCell);
+        overplanLayout->setContentsMargins(0, 0, 0, 0);
+        overplanLayout->setSpacing(6);
+
+        m_lblOverplanWarn = new QLabel("0");
+        m_lblOverplanWarn->setStyleSheet("font-size: 13px; font-weight: bold; color: #555;");
+        m_lblOverplanWarn->setToolTip(QString::fromUtf8(
+            "超计划预警条目数（按 格口+SKU 统计：实际落格件数 > 计划件数的条目）\n"
+            "成因：同一 SKU 有两件同时在线上、或人工多放，导致箱内实落超过计划\n"
+            "处置：点击右侧「查看」查看明细（落了几件 / 哪个格口哪个容器 / 计划几件 / 多余几件），"
+            "多余件请现场从对应容器取出"));
+
+        m_btnOverplanView = new QPushButton(QCoreApplication::translate("MainWindow", "查看"));
+        m_btnOverplanView->setMinimumHeight(24);
+        m_btnOverplanView->setStyleSheet(
+            "QPushButton { font-size: 12px; padding: 2px 10px; "
+            "background-color: #FFE0B2; color: #E65100; border: 1px solid #FFB74D; border-radius: 3px; } "
+            "QPushButton:hover { background-color: #FFCC80; } "
+            "QPushButton:disabled { background-color: #EEEEEE; color: #AAAAAA; border-color: #DDDDDD; }");
+        m_btnOverplanView->setEnabled(false);
+        connect(m_btnOverplanView, &QPushButton::clicked, this, &MainWindow::showOverplanWarningDialog);
+
+        overplanLayout->addWidget(m_lblOverplanWarn);
+        overplanLayout->addWidget(m_btnOverplanView);
+        overplanLayout->addStretch();
+        addFieldPair("预警:", overplanCell, QString(), nullptr);
+    }
     // ★ 2026-09-13 客户要求：**波次信息面板不再显示容器绑定数据**
     //   （容器绑定状态在第 0 页标签页完整展示；此处仅保留波次自身字段）
     waveLayout->setColumnStretch(1, 1);   // 左值列占满剩余宽度
@@ -2927,6 +2957,9 @@ void MainWindow::updateWavePanel()
     // ★ 2026-09-13 客户要求：波次信息面板不再显示容器绑定数据 → 此处同步移除刷新逻辑
     //   （容器绑定状态在第 0 页标签页展示，含已绑定/已锁格/未绑定计数）
 
+    // ★ 2026-09-13 超计划预警：数字 = 超计划条目数（格口+SKU 粒度），有值时红色加粗并激活「查看」
+    refreshOverplanWarning();
+
     // 查看处理按钮：无待处理件时置灰但保留可见（避免布局跳动）
     if (m_btnViewException)
     {
@@ -4115,6 +4148,134 @@ void MainWindow::onViewExceptions()
 }
 
 // ============================================================================
+// ============================================================================
+// ★ 2026-09-13 超计划预警（波次面板「预警」数字 + 「查看」明细弹窗）
+//   数据源：HttpServer 的 格口+SKU 真实落格计数（PLC 确认落格的去重 EPC）与计划件数对照
+//   成因：同一 SKU 有两件同时在线上、或人工多放 → 箱内实落超过计划
+//   处置：只告警不改上传数据（乙方案下 H7 报文已按计划件数裁剪，不会因超报被整条驳回）
+// ============================================================================
+void MainWindow::refreshOverplanWarning()
+{
+    if (!m_lblOverplanWarn || !m_btnOverplanView) return;
+
+    int n = 0;
+    if (m_pServer)
+        n = m_pServer->overplanWarningCount();
+
+    m_lblOverplanWarn->setText(QString("%1 条").arg(n));
+    m_lblOverplanWarn->setStyleSheet(n > 0
+        ? "font-size: 15px; font-weight: bold; color: #D32F2F;"
+        : "font-size: 15px; font-weight: bold; color: #2196F3;");
+    m_btnOverplanView->setEnabled(n > 0);
+    m_btnOverplanView->setText(n > 0
+        ? QString::fromUtf8("查看(%1)").arg(n)
+        : QString::fromUtf8("查看"));
+}
+
+void MainWindow::showOverplanWarningDialog()
+{
+    if (!m_pServer) return;
+
+    const QVector<HttpServer::OverplanWarning> warns = m_pServer->overplanWarnings();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QString::fromUtf8("超计划预警明细"));
+    dlg.resize(980, 460);
+    QVBoxLayout* lay = new QVBoxLayout(&dlg);
+
+    // ── 顶部说明 ──
+    QLabel* tip = new QLabel(QString::fromUtf8(
+        "口径：按「格口 + SKU」比较 计划件数 与 PLC 确认真正落入该格口的去重件数（跨容器累计）。\n"
+        "超计划成因：同一 SKU 有两件同时在线上（都未落格），或人工多放了一件。\n"
+        "处置：多余件不进入上传报文（H7 已按计划件数裁剪），但实物可能已在箱内 → 请按下列清单现场取出。"));
+    tip->setWordWrap(true);
+    tip->setStyleSheet("font-size: 13px; color: #555;");
+    lay->addWidget(tip);
+
+    // ── 明细表 ──
+    QTableWidget* tbl = new QTableWidget();
+    tbl->setColumnCount(6);
+    tbl->setHorizontalHeaderLabels({
+        QString::fromUtf8("格口号"),
+        QString::fromUtf8("容器号"),
+        QString::fromUtf8("SKU编码"),
+        QString::fromUtf8("计划件数"),
+        QString::fromUtf8("实际落格件数"),
+        QString::fromUtf8("多余件数")
+    });
+    tbl->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tbl->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tbl->setSelectionMode(QAbstractItemView::SingleSelection);
+    tbl->setFont(QFont(font().family(), 13));
+    tbl->verticalHeader()->setDefaultSectionSize(30);
+    tbl->horizontalHeader()->setStretchLastSection(true);
+    tbl->setStyleSheet(
+        "QTableWidget { font-size: 13px; }"
+        "QTableWidget::item { padding: 3px 6px; }"
+        "QHeaderView::section { background-color: #FFE0B2; font-weight: bold; padding: 6px; }");
+
+    tbl->setRowCount(warns.size());
+    for (int i = 0; i < warns.size(); ++i)
+    {
+        const HttpServer::OverplanWarning& w = warns[i];
+
+        // 容器号：取该格口当前绑定（与"落格时固化"口径可能不同，仅作现场定位参考）
+        QString box;
+        if (m_pServer && m_pServer->waveManager())
+        {
+            // 通过 HttpServer 的绑定查询接口取当前绑定（无接口时留空，不阻塞弹窗）
+            box = m_pServer->currentBoxOfGrid(w.gridKey);
+        }
+
+        auto setCell = [&](int col, const QString& txt, const QColor& c = QColor("#333333")) {
+            QTableWidgetItem* it = new QTableWidgetItem(txt);
+            it->setTextAlignment(Qt::AlignCenter);
+            it->setForeground(c);
+            tbl->setItem(i, col, it);
+        };
+        setCell(0, w.gridKey);
+        setCell(1, box.isEmpty() ? QString::fromUtf8("—") : box);
+        setCell(2, w.sku);
+        setCell(3, QString::number(w.planQty));
+        setCell(4, QString::number(w.landedQty));
+        setCell(5, QString::number(w.overQty), QColor("#D32F2F"));
+
+        // 多余件 EPC 清单放进 SKU 单元格的 tooltip（列宽有限，不占表格空间）
+        if (!w.epcs.isEmpty() && tbl->item(i, 2))
+        {
+            tbl->item(i, 2)->setToolTip(QString::fromUtf8("多余件 EPC 清单（%1 件）：\n%2")
+                .arg(w.epcs.size()).arg(w.epcs.join("\n")));
+        }
+    }
+    lay->addWidget(tbl);
+
+    // ── 多余件 EPC 汇总（便于一次性抄下来去现场找件）──
+    QStringList allEpcs;
+    for (const HttpServer::OverplanWarning& w : warns)
+        for (const QString& e : w.epcs)
+            allEpcs << QString::fromUtf8("%1（格口%2 / SKU %3）").arg(e).arg(w.gridKey).arg(w.sku);
+    QLabel* epcLbl = new QLabel(allEpcs.isEmpty()
+        ? QString::fromUtf8("无多余件 EPC")
+        : QString::fromUtf8("多余件 EPC 清单：\n") + allEpcs.join("\n"));
+    epcLbl->setWordWrap(true);
+    epcLbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    epcLbl->setStyleSheet("font-family: Consolas,'Microsoft YaHei'; font-size: 12px; color: #D32F2F;");
+    lay->addWidget(epcLbl);
+
+    QDialogButtonBox* btns = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(btns);
+
+    if (warns.isEmpty())
+        appendLog("[预警] 当前无超计划预警（实际落格件数均未超过计划件数）");
+    else
+        appendLog(QString::fromUtf8("[预警] 超计划条目 %1 个，多余件合计 %2 件——请现场从对应容器取出")
+            .arg(warns.size())
+            .arg([&]() { int s = 0; for (const auto& w : warns) s += w.overQty; return s; }()), true);
+
+    dlg.exec();
+}
+
 // ============================================================================
 // ★ 2026-09-13 需求：按容器号查询
 //   显示该容器号下**所有 EPC 物件**及其相关信息：

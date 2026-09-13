@@ -265,6 +265,26 @@ public:
     bool resendFailedFullboxGrid(const QString& orderCode, const QString& grid);
     bool resendFailedEnd(const QString& orderCode);
 
+    // ★ 2026-09-13 超计划预警（供波次面板「预警」数字与「查看」弹窗，MainWindow 直接调用）
+    //   ★ 审核要点：本块必须位于 public 区且**在 signals: 之前**——
+    //     moc 会把 signals: 之后直到下一个访问修饰符之前的内容都当作信号声明，
+    //     因而"普通方法 + 嵌套 struct"若放在信号区里，会报
+    //     `Not a signal or slot declaration` 导致构建失败（QtRunWork 返回 false）。
+    // 取某格口当前绑定的容器号（无绑定返回空串；只查内存绑定表，供 UI 只读调用）
+    QString currentBoxOfGrid(const QString& grid) const;
+    // 只读快照：按「格口 + SKU」比较 计划件数 与 PLC 确认真正落入该格口的去重件数（跨容器累计）
+    struct OverplanWarning
+    {
+        QString gridKey;      // 格口号（内部 3 位 key）
+        QString sku;
+        int     planQty   = 0;
+        int     landedQty = 0;
+        int     overQty   = 0;      // 多余件数 = landedQty - planQty
+        QStringList epcs;           // 多余件 EPC 清单（计划件数之外的那些）
+    };
+    QVector<OverplanWarning> overplanWarnings() const;
+    int overplanWarningCount() const;                   // 超计划条目数（UI 面板数字）
+
 signals:
     void serverStarted(int port);
     void serverStopped();
@@ -453,18 +473,35 @@ private:
     QMap<QString, int>      m_gridSortedCount;   // 格口号 → 已分拣件数
     std::mutex              m_gridCountMutex;     // 保护 m_gridSortedCount
 
-    // ──── ★ 2026-09-13 超计划标注（纯观测，不改变分拣/上报行为）────
-    //   用途：某容器内某 SKU 的落格件数已用完计划件数后，再落入的件标注为"超计划"并留痕，
-    //         便于现场第一时间发现"多出来的件"（本次现场：格口034 计划2件实分3件导致 H7 被驳回）
-    //   口径：key = 容器号 + "\n" + SKU；done 集合按 EPC 去重（同一 EPC 重投不重复计）
-    //   ★ 只做标注：不拦下发、不计入"异常口"、不改 H7 报文内容
-    QMap<QString, int>          m_boxSkuSortedCount;   // key → 该容器该 SKU 实际落格件数（= H7 报文 qty 口径）
-    QMap<QString, QSet<QString>> m_boxSkuSeenEpcs;     // key → 已计入的 EPC 集合（防同件重复累加）
-    std::mutex                  m_boxSkuCountMutex;    // 保护上面两个容器
-    void clearBoxSkuSortedCount();                     // 波次切换/完结/取消时清空
-    //   返回 true = 本次新落入的件已超出计划（overSeq = 第几件超出）
-    bool noteBoxSkuSorted(const QString& boxcode, const QString& sku, const QString& epc,
-                          int planQty, int& overSeq);
+    // ──── ★ 2026-09-13 计划数封顶 + 超计划件改投异常口（按客户四轮确认的口径）────
+    //   目标不变量：对任一 (波次, SKU, 格口)：箱内该 SKU 件数 ≤ 计划件数；
+    //               多余的 EPC 一律改投物理异常口，且不占箱内额度。
+    //   额度消耗源 = **PLC 确认真正落入该格口的去重 EPC 数**（不是下发数、不是放置数）——
+    //     因此：下发失败 / 落进异常口 都不白占额度，"缺件由人工重投异常件补上"才成立。
+    //   口径：key = 格口号 + "\n" + SKU（★ 按格口而非容器，跨容器累计，换箱不重置额度）
+    //   五条规则：
+    //     ① 已达计划 → 该 SKU 后续件一律投异常口（无论重投多少次）
+    //     ② 未达计划 → 允许投期望格口（含此前判去异常口的件被人工重投回来补缺口）
+    //     ③ 正确落入该格口的 EPC 被拿出重投 → 仍允许回该格口，且不重复计数
+    //     ④ 同一 EPC 只计 1 次（防重复反馈刷高额度）
+    //     ⑤ 实际落格数 > 计划数（同时两件在线等）→ 登记"超计划预警"，且★不进入上传报文（乙方案）：
+    //        H7 报文中该 SKU 的 qty 被裁剪到计划件数（先按 EPC 去重、再封顶），
+    //        避免 WMS 因"超计划无法分配"整条驳回而牵连同批其它正常件
+    QMap<QString, QSet<QString>> m_boxLandedEpcs;       // key → 真实落入该格口该 SKU 的 EPC 集合
+    QSet<QString>                m_epcBoundException;   // 仅日志/统计：曾被判去异常口的 EPC（非黑名单）
+    mutable std::mutex           m_boxLandedMutex;      // 保护上面两个容器（const 查询方法中需加锁，故 mutable）
+    void clearBoxLandedCount();                         // 波次切换/完结/取消时清空
+    // 判定：本件是否允许投期望格口（false=应改投异常口）；counted=该 EPC 此前已计入（重投回箱）
+    bool allowIntoPlanGrid(const QString& gridKey, const QString& sku, const QString& epc,
+                           int planQty, bool& counted) const;
+    // 计数：落格反馈确认成功后调用；返回 true = 本次落格使该格口该 SKU 超出计划（登记预警）
+    bool noteLandedIntoPlanGrid(const QString& gridKey, const QString& sku, const QString& epc,
+                                int planQty, int& landedNow);
+    // 已真实落入该格口该 SKU 的件数（去重 EPC）
+    int landedCountOf(const QString& gridKey, const QString& sku) const;
+    // ★ 乙方案：H7 报文裁剪——把各 SKU 行的 qty 裁剪到"计划件数"（先按 EPC 去重、再封顶）
+    //   返回被裁掉的多余件总数（0=未裁剪）；明细写入 trimLog 供日志留痕
+    int clampFullboxQtyToPlan(const QString& gridKey, QJsonArray& detailList, QStringList& trimLog) const;
 
     // ──── RFID 推送吞吐/峰值统计（★ 2026-09-07 效率与峰值显示）────
     //   滑动 1 分钟窗口（实时"效率"）用 deque；分桶（每分钟）与当日峰值用于

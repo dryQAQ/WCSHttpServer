@@ -92,6 +92,9 @@ bool AppConfig::loadFromFile(const QString& path)
         // bool 类型：XML 中写 "true"/"false"，读取时转为小写比较
         else if (name == "sortingEpcDedup")         sortingEpcDedup = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "sortingGridCapPolicy")    sortingGridCapPolicy = xml.readElementText();
+        // ★ 2026-09-13 计划数封顶：超计划件改投异常口
+        else if (name == "sortingOverplanPolicy")   sortingOverplanPolicy = xml.readElementText().trimmed();
+        else if (name == "exceptionGrid")           exceptionGrid = xml.readElementText().trimmed();
         else if (name == "sortingOrderQtyValidate") sortingOrderQtyValidate = xml.readElementText();
         else if (name == "sortingConflictPolicy")   sortingConflictPolicy = xml.readElementText();
         else if (name == "sortingAllowOverrecv")    sortingAllowOverrecv = (xml.readElementText().trimmed().toLower() == "true");
@@ -233,8 +236,12 @@ bool AppConfig::saveToFile(const QString& path) const
     // ──── S7 分拣增强配置 ────
     xml.writeComment(" EPC 任务内防重（true/false） ");
     xml.writeTextElement("sortingEpcDedup",          sortingEpcDedup ? "true" : "false");
-    xml.writeComment(" 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） ");
+    xml.writeComment(" 【已废弃】格口上限策略（历史遗留，程序只读写不使用） ");
     xml.writeTextElement("sortingGridCapPolicy",     sortingGridCapPolicy);
+    xml.writeComment(" ★ 超计划处置：exception=超计划件改投异常口 / block=超计划件不发指令并标注 / allow=仅标注 ");
+    xml.writeTextElement("sortingOverplanPolicy",    sortingOverplanPolicy);
+    xml.writeComment(" ★ 物理异常格口号（3位内部号如 066；留空或 0 = 未配置，则超计划件不发指令并告警） ");
+    xml.writeTextElement("exceptionGrid",            exceptionGrid);
     xml.writeComment(" orderQty 校验模式（strict=严格, loose=宽松） ");
     xml.writeTextElement("sortingOrderQtyValidate",  sortingOrderQtyValidate);
     xml.writeComment(" 冲突策略（STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配） ");

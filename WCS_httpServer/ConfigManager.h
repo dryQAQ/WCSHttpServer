@@ -84,7 +84,10 @@ struct AppConfig
     int     rescanResendCooldownMs = RESCAN_RESEND_COOLDOWN_MS; // 同一 EPC 两次下发最小间隔(ms)
     int     rescanResendMaxTimes   = RESCAN_RESEND_MAX_TIMES;   // 同一 EPC 每波次最多重发次数
     int     plcInFlightTimeoutMs   = PLC_INFLIGHT_TIMEOUT_MS;   // PLC 在途超时(ms)，超时后允许重投
-    QString sortingGridCapPolicy = SORTING_GRID_CAP_POLICY;   // 格口上限策略（reject/exception/allow）
+    QString sortingGridCapPolicy = SORTING_GRID_CAP_POLICY;   // 【已废弃】格口上限策略（历史遗留，仅读写不判）
+    // ★ 2026-09-13 计划数封顶：按「格口+SKU」计划件数封顶，超计划件改投物理异常口
+    QString sortingOverplanPolicy = SORTING_OVERPLAN_POLICY;  // exception=改投异常口 / block=拒发并标注 / allow=仅标注
+    QString exceptionGrid         = DEFAULT_EXCEPTION_GRID;   // 物理异常格口号（3位，空/"0"=未配置→自动降级为 block）
     QString sortingOrderQtyValidate = SORTING_ORDERQTY_VALIDATE; // orderQty校验模式（strict/loose）
     QString sortingConflictPolicy = SORTING_CONFLICT_POLICY;   // 冲突策略（STRICT_EXCEPTION/LOOSE_FIRST）
     bool    sortingAllowOverrecv = SORTING_ALLOW_OVERRECV;     // 允许超收（true/false）

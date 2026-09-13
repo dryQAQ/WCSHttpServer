@@ -110,7 +110,12 @@
 // S7 分拣增强配置（T-S7-02/06/07）
 // ═══════════════════════════════════════════════════════════════════════════
 #define SORTING_EPC_DEDUP          true     // EPC 任务内防重（true=按orderCode+epc去重, false=关闭）
-#define SORTING_GRID_CAP_POLICY    "reject"  // 格口达计划上限策略：reject=拒收, exception=入异常口, allow=允许超收
+// ★ 2026-09-13 【已废弃】SORTING_GRID_CAP_POLICY：其「格口达计划上限」拦截曾因"多SKU共格时按 SKU
+//   计划数误拒"于 2026-09-07 被整体移除（见 HttpServer.cpp「正常落格处理」处注释），此后全库只读不判。
+//   现行机制改由下面两项承担——按「格口+SKU」的计划件数封顶，超出者改投物理异常口。
+#define SORTING_GRID_CAP_POLICY    "reject"  // 【已废弃】格口达计划上限策略：reject/exception/allow
+#define SORTING_OVERPLAN_POLICY    "exception" // 超计划处置：exception=改投异常口, block=拒发并标注, allow=仅标注
+#define DEFAULT_EXCEPTION_GRID     ""        // 物理异常格口号（3位如"066"；空/"0"=未配置→自动降级为 block）
 #define SORTING_ORDERQTY_VALIDATE  "strict"  // orderQty校验模式：strict=严格(不一致则拒绝), loose=宽松(仅告警)
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -75,8 +75,12 @@
     <gridCodeWidth>3</gridCodeWidth>
     <!-- EPC 任务内防重（true/false） -->
     <sortingEpcDedup>true</sortingEpcDedup>
-    <!-- 格口上限策略（reject=拒收, exception=入异常口, allow=允许超收） -->
+    <!-- 【已废弃】格口上限策略（历史遗留项，程序只读写不使用；现行机制见下面两项） -->
     <sortingGridCapPolicy>reject</sortingGridCapPolicy>
+    <!-- ★ 超计划处置：exception=超计划件改投异常格口 / block=超计划件不发指令并标注 / allow=仅标注 -->
+    <sortingOverplanPolicy>exception</sortingOverplanPolicy>
+    <!-- ★ 物理异常格口号（3位内部号；本项目按现场约定为 66 号格口。留空或 0 = 未配置，则超计划件不发指令并告警） -->
+    <exceptionGrid>66</exceptionGrid>
     <!-- orderQty 校验模式（strict=严格, loose=宽松） -->
     <sortingOrderQtyValidate>strict</sortingOrderQtyValidate>
     <!-- 冲突策略（STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配） -->

@@ -76,6 +76,9 @@ private slots:
     void showEpcDetail(const QString& epc);
     // ★ 2026-09-13 需求：按容器号查询渲染（查该容器下全部 EPC 物件明细+计划对照）
     void renderContainerQuery();
+    // ★ 2026-09-13 需求：超计划预警明细弹窗（落了几件/哪个格口容器/计划几件/多余几件）
+    void showOverplanWarningDialog();
+    void refreshOverplanWarning();   // 刷新面板「预警」数字与按钮可用态
 
 private:
     // ★ 2026-09-02 修复"结束任务卡死/闪退"：停止流程阶段状态机
@@ -159,6 +162,9 @@ private:
     QLabel*      m_lblRfidScanCount= nullptr;  // ★ 2026-09-13 RFID 扫描次数（= RFID 推送 EPC 次数，重复计数）
     QLabel*      m_lblLastWave     = nullptr;  // 上一个波次号
     QLabel*      m_lblElapsed      = nullptr;  // ★ 2026-09-13 波次时长（mm:ss）
+    // ★ 2026-09-13 超计划预警：数字（超计划的 格口+SKU 条目数）+「查看」按钮（明细弹窗）
+    QLabel*      m_lblOverplanWarn = nullptr;  // 预警数量
+    QPushButton* m_btnOverplanView = nullptr;  // 查看预警明细（落了几件/哪个格口容器/计划几件/多余几件）
     // ★ 2026-09-13 客户要求：波次信息面板不再显示容器绑定数据（改由第 0 页标签页展示）
     QLabel*      m_lblEfficiency   = nullptr;  // ★ 2026-09-07 分拣效率（折算件/时）
     QLabel*      m_lblPeakEff      = nullptr;  // ★ 2026-09-07 峰值效率（当日最大，件/时；落库 daily_peak）
