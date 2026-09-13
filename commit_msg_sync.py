@@ -1,25 +1,33 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-commit_msg_sync.py — 把手动提交的提交信息自动写入「提交信息.md」
+commit_msg_sync.py — 把手动提交的提交信息写入「提交信息.md」
 
-用法（提交完成后执行即可）：
-    python commit_msg_sync.py                # 把「上次同步之后」到 HEAD 的所有提交写入 md
-    python commit_msg_sync.py --count 1      # 只写入最近 1 条提交
-    python commit_msg_sync.py --from <sha>   # 指定起始提交（不含该提交）
-    python commit_msg_sync.py --dry-run      # 只显示将要写入的内容，不改文件
-    python commit_msg_sync.py --md <路径>     # 指定 md 文件（默认：仓库根目录 提交信息.md）
+用法（提交完成后执行）：
+    python commit_msg_sync.py                 # 增量：把「上次同步之后」到 HEAD 的提交写入 md
+    python commit_msg_sync.py --all           # 全量：把**整个 git 历史**写入 md（可重复执行，不会重复追加）
+    python commit_msg_sync.py --dry-run       # 只打印将要写入的内容，不改文件
+    python commit_msg_sync.py --status        # 只看同步状态（锚点/已收录条数/待同步条数）
+    python commit_msg_sync.py --count 1       # 只写最近 1 条
+    python commit_msg_sync.py --from <sha>    # 指定起始提交（不含）
+    python commit_msg_sync.py --no-files      # 不写"变更文件"清单（历史长时更精简）
+    python commit_msg_sync.py --max 100       # 最多写入 100 条（配合 --all 控制文件大小）
+    python commit_msg_sync.py --md <路径>      # 指定 md 文件（默认仓库根目录 提交信息.md）
 
 工作原理：
-    · md 的「## 二、提交记录」标题下有一行锚点：<!-- commit-sync: <sha> -->
-    · 脚本读取锚点 → 取 `git log <锚点>..HEAD` → 把每条提交（时间/短SHA/标题/完整正文/变更文件）
-      以「最新在最上面」的顺序插入到该标题下方 → 更新锚点为 HEAD
-    · 漏跑多次也没关系：下次运行会把中间所有提交一起补齐；已同步则提示"无新提交"
+    · md 的「## 二、提交记录」章节内有一对标记（脚本管理）：
+          <!-- auto-sync-begin -->   … 自动区：各次提交信息 …   <!-- auto-sync-end -->
+      以及一行锚点：<!-- commit-sync: <sha> -->（记录已同步到哪）
+    · 增量：读锚点 → `git log <锚点>..HEAD` → 新条目并入自动区**顶部** → 锚点更新为 HEAD
+    · 全量（--all）：自动区 = 整个 git 历史（HEAD 全部提交，最新在最上面）
+    · 自动区按"短 SHA"去重：**重复执行不会产生重复条目**（可放心多跑）
+    · 手写内容放在 <!-- auto-sync-end --> 之后，脚本不会改动
+    · 漏跑多次也没关系：下次增量运行会把中间所有提交一起补齐
 
 设计注意：
     · 不向子进程开管道（stdout/stderr 都写临时文件），避免受限环境下命名管道被拒
     · 全部按 UTF-8 读写，md 用 LF 换行；提交正文若含 ``` 会自动加长围栏
-    · 只改 md 与锚点，不改动 git 历史
+    · 只改 md（自动区/锚点），不改动 git 历史
 """
 
 import argparse
@@ -31,14 +39,16 @@ import sys
 import tempfile
 
 ANCHOR_RE = re.compile(r"<!--\s*commit-sync:\s*([0-9a-fA-F]{7,40})\s*-->")
+AUTO_BEGIN = "<!-- auto-sync-begin -->"
+AUTO_END = "<!-- auto-sync-end -->"
 SECTION_HEAD = "## 二、提交记录"
-SEP = "\x1f"          # 字段分隔
-REC = "\x1e"          # 记录分隔
+ENTRY_HEAD_RE = re.compile(r"^###\s+(.*?)\s*｜\s*([0-9a-fA-F]{7,40})\s*｜\s*(.*)$")
+SEP = "\x1f"          # git log 字段分隔
+REC = "\x1e"          # git log 记录分隔
 
 
-# ────────────────────────────── 基础工具 ──────────────────────────────
+# ────────────────────────────── git 基础 ──────────────────────────────
 def find_repo_root(start):
-    """向上查找含 .git 的目录"""
     cur = os.path.abspath(start)
     while True:
         if os.path.isdir(os.path.join(cur, ".git")):
@@ -70,9 +80,14 @@ def git(args, cwd):
                 pass
 
 
-def has_commit(cwd, sha):
-    code, _, _ = git(["cat-file", "-e", sha + "^{commit}"], cwd)
-    return code == 0
+def head_sha(cwd):
+    code, out, _ = git(["rev-parse", "HEAD"], cwd)
+    return out.strip() if code == 0 else ""
+
+
+def resolve_sha(cwd, rev):
+    code, out, _ = git(["rev-parse", "--verify", "--quiet", rev + "^{commit}"], cwd)
+    return out.strip() if code == 0 and out.strip() else ""
 
 
 def is_ancestor(cwd, sha, head):
@@ -80,25 +95,21 @@ def is_ancestor(cwd, sha, head):
     return code == 0
 
 
-def head_sha(cwd):
-    code, out, _ = git(["rev-parse", "HEAD"], cwd)
-    return out.strip() if code == 0 else ""
-
-
-def resolve_sha(cwd, rev):
-    """把任意 rev（短 sha/分支名）解析为完整 sha；失败返回空"""
-    code, out, _ = git(["rev-parse", "--verify", "--quiet", rev + "^{commit}"], cwd)
-    return out.strip() if code == 0 and out.strip() else ""
+def commit_count(cwd):
+    code, out, _ = git(["rev-list", "--count", "HEAD"], cwd)
+    try:
+        return int(out.strip())
+    except ValueError:
+        return 0
 
 
 # ────────────────────────────── 提交信息读取 ──────────────────────────────
 def read_commits(cwd, rev_args):
-    """读取提交列表（最新在前）：短SHA/完整SHA/时间/标题/正文。rev_args 为 git log 的位置参数列表"""
+    """读取提交列表（最新在前）：完整/短SHA、时间、标题、正文"""
     fmt = SEP.join(["%H", "%h", "%ad", "%s", "%B"]) + REC
     code, out, err = git(["log", "--date=format:%Y-%m-%d %H:%M", "--pretty=format:" + fmt] + rev_args, cwd)
     if code != 0:
         raise SystemExit("git log 失败：%s（参数 %s）" % (err.strip(), " ".join(rev_args)))
-
     commits = []
     for rec in out.split(REC):
         rec = rec.strip("\n")
@@ -107,13 +118,14 @@ def read_commits(cwd, rev_args):
         parts = rec.split(SEP)
         if len(parts) < 5:
             continue
-        sha, short, date, subject, body = parts[0], parts[1], parts[2], parts[3], SEP.join(parts[4:])
-        commits.append({"sha": sha.strip(), "short": short.strip(), "date": date.strip(),
-                        "subject": subject.strip(), "body": body.strip("\n")})
+        commits.append({"sha": parts[0].strip(), "short": parts[1].strip(), "date": parts[2].strip(),
+                        "subject": parts[3].strip(), "body": SEP.join(parts[4:]).strip("\n")})
     return commits
 
 
-def read_changed_files(cwd, sha, limit=40):
+def read_changed_files(cwd, sha, limit):
+    if limit <= 0:
+        return [], 0
     code, out, _ = git(["show", "--no-color", "--name-only", "--pretty=format:", sha], cwd)
     if code != 0:
         return [], 0
@@ -122,37 +134,31 @@ def read_changed_files(cwd, sha, limit=40):
 
 
 def fence_for(text):
-    """按正文里最长反引号串决定围栏长度"""
+    """按正文里最长的反引号串决定围栏长度，避免正文里的 ``` 破坏 md 结构"""
     longest = 0
     for m in re.finditer(r"`+", text):
         longest = max(longest, len(m.group(0)))
     return "`" * max(3, longest + 1)
 
 
-def build_entry(cwd, c):
-    files, total = read_changed_files(cwd, c["sha"])
+def build_entry(cwd, c, file_limit):
     body = c["body"] if c["body"] else c["subject"]
     fence = fence_for(body)
-
-    lines = []
-    lines.append("### %s ｜ %s ｜ %s" % (c["date"], c["short"], c["subject"]))
-    lines.append("")
-    lines.append("%stext" % fence)
-    lines.append(body.rstrip())
-    lines.append(fence)
-    lines.append("")
-    if total:
-        shown = "、".join(files)
-        more = "" if total <= len(files) else "（其余 %d 个见 `git show --stat %s`）" % (total - len(files), c["short"])
-        lines.append("- 变更文件（%d）：%s%s" % (total, shown, more))
-    else:
-        lines.append("- 变更文件：无（如合并提交）")
-    lines.append("")
+    lines = ["### %s ｜ %s ｜ %s" % (c["date"], c["short"], c["subject"]), "",
+             "%stext" % fence, body.rstrip(), fence, ""]
+    if file_limit > 0:
+        files, total = read_changed_files(cwd, c["sha"], file_limit)
+        if total:
+            more = "" if total <= len(files) else "（其余 %d 个见 `git show --stat %s`）" % (total - len(files), c["short"])
+            lines.append("- 变更文件（%d）：%s%s" % (total, "、".join(files), more))
+        else:
+            lines.append("- 变更文件：无（如合并提交）")
+        lines.append("")
     lines.append("")
     return "\n".join(lines)
 
 
-# ────────────────────────────── md 读写 ──────────────────────────────
+# ────────────────────────────── md 结构 ──────────────────────────────
 def read_md(path):
     if not os.path.exists(path):
         raise SystemExit("找不到 md 文件：%s" % path)
@@ -169,75 +175,144 @@ def get_anchor(md_text):
     return m.group(1) if m else None
 
 
-def insert_entries(md_text, block):
-    """把 block 插到「## 二、提交记录」标题（及其锚点行）之后，保持最新在最上面"""
+def set_anchor(md_text, sha):
+    if ANCHOR_RE.search(md_text):
+        return ANCHOR_RE.sub("<!-- commit-sync: %s -->" % sha, md_text, count=1)
+    lines = md_text.split("\n")
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith(SECTION_HEAD):
+            lines[i + 1:i + 1] = ["", "<!-- commit-sync: %s -->" % sha, ""]
+            return "\n".join(lines)
+    return md_text.rstrip() + "\n\n<!-- commit-sync: %s -->\n" % sha
+
+
+def get_auto_inner(md_text):
+    b = md_text.find(AUTO_BEGIN)
+    e = md_text.find(AUTO_END)
+    if b < 0 or e < 0 or e < b:
+        return None
+    return md_text[b + len(AUTO_BEGIN):e]
+
+
+def parse_entries(inner):
+    """把自动区文本解析为 [(短SHA, 条目文本)]，保持文件顺序（新 → 旧）"""
+    items = []
+    if not inner:
+        return items
+    cur_sha, cur = None, []
+    for ln in inner.split("\n"):
+        m = ENTRY_HEAD_RE.match(ln)
+        if m:
+            if cur_sha:
+                items.append((cur_sha, "\n".join(cur).rstrip() + "\n"))
+            cur_sha, cur = m.group(2), [ln]
+        elif cur_sha is not None:
+            cur.append(ln)
+    if cur_sha:
+        items.append((cur_sha, "\n".join(cur).rstrip() + "\n"))
+    return items
+
+
+def ensure_auto_block(md_text):
+    """确保自动区标记存在。缺失时：在章节说明行之后创建空自动区（已有内容留在其下，脚本不动）"""
+    if get_auto_inner(md_text) is not None:
+        return md_text
     lines = md_text.split("\n")
     idx = None
     for i, ln in enumerate(lines):
         if ln.strip().startswith(SECTION_HEAD):
             idx = i
             break
-    if idx is None:                      # 没有该章节 → 追加到文末并补标题
-        return md_text.rstrip() + "\n\n" + SECTION_HEAD + "\n\n" + block
+    if idx is None:                                   # 连章节都没有 → 追加到文末
+        return md_text.rstrip() + "\n\n%s\n\n%s\n%s\n" % (SECTION_HEAD, AUTO_BEGIN, AUTO_END)
     j = idx + 1
-    # 跳过标题下方的空行、HTML 注释（含锚点）与说明用引用行，使自动条目紧贴"区头"、位于手写条目之前
-    while j < len(lines):
+    while j < len(lines):                             # 跳过空行/注释（锚点等）/引用说明行
         s = lines[j].strip()
         if s == "" or s.startswith("<!--") or s.startswith(">"):
             j += 1
             continue
         break
-    head = lines[:j]
-    tail = lines[j:]
-    while head and head[-1].strip() == "":
-        head.pop()
-    return "\n".join(head + ["", block.rstrip(), ""] + tail)
+    lines[j:j] = [AUTO_BEGIN, AUTO_END, ""]
+    return "\n".join(lines)
 
 
-def set_anchor(md_text, sha):
-    """写入/更新锚点行（放在「## 二、提交记录」标题下第一行）"""
-    if ANCHOR_RE.search(md_text):
-        return ANCHOR_RE.sub("<!-- commit-sync: %s -->" % sha, md_text, count=1)
+def render_auto(entries):
+    body = "".join(t if t.endswith("\n") else t + "\n" for _, t in entries)
+    return "\n" + body if body else "\n"
+
+
+def replace_auto(md_text, entries):
     lines = md_text.split("\n")
-    for i, ln in enumerate(lines):
-        if ln.strip().startswith(SECTION_HEAD):
-            lines.insert(i + 1, "")
-            lines.insert(i + 2, "<!-- commit-sync: %s -->" % sha)
-            lines.insert(i + 3, "")
-            return "\n".join(lines)
-    return md_text.rstrip() + "\n\n<!-- commit-sync: %s -->\n" % sha
+    b = next((i for i, ln in enumerate(lines) if AUTO_BEGIN in ln), None)
+    e = next((i for i, ln in enumerate(lines) if AUTO_END in ln), None)
+    if b is None or e is None or e < b:
+        raise SystemExit("md 中缺少自动区标记（%s / %s）" % (AUTO_BEGIN, AUTO_END))
+    inner_lines = render_auto(entries).strip("\n").split("\n") if entries else []
+    new_lines = lines[:b + 1] + inner_lines + [""] + lines[e:]
+    # 去掉自动区前后多余空行（保证只有 1 个空行分隔）
+    while len(new_lines) > b + 2 and new_lines[b + 1].strip() == "" and new_lines[b + 2].strip() == "":
+        del new_lines[b + 1]
+    while e < len(new_lines) - 1 and new_lines[e - 1].strip() == "" and new_lines[e - 2].strip() == "":
+        del new_lines[e - 1]
+        e -= 1
+    return "\n".join(new_lines)
 
 
 # ────────────────────────────── 主流程 ──────────────────────────────
 def main():
     ap = argparse.ArgumentParser(description="把手动提交的提交信息写入 提交信息.md")
     ap.add_argument("--md", default=None, help="md 文件路径（默认：仓库根目录 提交信息.md）")
-    ap.add_argument("--count", type=int, default=0, help="只同步最近 N 条提交（默认 0=按锚点增量）")
+    ap.add_argument("--all", action="store_true", help="全量：写入整个 git 历史（可重复执行，不重复追加）")
+    ap.add_argument("--count", type=int, default=0, help="只同步最近 N 条提交")
     ap.add_argument("--from", dest="from_sha", default=None, help="起始提交（不含），默认取 md 锚点")
+    ap.add_argument("--max", dest="max_entries", type=int, default=0, help="最多写入 N 条（0=不限制）")
+    ap.add_argument("--no-files", action="store_true", help="不写变更文件清单")
+    ap.add_argument("--file-limit", type=int, default=40, help="每条提交最多列出多少个变更文件（默认 40）")
     ap.add_argument("--dry-run", action="store_true", help="只打印将要写入的内容，不修改文件")
+    ap.add_argument("--status", action="store_true", help="只显示同步状态，不修改文件")
     args = ap.parse_args()
 
     root = find_repo_root(os.path.dirname(os.path.abspath(__file__))) or find_repo_root(os.getcwd())
     if not root:
         raise SystemExit("未找到 git 仓库（向上查找 .git 失败）")
-
     md_path = args.md or os.path.join(root, "提交信息.md")
+    file_limit = 0 if args.no_files else max(0, args.file_limit)
+
     head = head_sha(root)
     if not head:
         raise SystemExit("git 仓库没有提交（HEAD 为空）")
+    total_commits = commit_count(root)
 
     md_text = read_md(md_path)
+    md_text = ensure_auto_block(md_text)
+    existing = parse_entries(get_auto_inner(md_text))
     anchor_raw = args.from_sha or get_anchor(md_text)
-    anchor = resolve_sha(root, anchor_raw) if anchor_raw else ""      # 解析为完整 sha（短 sha 也能正确比较）
+    anchor = resolve_sha(root, anchor_raw) if anchor_raw else ""
 
-    # ── 计算提交范围 ──
-    if args.count > 0:
+    # ── --status：只看状态 ──
+    if args.status:
+        pending = 0
+        if anchor and is_ancestor(root, anchor, "HEAD") and anchor != head:
+            pending = len(read_commits(root, ["%s..HEAD" % anchor]))
+        print("仓库：%s" % root)
+        print("md  ：%s" % md_path)
+        print("HEAD：%s（git 历史共 %d 条）" % (head[:7], total_commits))
+        print("锚点：%s" % (anchor[:7] if anchor else "(无)"))
+        print("自动区已收录：%d 条" % len(existing))
+        print("待同步：%d 条" % pending)
+        return 0
+
+    # ── 计算本次写入范围 ──
+    if args.all:
+        rev_args = ["HEAD"]
+        range_desc = "全部历史（%d 条）" % total_commits
+    elif args.count > 0:
         rev_args = ["-n", str(args.count), "HEAD"]
         range_desc = "最近 %d 条（--count）" % args.count
     elif anchor and is_ancestor(root, anchor, "HEAD"):
         if anchor == head:
-            print("无新提交：md 锚点已是 HEAD（%s）" % head[:7])
-            print("（如需强制重写某条：--count 1 或 --from <sha>）")
+            print("无新提交：md 锚点已是 HEAD（%s）；自动区已收录 %d 条" % (head[:7], len(existing)))
+            print("（重建全部历史：--all；强制写某条：--count 1 或 --from <sha>）")
             return 0
         rev_args = ["%s..HEAD" % anchor]
         range_desc = "%s..HEAD" % anchor[:7]
@@ -248,26 +323,33 @@ def main():
             print("提示：md 锚点 %s 无效或不是 HEAD 的祖先（可能变基/重写），本次仅同步最近 1 条" % anchor_raw[:7])
 
     commits = read_commits(root, rev_args)
+    if args.max_entries > 0:
+        commits = commits[:args.max_entries]
     if not commits:
         print("无新提交（范围 %s 为空）" % range_desc)
         return 0
 
-    blocks = [build_entry(root, c) for c in commits]     # 最新在前
-    block = "".join(blocks)
+    new_entries = [(c["short"], build_entry(root, c, file_limit)) for c in commits]
+    new_shas = {s.lower() for s, _ in new_entries}
+    # 新条目在前（最新在最上面）；自动区里已有的旧条目按原顺序保留，同 SHA 不重复
+    merged = new_entries + [(s, t) for s, t in existing if s.lower() not in new_shas]
 
-    print("将写入 %d 条提交（范围 %s，最新在最上面）：" % (len(commits), range_desc))
-    for c in commits:
+    print("将写入 %d 条提交（范围 %s，最新在最上面）；写完后自动区合计 %d 条" %
+          (len(new_entries), range_desc, len(merged)))
+    for c in commits[:10]:
         print("  %s  %s  %s" % (c["short"], c["date"], c["subject"]))
+    if len(commits) > 10:
+        print("  …（其余 %d 条）" % (len(commits) - 10))
 
     if args.dry_run:
-        print("\n---- dry-run：以下内容将插入「%s」下方 ----\n" % SECTION_HEAD)
-        print(block)
+        print("\n---- dry-run：以下内容将写入自动区（%s … %s 之间）----\n" % (AUTO_BEGIN, AUTO_END))
+        print(render_auto(merged).strip("\n"))
         return 0
 
-    new_text = insert_entries(md_text, block)
+    new_text = replace_auto(md_text, merged)
     new_text = set_anchor(new_text, head)
     write_md(md_path, new_text)
-    print("\n已写入：%s" % md_path)
+    print("\n已写入：%s（%.1f KB）" % (md_path, os.path.getsize(md_path) / 1024.0))
     print("锚点已更新：%s -> %s" % ((anchor or "(无)")[:7], head[:7]))
     return 0
 
