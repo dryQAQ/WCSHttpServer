@@ -9,6 +9,8 @@
 /release_WcsHttpServer/log_bak
 /test
 /check_db_schema.py
+# 提交信息同步脚本：本地工具，不入库（只读 git 历史并写入 提交信息.md，不做任何提交操作）
+/commit_msg_sync.py
 /.dshignore
 /dsh.config.json
 /*.zip
