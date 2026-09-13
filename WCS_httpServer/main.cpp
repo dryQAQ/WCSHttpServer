@@ -30,6 +30,7 @@
 #include <QPalette>      // ★ 2026-09-13 UI主题（深色背景）
 #include <QColor>
 #include <QStyleFactory>
+#include <QIcon>         // ★ 2026-09-13 UI资源（qrc 徽标作应用/任务栏图标）
 #include <atomic>
 #include <string>
 // ★ 必须在 windows.h 之前包含 winsock2.h：
@@ -246,6 +247,9 @@ int main(int argc, char* argv[])
     // ★ 2026-09-13 UI主题：深炭蓝灰背景 #18252E + 红色边框 #C83030
     //   在创建任何窗口/弹窗之前应用（含单实例提示框、主窗口、各对话弹窗）
     ApplyDarkTheme(app);
+
+    // ★ 2026-09-13 UI资源（借鉴 WCSApps）：应用/任务栏图标取 qrc 内置徽标
+    app.setWindowIcon(QIcon(":/WCS/Resources/logo.png"));
 
     // ★ 2026-09-07 Qt 消息钩子：qFatal 等文本进 run.log（崩溃前最后一条=abort 根因）
     qInstallMessageHandler(QtMsgHook);

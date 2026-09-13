@@ -24,6 +24,7 @@
 #include <QSpinBox>
 #include <QComboBox>
 #include <QHash>
+#include <QPixmap>   // ★ 2026-09-13 UI资源（连接状态图标，qrc 内 connect/unconnect）
 #include "HttpServer.h"
 #include "HttpClient.h"
 #include "PlcManager.h"
@@ -33,6 +34,7 @@
 class QDialog;     // ★ 2026-09-07 效率统计弹窗指针（仅在 .cpp 中定义具体类）
 class QTabWidget;  // ★ 2026-09-13 第二行多页窗口（标签在左侧）
 class QSplitter;   // ★ 第一行水平分隔条（默认宽度分配用，完整类型在 .cpp 中使用）
+class QToolButton; // ★ 2026-09-13 自绘标题栏的窗口控制按钮
 
 class MainWindow : public QMainWindow
 {
@@ -45,11 +47,18 @@ protected:
     void closeEvent(QCloseEvent* event) override;  // 窗口关闭时结束任务
     // ★ 2026-09-08 UI调整：默认最大化后按"各行两大部分各占一半"布置一次列宽
     void changeEvent(QEvent* event) override;
+    // ★ 2026-09-13 无边框窗口（WCS_FRAMELESS_TITLEBAR=1）：Windows 原生命中测试，
+    //   实现标题栏拖动（HTCAPTION）与四边/四角缩放（HTLEFT/HTRIGHT/HTTOP/...）
+    bool nativeEvent(const QByteArray& eventType, void* message, long* result) override;
 
 private:
     // ★ 2026-09-08 UI调整：水平分隔条默认等分（波次信息占首行一半）
     //   ★ 2026-09-13：第二行改为标签页后，此处只处理第一行的分栏
     void applyDefaultColumnWidths();
+    // ★ 2026-09-13 UI资源（借鉴 WCSApps）：设备连接状态图标切换（connect/unconnect）
+    void applyConnIcon(QLabel* icon, bool connected);
+    // ★ 2026-09-13 品牌标题栏：环境标识胶囊（正式/测试）刷新
+    void updateEnvChip();
 
 private slots:
     void onStartStop();       // 启动/结束任务按钮
@@ -116,6 +125,20 @@ private:
     QLabel*      m_lblPort         = nullptr;  // 监听端口显示
     QSpinBox*    m_spinBindCount   = nullptr;  // 期望绑定数量（波次下发时校验全部绑定用，默认1）
     QLabel*      m_lblBindCountHint = nullptr;  // 期望绑定数量提示标签
+
+    // ──── ★ 2026-09-13 UI资源（借鉴 WCSApps：qrc 内置图片 + 状态图标用法）────
+    QLabel*      m_lblBrandEnv     = nullptr;  // 顶部品牌标题栏右侧：环境标识（正式/测试）
+    QLabel*      m_icoTcp          = nullptr;  // PLC TCP 连接状态图标（connect/unconnect）
+    QLabel*      m_icoS7           = nullptr;  // S7 连接状态图标
+    QLabel*      m_icoRfid         = nullptr;  // RFID 连接状态图标
+    QPixmap      m_pixConnect;                 // 已连接图标（预缩放，避免每秒刷新重复缩放）
+    QPixmap      m_pixUnconnect;               // 未连接图标
+    // 自绘标题栏（无边框模式：拖动区 = 该 Frame 空白处；按钮区不参与拖动，保证可点击）
+    QFrame*      m_titleBar        = nullptr;  // 顶部标题栏（徽标/标题/环境标识/窗口按钮）
+    QToolButton* m_btnWinMin       = nullptr;  // 最小化
+    QToolButton* m_btnWinMax       = nullptr;  // 最大化 / 还原
+    QToolButton* m_btnWinClose     = nullptr;  // 关闭
+    void toggleMaximizeWindow();               // ★ 最大化/还原（自绘按钮 + 双击标题栏共用）
 
     // ──── TCP 连接状态 UI ────
     QLabel*      m_lblTcpStatus    = nullptr;  // TCP连接状态

@@ -1,4 +1,18 @@
 <RCC>
-    <qresource prefix="WCS_httpServer">
+    <!--
+      ★ 2026-09-13 UI资源（借鉴 WCSApps 的 qrc 用法：资源编译进 exe，无需随程序拷贝 Resources 目录）
+        · logo.png      公司徽标：窗口/任务栏图标 + 主界面标题栏徽标
+        · connect.png   已连接状态图标（设备状态面板：PLC TCP / S7 / RFID）
+        · unconnect.png 未连接状态图标
+        · minimize/maximize/X.png  自绘标题栏的窗口控制按钮（WCS_FRAMELESS_TITLEBAR=1 时使用）
+      代码中统一使用 ":/WCS/Resources/xxx" 访问（前缀 /WCS，与本项目一致）。
+    -->
+    <qresource prefix="/WCS">
+        <file>Resources/logo.png</file>
+        <file>Resources/connect.png</file>
+        <file>Resources/unconnect.png</file>
+        <file>Resources/minimize.png</file>
+        <file>Resources/maximize.png</file>
+        <file>Resources/X.png</file>
     </qresource>
 </RCC>

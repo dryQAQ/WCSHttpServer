@@ -200,8 +200,10 @@
     <!--    sortingAllowOverrecv: 是否允许超收（快捷开关，true覆盖上限策略） -->
     <!--    rescanResendEnabled: 同波次重扫重投（拿起已落格的件重新上料）      -->
     <!--      true=仍按原格口映射重新下发；false=旧行为（不再下发）          -->
-    <!--    rescanResendCooldownMs: 同一 EPC 两次下发最小间隔(ms)，防连读     -->
-    <!--    rescanResendMaxTimes:   同一 EPC 每波次最多重投次数（超限写异常表；首投不计入）-->
+    <!--    rescanResendCooldownMs: 同一 EPC 两次下发最小间隔(ms)             -->
+    <!--      0=不限制（默认，2026-09-13 起）；如现场出现 RFID 连读导致重复下发，改回 1000 即可 -->
+    <!--    rescanResendMaxTimes:   同一 EPC 每波次最多重投次数               -->
+    <!--      0=不限制（默认，2026-09-13 起）；>0 时超限拦截并写异常表"重扫超限" -->
     <!--    plcInFlightTimeoutMs:   PLC 在途超时(ms)，超时后允许重投          -->
     <!--    修改后需重启服务                                            -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -210,10 +212,10 @@
     <sortingOrderQtyValidate>strict</sortingOrderQtyValidate>
     <sortingConflictPolicy>STRICT_EXCEPTION</sortingConflictPolicy>
     <sortingAllowOverrecv>false</sortingAllowOverrecv>
-    <!-- ★ 2026-09-11 同波次重扫重投 -->
+    <!-- ★ 2026-09-11 同波次重扫重投（★ 2026-09-13 默认改为不限次数/不冷却） -->
     <rescanResendEnabled>true</rescanResendEnabled>
-    <rescanResendCooldownMs>1000</rescanResendCooldownMs>
-    <rescanResendMaxTimes>3</rescanResendMaxTimes>
+    <rescanResendCooldownMs>0</rescanResendCooldownMs>
+    <rescanResendMaxTimes>0</rescanResendMaxTimes>
     <plcInFlightTimeoutMs>30000</plcInFlightTimeoutMs>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->

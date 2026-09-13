@@ -75,11 +75,11 @@
     <gridCodeWidth>3</gridCodeWidth>
     <!-- EPC 任务内防重（true/false） -->
     <sortingEpcDedup>true</sortingEpcDedup>
-    <!-- 【已废弃】格口上限策略（历史遗留项，程序只读写不使用；现行机制见下面两项） -->
+    <!-- 【已废弃】格口上限策略（历史遗留，程序只读写不使用） -->
     <sortingGridCapPolicy>reject</sortingGridCapPolicy>
-    <!-- ★ 超计划处置：exception=超计划件改投异常格口 / block=超计划件不发指令并标注 / allow=仅标注 -->
+    <!-- ★ 超计划处置：exception=超计划件改投异常口 / block=超计划件不发指令并标注 / allow=仅标注 -->
     <sortingOverplanPolicy>exception</sortingOverplanPolicy>
-    <!-- ★ 物理异常格口号（3位内部号；本项目按现场约定为 66 号格口。留空或 0 = 未配置，则超计划件不发指令并告警） -->
+    <!-- ★ 物理异常格口号（3位内部号如 066；留空或 0 = 未配置，则超计划件不发指令并告警） -->
     <exceptionGrid>66</exceptionGrid>
     <!-- orderQty 校验模式（strict=严格, loose=宽松） -->
     <sortingOrderQtyValidate>strict</sortingOrderQtyValidate>
@@ -101,11 +101,6 @@
     <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
     <!-- ③ 波次取消（WMS → WCS，H5 退货任务取消） -->
     <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
-    <binding grid="001">H-01-2001</binding>
-    <binding grid="002">H-01-2002</binding>
-    <binding grid="003">H-01-2003</binding>
-    <binding grid="004">H-01-2004</binding>
-    <binding grid="005">H-01-2005</binding>
     <gridName num="1">1号格口</gridName>
     <gridName num="10">10号格口</gridName>
     <gridName num="11">11号格口</gridName>

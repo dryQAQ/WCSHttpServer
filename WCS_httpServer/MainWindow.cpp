@@ -38,8 +38,14 @@
 #include <QHideEvent>
 #include <QElapsedTimer>
 #include <functional>      // ★ 2026-09-13 弹窗上下文注入（std::function 回调）
+#include <QToolButton>     // ★ 2026-09-13 自绘标题栏窗口按钮
+#include <QScreen>         // ★ 2026-09-13 无边框最大化按"可用工作区"校正
 #include "qcustomplot.h"   // ★ 2026-09-07 效率统计图（QCustomPlot）
 #include "VerticalTabBar.h" // ★ 2026-09-13 左侧标签页：中文逐字竖排自绘标签栏
+#if defined(Q_OS_WIN)
+#  include <windows.h>
+#  include <windowsx.h>    // GET_X_LPARAM / GET_Y_LPARAM（WM_NCHITTEST 命中测试）
+#endif
 
 // ============================================================================
 // ★ 2026-09-13 UI改版说明（第二行 = 左侧标签页多页窗口）：
@@ -720,6 +726,21 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1280, 900);          // ★ 2026-09-08 UI调整：默认打开由 main() showMaximized() 最大化全屏
     setMinimumSize(900, 700);
 
+    // ★ 2026-09-13 UI资源（借鉴 WCSApps：图片统一放 qrc，代码用 ":/前缀/路径" 访问）——
+    //   ① 窗口/任务栏图标取内置徽标 logo.png；② 设备状态图标预缩放 20x20，供秒级刷新直接使用
+    setWindowIcon(QIcon(":/WCS/Resources/logo.png"));
+    m_pixConnect   = QPixmap(":/WCS/Resources/connect.png")
+                        .scaled(20, 20, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    m_pixUnconnect = QPixmap(":/WCS/Resources/unconnect.png")
+                        .scaled(20, 20, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+#if WCS_FRAMELESS_TITLEBAR
+    // ★ 2026-09-13 无边框 + 自绘标题栏（借鉴 WCSApps MainTitleBar 的做法）：
+    //   拖动/边缘缩放交给 Windows 原生 WM_NCHITTEST（见 nativeEvent），
+    //   关闭仍走 closeEvent 的确认流程；要回退旧外观把 define.h 里该宏改成 0 即可。
+    setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+#endif
+
     // ★ UI 查询数据库（单例，与服务共享同一实例）
     {
         m_pQueryDb = &SortingDatabase::instance();
@@ -825,7 +846,117 @@ void MainWindow::changeEvent(QEvent* event)
         m_defaultColSplitApplied = true;
         QTimer::singleShot(0, this, [this]() { applyDefaultColumnWidths(); });
     }
+#if WCS_FRAMELESS_TITLEBAR
+    // ★ 2026-09-13 无边框窗口：最大化时显式校正到"可用工作区"，
+    //   避免个别系统把任务栏一起盖住（校正只在几何不一致时执行一次）
+    if (event->type() == QEvent::WindowStateChange && isMaximized())
+    {
+        QScreen* sc = screen() ? screen() : QGuiApplication::primaryScreen();
+        if (sc)
+        {
+            const QRect avail = sc->availableGeometry();
+            if (geometry() != avail)
+                setGeometry(avail);
+        }
+    }
+#endif
     QMainWindow::changeEvent(event);
+}
+
+// ============================================================================
+// ★ 2026-09-13 无边框窗口：最大化 / 还原（自绘标题栏按钮 + 双击标题栏共用）
+//   还原时回到系统记录的常规几何（Qt 自身维护 showNormal 的还原矩形）
+// ============================================================================
+void MainWindow::toggleMaximizeWindow()
+{
+    if (isMaximized())
+        showNormal();
+    else
+        showMaximized();
+
+    // 状态切换后重新按当前宽度分配第一行列宽（changeEvent 只在首次最大化时分配）
+    QTimer::singleShot(0, this, [this]() {
+        applyDefaultColumnWidths();
+        if (m_btnWinMax)
+            m_btnWinMax->setToolTip(isMaximized() ? QString::fromUtf8("还原窗口（双击标题栏同效）")
+                                                  : QString::fromUtf8("最大化（双击标题栏同效）"));
+    });
+}
+
+// ============================================================================
+// ★ 2026-09-13 无边框窗口的原生命中测试（借鉴 WCSApps 自绘标题栏的手感，但交给系统实现）：
+//   · 标题栏空白/文字区 → HTCAPTION：系统级拖动 + 拖到屏幕边缘自动半屏（Aero Snap）；
+//   · 标题栏上的"可点击控件"（三个窗口按钮）→ 原样交给 Qt，保证点击生效；
+//   · 四边/四角 6px → HTLEFT/HTRIGHT/HTTOP/HTBOTTOM/四角：系统级缩放；
+//   · 双击标题栏 → 自行切换最大化/还原（无边框窗口系统默认不处理）；
+//   · 最大化状态下不做边缘缩放（与系统行为一致）。
+// ============================================================================
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, long* result)
+{
+#if WCS_FRAMELESS_TITLEBAR && defined(Q_OS_WIN)
+    if (eventType == "windows_generic_MSG" || eventType == "windows_dispatcher_MSG")
+    {
+        MSG* msg = static_cast<MSG*>(message);
+        if (msg && result)
+        {
+            const QPoint pos = mapFromGlobal(QPoint(GET_X_LPARAM(msg->lParam),
+                                                    GET_Y_LPARAM(msg->lParam)));
+
+            // 标题栏内"可点击控件"判定（按钮区不参与拖动，也不触发双击最大化）
+            auto overTitleBarButton = [this](const QPoint& p) -> bool {
+                if (!m_titleBar || !m_titleBar->geometry().contains(p)) return false;
+                const QPoint localInBar = m_titleBar->mapFrom(this, p);
+                const QList<QWidget*> kids =
+                    m_titleBar->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+                for (QWidget* child : kids)
+                {
+                    if (qobject_cast<QAbstractButton*>(child) && child->isVisible()
+                        && child->geometry().contains(localInBar))
+                        return true;
+                }
+                return false;
+            };
+
+            const bool inTitleBar = (m_titleBar && m_titleBar->geometry().contains(pos));
+            const bool onTitleBtn = overTitleBarButton(pos);
+
+            if (msg->message == WM_NCHITTEST && !onTitleBtn)
+            {
+                if (inTitleBar)
+                {
+                    *result = HTCAPTION;    // 标题栏（含徽标/标题文字）= 拖动窗口
+                    return true;
+                }
+                if (!isMaximized())
+                {
+                    const int b = 6;
+                    const int w = width(), h = height();
+                    const bool left   = pos.x() < b;
+                    const bool right  = pos.x() >= w - b;
+                    const bool top    = pos.y() < b;
+                    const bool bottom = pos.y() >= h - b;
+                    if (top && left)     { *result = HTTOPLEFT;     return true; }
+                    if (top && right)    { *result = HTTOPRIGHT;    return true; }
+                    if (bottom && left)  { *result = HTBOTTOMLEFT;  return true; }
+                    if (bottom && right) { *result = HTBOTTOMRIGHT; return true; }
+                    if (left)            { *result = HTLEFT;        return true; }
+                    if (right)           { *result = HTRIGHT;       return true; }
+                    if (top)             { *result = HTTOP;         return true; }
+                    if (bottom)          { *result = HTBOTTOM;      return true; }
+                }
+            }
+
+            // 双击标题栏 = 最大化 / 还原
+            if (msg->message == WM_NCLBUTTONDBLCLK && inTitleBar && !onTitleBtn)
+            {
+                toggleMaximizeWindow();
+                *result = 0;
+                return true;
+            }
+        }
+    }
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 void MainWindow::applyDefaultColumnWidths()
@@ -856,6 +987,76 @@ void MainWindow::setupUI()
 
     QVBoxLayout* mainLayout = new QVBoxLayout(central);
     mainLayout->setSpacing(2);
+
+    // ═══════════════════════════════════════════
+    // ★ 2026-09-13 顶部品牌标题栏（借鉴 WCSApps 的 MainTitleBar 用法：qrc 内置 logo + 标题文字；
+    //   本项目保留系统原生窗口边框，避免自绘边框带来的拖动/缩放/多屏风险）
+    // ═══════════════════════════════════════════
+    {
+        QFrame* header = new QFrame(central);
+        header->setObjectName("appHeaderBar");
+        header->setFixedHeight(58);
+        header->setStyleSheet(
+            "#appHeaderBar { background-color: #16222B; border: 1px solid #C83030; border-radius: 4px; }");
+        QHBoxLayout* headerLay = new QHBoxLayout(header);
+        headerLay->setContentsMargins(10, 4, 12, 4);
+        headerLay->setSpacing(12);
+
+        QLabel* logo = new QLabel(header);
+        logo->setPixmap(QPixmap(":/WCS/Resources/logo.png").scaledToHeight(44, Qt::SmoothTransformation));
+        logo->setFixedWidth(72);
+        logo->setAlignment(Qt::AlignCenter);
+        logo->setToolTip(QString::fromUtf8("杭州默鑫智能科技有限公司"));
+
+        QLabel* title = new QLabel(QString::fromUtf8("WCS 退货分拣 · HTTP 服务"), header);
+        title->setStyleSheet("font-size: 20px; font-weight: bold; color: #E6EDF3; border: none;");
+
+        QLabel* sub = new QLabel(QString::fromUtf8("WMS 任务接收 · 波次分拣 · PLC / RFID 设备链路"), header);
+        sub->setStyleSheet("font-size: 12px; color: #A8B7C2; border: none;");
+
+        m_lblBrandEnv = new QLabel(header);      // 环境标识：正式/测试（在 applyConfig 中填充）
+        m_lblBrandEnv->setAlignment(Qt::AlignCenter);
+        m_lblBrandEnv->setMinimumWidth(96);
+
+        headerLay->addWidget(logo);
+        headerLay->addWidget(title);
+        headerLay->addWidget(sub);
+        headerLay->addStretch();
+        headerLay->addWidget(m_lblBrandEnv);
+
+#if WCS_FRAMELESS_TITLEBAR
+        // ── 窗口控制按钮（借鉴 WCSApps MainTitleBar：qrc 内 minimize/maximize/X 图标）──
+        //   按钮区不参与标题栏拖动（nativeEvent 里按控件矩形排除），保证可正常点击
+        auto makeWinBtn = [&](const QString& icon, const QString& tip) {
+            QToolButton* b = new QToolButton(header);
+            b->setIcon(QIcon(icon));
+            b->setIconSize(QSize(18, 18));
+            b->setAutoRaise(true);
+            b->setToolTip(tip);
+            b->setFixedSize(34, 30);
+            b->setCursor(Qt::ArrowCursor);
+            b->setStyleSheet(
+                "QToolButton { border: none; background: transparent; border-radius: 3px; }"
+                "QToolButton:hover { background-color: #C83030; }"
+                "QToolButton:pressed { background-color: #9E2626; }");
+            return b;
+        };
+        m_btnWinMin   = makeWinBtn(":/WCS/Resources/minimize.png", QString::fromUtf8("最小化"));
+        m_btnWinMax   = makeWinBtn(":/WCS/Resources/maximize.png", QString::fromUtf8("最大化 / 还原（双击标题栏同效）"));
+        m_btnWinClose = makeWinBtn(":/WCS/Resources/X.png",        QString::fromUtf8("关闭"));
+        connect(m_btnWinMin,   &QToolButton::clicked, this, &MainWindow::showMinimized);
+        connect(m_btnWinMax,   &QToolButton::clicked, this, &MainWindow::toggleMaximizeWindow);
+        connect(m_btnWinClose, &QToolButton::clicked, this, &MainWindow::close);
+
+        headerLay->addSpacing(8);
+        headerLay->addWidget(m_btnWinMin);
+        headerLay->addWidget(m_btnWinMax);
+        headerLay->addWidget(m_btnWinClose);
+#endif
+
+        m_titleBar = header;   // 供 nativeEvent 判定"标题栏可拖动区"
+        mainLayout->addWidget(header);
+    }
 
     // ═══════════════════════════════════════════
     // 第一行：任务接收控制区（★ 2026-09-06 按钮只控制 WMS 任务接收；设备连接常驻）
@@ -1008,6 +1209,21 @@ void MainWindow::setupUI()
     plcOuterLayout->setSpacing(4);
 
     // ── TCP 连接状态 ──
+    // ★ 2026-09-13 UI资源：状态图标（connect/unconnect）与文字并列，绿=已连接、红=未连接
+    auto makeConnIcon = [](const QString& tip) {
+        QLabel* ico = new QLabel();
+        ico->setFixedSize(20, 20);
+        ico->setAlignment(Qt::AlignCenter);
+        ico->setToolTip(tip);
+        return ico;
+    };
+    m_icoTcp  = makeConnIcon(QString::fromUtf8("PLC TCP 连接状态（绿=已连接，红=未连接）"));
+    m_icoS7   = makeConnIcon(QString::fromUtf8("S7 连接状态（绿=已连接，红=未连接）"));
+    m_icoRfid = makeConnIcon(QString::fromUtf8("RFID 推送连接状态（绿=已连接，红=重连中）"));
+    applyConnIcon(m_icoTcp, false);
+    applyConnIcon(m_icoS7, false);
+    applyConnIcon(m_icoRfid, false);
+
     QHBoxLayout* tcpRow1 = new QHBoxLayout();
     m_lblTcpStatus = new QLabel(QCoreApplication::translate("MainWindow", "TCP: 未连接"));
     m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #A8B7C2; font-weight: bold;");
@@ -1015,6 +1231,7 @@ void MainWindow::setupUI()
     m_lblTcpIp->setStyleSheet("font-size: 13px; color: #2196F3;");
     m_lblTcpUptime = new QLabel("");
     m_lblTcpUptime->setStyleSheet("font-size: 13px; color: #2196F3;");
+    tcpRow1->addWidget(m_icoTcp);
     tcpRow1->addWidget(m_lblTcpStatus);
     tcpRow1->addWidget(m_lblTcpIp);
     tcpRow1->addWidget(m_lblTcpUptime);
@@ -1049,6 +1266,7 @@ void MainWindow::setupUI()
     m_lblS7Status->setStyleSheet("font-size: 13px; color: #A8B7C2; font-weight: bold;");
     m_lblS7Ip = new QLabel("");
     m_lblS7Ip->setStyleSheet("font-size: 13px; color: #2196F3;");
+    s7Row1->addWidget(m_icoS7);
     s7Row1->addWidget(m_lblS7Status);
     s7Row1->addWidget(m_lblS7Ip);
     s7Row1->addStretch();
@@ -1081,6 +1299,7 @@ void MainWindow::setupUI()
         .arg(rfidCfg->config().rfidPushServerIp)
         .arg(rfidCfg->config().rfidPushServerPort));
     m_lblRfidIp->setStyleSheet("font-size: 13px; color: #A8B7C2;");
+    rfidRow->addWidget(m_icoRfid);
     rfidRow->addWidget(m_lblRfidStatus);
     rfidRow->addWidget(m_lblRfidIp);
     rfidRow->addStretch();
@@ -1991,6 +2210,26 @@ void MainWindow::applyConfig()
     m_lblPort->setText(QString("端口: %1").arg(cfg.wmsListenPort));
     if (m_spinBindCount)
         m_spinBindCount->setValue(cfg.expectedBindCount);
+
+    // ★ 2026-09-13 品牌标题栏：环境标识胶囊（正式=红、测试=橙，与端口标签口径一致）
+    updateEnvChip();
+}
+
+// ============================================================================
+// ★ 2026-09-13 品牌标题栏环境标识（正式/测试）——applyConfig / applyLiveConfig 共用
+// ============================================================================
+void MainWindow::updateEnvChip()
+{
+    if (!m_lblBrandEnv) return;
+    const bool test = ConfigManager::instance()->config().useTestEnv;
+    m_lblBrandEnv->setText(test ? QString::fromUtf8("测试环境") : QString::fromUtf8("正式环境"));
+    m_lblBrandEnv->setStyleSheet(test
+        ? "font-size: 13px; font-weight: bold; color: #FFB74D; background-color: #3A2A16;"
+          " border: 1px solid #FF9800; border-radius: 10px; padding: 2px 10px;"
+        : "font-size: 13px; font-weight: bold; color: #FF8A80; background-color: #3A1A1A;"
+          " border: 1px solid #C83030; border-radius: 10px; padding: 2px 10px;");
+    m_lblBrandEnv->setToolTip(QString::fromUtf8(
+        "回传环境：由配置 useTestEnv 决定（正式/测试的 URL 与 AppKey 不同）"));
 }
 
 // ============================================================================
@@ -2002,6 +2241,9 @@ void MainWindow::applyConfig()
 void MainWindow::applyLiveConfig()
 {
     AppConfig& cfg = ConfigManager::instance()->config();
+
+    // ★ 2026-09-13 环境标识（正式/测试）随配置热更新
+    updateEnvChip();
 
     if (m_pClient)
     {
@@ -2873,6 +3115,21 @@ void MainWindow::onRefreshTimer()
 }
 
 // ★ 2026-09-06 解耦：RFID 客户端连接状态 → UI 标签（状态变化时才改样式/记日志）
+// ============================================================================
+// ★ 2026-09-13 UI资源（借鉴 WCSApps）：设备连接状态图标
+//   connect.png（绿）/ unconnect.png（红）取自 qrc，构造时预缩放 20x20；
+//   仅在状态变化时 setPixmap（本方法被秒级刷新调用，避免重复绘制）
+// ============================================================================
+void MainWindow::applyConnIcon(QLabel* icon, bool connected)
+{
+    if (!icon || m_pixConnect.isNull() || m_pixUnconnect.isNull()) return;
+    const QVariant st = icon->property("connState");
+    if (st.isValid() && st.toBool() == connected) return;   // 状态未变，跳过
+    icon->setProperty("connState", connected);
+    icon->setPixmap(connected ? m_pixConnect : m_pixUnconnect);
+    icon->setToolTip(connected ? QString::fromUtf8("已连接") : QString::fromUtf8("未连接 / 重连中"));
+}
+
 void MainWindow::updateRfidStatus()
 {
     RfidPushClient* rfid = m_pServer ? m_pServer->rfidPush() : nullptr;
@@ -2883,9 +3140,10 @@ void MainWindow::updateRfidStatus()
     m_lastRfidConnected = now;
 
     if (!m_lblRfidStatus) return;
+    applyConnIcon(m_icoRfid, now);   // ★ 2026-09-13 状态图标（绿=已连接，红=重连中）
     if (now)
     {
-        m_lblRfidStatus->setText(QString("● RFID: 已连接"));
+        m_lblRfidStatus->setText(QString("RFID: 已连接"));
         m_lblRfidStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
         m_lblRfidIp->setStyleSheet("font-size: 13px; color: #2196F3;");
         if (m_rfidStatusLog)
@@ -3063,12 +3321,12 @@ void MainWindow::updatePlcPanel()
         m_lastTcpConnected = tcpNow;
         if (tcpNow)
         {
-            m_lblTcpStatus->setText(QString("● TCP: 已连接"));
+            m_lblTcpStatus->setText(QString("TCP: 已连接"));
             m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
         }
         else if (s.running)
         {
-            m_lblTcpStatus->setText(QString("● TCP: 监听中"));
+            m_lblTcpStatus->setText(QString("TCP: 监听中"));
             m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #FF9800; font-weight: bold;");
         }
         else
@@ -3076,6 +3334,7 @@ void MainWindow::updatePlcPanel()
             m_lblTcpStatus->setText(QCoreApplication::translate("MainWindow", "TCP: 未启动"));
             m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
         }
+        applyConnIcon(m_icoTcp, tcpNow);   // ★ 2026-09-13 状态图标（绿=已连接，红=未连接/未启动）
     }
     if (tcpNow || s.running)
     {
@@ -3117,16 +3376,17 @@ void MainWindow::updatePlcPanel()
     if (s.s7Connected != m_lastS7Connected)  // ★ 状态变化时才改样式
     {
         m_lastS7Connected = s.s7Connected;
+        applyConnIcon(m_icoS7, s.s7Connected);   // ★ 2026-09-13 状态图标（绿=已连接，红=未连接）
         if (s.s7Connected)
         {
-            m_lblS7Status->setText(QString("● S7: 已连接"));
+            m_lblS7Status->setText(QString("S7: 已连接"));
             m_lblS7Status->setStyleSheet("font-size: 13px; color: #4CAF50; font-weight: bold;");
             m_lblS7Ip->setText(s.s7Ip);
             m_lblS7Ip->setStyleSheet("font-size: 13px; color: #2196F3;");
         }
         else
         {
-            m_lblS7Status->setText(QString("● S7: 未连接"));
+            m_lblS7Status->setText(QString("S7: 未连接"));
             m_lblS7Status->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
             m_lblS7Ip->setText(s.s7Ip.isEmpty() ? "" : s.s7Ip);
             m_lblS7Ip->setStyleSheet("font-size: 13px; color: #A8B7C2;");
