@@ -246,10 +246,14 @@
 // ★ 2026-09-11 同波次「重扫重投」配置（拿起已落格的件重新上料 → 仍按原格口下发）
 //   背景：此前 m_sentEpcs 以"本波次已发送过"永久去重，导致重投的件收不到格口指令；
 //   改为「在途去重」：PLC 落格反馈到达即出在途，之后再被 RFID 读到允许按原格口重投。
+// ★ 2026-09-13 调整（客户要求"已落格后的物件再次投放，WCS 依然要处理"）：
+//   · 重投次数上限取消（默认 0 = 不限制），只要现场重新上料就重发原格口指令；
+//   · 冷却默认置 0（不拦截）；如现场出现 RFID 同一次读头连读造成的重复下发，
+//     把 rescanResendCooldownMs 改回 1000 即可恢复拦截，无需改代码。
 // ═══════════════════════════════════════════════════════════════════════════
 #define RESCAN_RESEND_ENABLED       true     // 重扫重投开关（false=回退"已发送过不再下发"的旧行为）
-#define RESCAN_RESEND_COOLDOWN_MS   1000     // 同一 EPC 两次下发的最小间隔(ms)，防 RFID 连读/抖动（过快重投不被吞）
-#define RESCAN_RESEND_MAX_TIMES     3        // 同一 EPC 每波次最多重投次数（超限写异常表留痕；首投不计入）
+#define RESCAN_RESEND_COOLDOWN_MS   0        // 同一 EPC 两次下发最小间隔(ms)；0=不限制（防连读可设 1000）
+#define RESCAN_RESEND_MAX_TIMES     0        // 同一 EPC 每波次最多重投次数；0=不限制（>0 时超限写异常表留痕）
 #define PLC_INFLIGHT_TIMEOUT_MS     30000    // PLC 在途超时(ms)：迟迟未收到落格反馈时，超时后允许重投（防永久锁死）
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -375,6 +379,20 @@
 // ★ 2026-09-11 重扫重投：查某波次某 EPC 的**首条**落格号（重扫落格号一致性告警用）
 #define SQL_SELECT_FIRST_GRID_BY_EPC \
     "SELECT grid_num FROM sorting_records WHERE order_code = ? AND barcode = ? ORDER BY id ASC LIMIT 1"
+// ★ 2026-09-13 需求：按容器号查询该容器下的所有 EPC 物件明细
+//   数据源 sorting_records.boxcode（落格时按当时绑定固化的容器号）
+//   说明：容器号大小写/空格做归一（TRIM + COLLATE NOCASE），兼容人工输入的 h-t0131
+#define SQL_QUERY_BY_BOXCODE \
+    SQL_SELECT_FIELDS "FROM sorting_records " \
+    "WHERE TRIM(boxcode) = TRIM(?) COLLATE NOCASE ORDER BY id ASC LIMIT ?"
+// ★ 2026-09-13 需求（按容器号查询配套）：批量查一组 EPC 各自出现过的其他容器号
+//   用途：只查本容器时，"同一 EPC 是否被分到过别的容器"无法从单表结果看出，需反查
+//   绑定：?1=EPC  ?2=本容器（排除自身）  ?3=limit
+#define SQL_QUERY_BOXCODES_BY_EPC \
+    "SELECT DISTINCT TRIM(boxcode) FROM sorting_records " \
+    "WHERE barcode = ? AND TRIM(boxcode) <> '' " \
+    "  AND TRIM(boxcode) <> TRIM(?) COLLATE NOCASE " \
+    "ORDER BY id ASC LIMIT ?"
 // ★ 2026-09-09 需求2：全格口汇总（每格一行：格口号/分拣件数/SKU数/最近容器号/最近分拣时间）
 // ★ 2026-09-10 归一：按格口整数归组（"7"/"007" 不再重复成两行），显示统一为 3 位 key
 #define SQL_QUERY_GRID_SUMMARY \
@@ -693,8 +711,13 @@
 #define SQL_SELECT_SORTED_EPCS_BY_ORDER \
     "SELECT DISTINCT barcode FROM sorting_records WHERE order_code = ? AND barcode <> ''"
 // 查询某波次全部异常 EPC
+// ★ 2026-09-13 异常及时清理口径：该 EPC 若已成功落格（sorting_records 有记录），
+//   说明它已从异常口闭环出来，恢复时不得再算回"异常"（否则重启后异常数又变多）
 #define SQL_SELECT_EXCEPTION_EPCS_BY_ORDER \
-    "SELECT DISTINCT epc FROM exception_record WHERE order_code = ? AND epc <> ''"
+    "SELECT DISTINCT e.epc FROM exception_record e " \
+    "WHERE e.order_code = ? AND e.epc <> '' " \
+    "  AND NOT EXISTS (SELECT 1 FROM sorting_records s " \
+    "                  WHERE s.order_code = e.order_code AND s.barcode = e.epc)"
 // 查询某波次是否存在成功满箱回传（H7）
 #define SQL_SELECT_HAS_SUCCESS_FULLBOX \
     "SELECT COUNT(*) FROM outbox_fullbox WHERE order_code = ? AND status = 'success'"

@@ -135,6 +135,24 @@ public:
         return QString();
     }
 
+    // ★ 2026-09-13 实时面板/异常弹窗只读访问（全部为无副作用查询）
+    // 格口当前容器号（内存绑定表，含补零兜底；无绑定返回空串）
+    QString containerForGrid(const QString& grid) const;
+    // 某 EPC 是否仍在途（已下发 PLC、未收到落格反馈）——实时面板判定"待落格/超时未反馈"用
+    bool isPlcSendInFlight(const QString& epc) const;
+    // 某 EPC 本波次重投次数（0=仅首投；实时面板状态列显示"重投k次"用）
+    int  rescanResendTimes(const QString& epc) const;
+    // 本次运行累计 RFID 扫描次数（= RFID 推送 EPC 次数，重复 EPC 重复计数；重启归 0）
+    quint64 rfidPushTotal() const { return m_rfidPushTotal.load(std::memory_order_relaxed); }
+    // ★ 性能核验（需求：证明实时面板不影响分拣主流程）
+    struct PerfSnapshot {
+        int  rfidToPlcP50 = -1, rfidToPlcP95 = -1, rfidToPlcP99 = -1;  // RFID推送→PLC下发(ms)
+        int  fbLatencyP95 = -1;      // 下发→落格反馈(ms)
+        int  eventLagP95  = -1;      // RFID 帧解析→业务入口（主线程事件滞后, ms）
+        int  samples      = 0;       // rfid→plc 采样数
+    };
+    PerfSnapshot perfSnapshot() const;
+
     // ★ S5 满箱回传结果处理（H7 满箱同步到WMS，MainWindow 回调，必须 public）
     void onFullboxReplyFinished(const QString& msgId, bool success, const QString& body);
 
@@ -344,10 +362,26 @@ private:
     QHash<QString, qint64> m_lastPlcSendMs;  // ★ 同一 EPC 最近一次下发时刻(ms)，用于重扫冷却
     QHash<QString, int>    m_rescanResendTimes;  // ★ 同一 EPC 本波次重发次数（上限保护）
 
-    bool isEpcInFlight(const QString& epc);       // 是否在途（含 plcInFlightTimeoutMs 超时判定）
+    bool isEpcInFlight(const QString& epc);       // 是否在途（含 plcInFlightTimeoutMs 超时判定，会顺手清理超时项）
+    // ★ 2026-09-13 只读版本：不做任何写操作（UI 每秒查询"待落格/超时未反馈"用，避免 UI 改业务状态）
+    bool isEpcInFlightReadOnly(const QString& epc) const;
     void markEpcInFlight(const QString& epc);     // 标记在途（发送成功后调用）
     void clearEpcInFlight(const QString& epc);    // 落格反馈到达 → 退出在途（之后允许重扫重投）
     void clearAllEpcRuntimeState();               // 波次切换/新波次/完结清理：在途+时刻+重发计数
+
+    // ──── ★ 2026-09-13 性能核验：固定槽环形采样（无动态分配、无锁、只进日志不影响业务）────
+    //   用途：回答"实时面板是否影响分拣速度"——给出 RFID推送→PLC下发 / 下发→反馈 / 主线程事件滞后的分位值
+    static const int PERF_RING_SLOTS = 256;
+    int  m_perfRfidToPlc[PERF_RING_SLOTS] = {0};   // 采样：RFID推送→PLC下发(ms)
+    int  m_perfFbLatency[PERF_RING_SLOTS] = {0};   // 采样：PLC下发→落格反馈(ms)
+    int  m_perfEventLag[PERF_RING_SLOTS]  = {0};   // 采样：RFID帧解析→业务入口(ms)
+    std::atomic<int> m_perfIdx{0};                 // 写入游标（取模覆盖，读侧自行快照）
+    std::atomic<quint64> m_perfRfidCount{0};
+    std::atomic<quint64> m_perfFbCount{0};
+    void perfSampleRfidToPlc(int ms);
+    void perfSampleFbLatency(int ms);
+    void perfSampleEventLag(int ms);
+    static int perfPercentile(const int* ring, int validCount, double pct);
 
     // ──── ★ 2026-09-08 RFID 发送"不阻塞"保障 ────
     //   RFID 挂起集合：EPC 已就绪（SKU+carNum 齐）但处于非执行态（未开工/完结中等）→ 挂起，
@@ -419,6 +453,19 @@ private:
     QMap<QString, int>      m_gridSortedCount;   // 格口号 → 已分拣件数
     std::mutex              m_gridCountMutex;     // 保护 m_gridSortedCount
 
+    // ──── ★ 2026-09-13 超计划标注（纯观测，不改变分拣/上报行为）────
+    //   用途：某容器内某 SKU 的落格件数已用完计划件数后，再落入的件标注为"超计划"并留痕，
+    //         便于现场第一时间发现"多出来的件"（本次现场：格口034 计划2件实分3件导致 H7 被驳回）
+    //   口径：key = 容器号 + "\n" + SKU；done 集合按 EPC 去重（同一 EPC 重投不重复计）
+    //   ★ 只做标注：不拦下发、不计入"异常口"、不改 H7 报文内容
+    QMap<QString, int>          m_boxSkuSortedCount;   // key → 该容器该 SKU 实际落格件数（= H7 报文 qty 口径）
+    QMap<QString, QSet<QString>> m_boxSkuSeenEpcs;     // key → 已计入的 EPC 集合（防同件重复累加）
+    std::mutex                  m_boxSkuCountMutex;    // 保护上面两个容器
+    void clearBoxSkuSortedCount();                     // 波次切换/完结/取消时清空
+    //   返回 true = 本次新落入的件已超出计划（overSeq = 第几件超出）
+    bool noteBoxSkuSorted(const QString& boxcode, const QString& sku, const QString& epc,
+                          int planQty, int& overSeq);
+
     // ──── RFID 推送吞吐/峰值统计（★ 2026-09-07 效率与峰值显示）────
     //   滑动 1 分钟窗口（实时"效率"）用 deque；分桶（每分钟）与当日峰值用于
     //   峰值显示与效率统计图；跨日自动结转并把前一天最终峰值落库
@@ -427,6 +474,9 @@ private:
     mutable QString            m_peakDate;            // 当前统计日期 yyyy-MM-dd（跨日自动重置并落库前一日）
     mutable int                m_peakPerMinuteToday = 0; // 当日峰值（1 分钟窗口件数口径）
     mutable std::mutex         m_rfidPushMutex;       // 保护以上统计字段
+    // ★ 2026-09-13 波次面板「RFID扫描次数」：本次运行累计 RFID 推送 EPC 次数
+    //   口径：每推送一个 EPC 记 1 次；重复 EPC 重复计数；空 EPC/NOREAD 不计；跨波次不清零、重启归 0
+    std::atomic<quint64>       m_rfidPushTotal{0};
 
     // ──── 回传耗时统计（H7/H8 网络请求慢排查）────
     QMap<QString, qint64>   m_msgSendTime;        // msgId → 发送时间戳（epoch ms）

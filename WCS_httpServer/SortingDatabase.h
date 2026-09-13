@@ -145,7 +145,7 @@ struct ExceptionRecord
     QString epc;
     QString sku;
     QString reason;
-    bool    handled     = false;
+    bool    handled     = false;   // ★ 2026-09-13 已闭环（该 EPC 之后成功落格 → handled=1）
     QString time;
 };
 
@@ -175,6 +175,12 @@ public:
     QVector<SortingRecord> queryAllWithPending(int limit = 1000);  // ★ 留空查全部：已分拣 + 待分拣
     QVector<SortingRecord> queryByGrid(const QString& gridNum, int limit = 1000);   // ★ 2026-09-09 需求2：按格口查分拣明细（★ 2026-09-10 兼容 "7"/"007"/"22007"）
     QVector<SortingRecord> queryBySku(const QString& sku, int limit = 1000);        // ★ 2026-09-10 需求1：按 SKU 查落格明细（EPC ↔ 实际落格号）
+    // ★ 2026-09-13 需求：按容器号查该容器下的所有 EPC 物件明细（按落格时间正序，便于核对装箱顺序）
+    QVector<SortingRecord> queryByBoxcode(const QString& boxcode, int limit = 1000);
+    // ★ 2026-09-13 需求：批量反查一组 EPC 各自出现过的"其他容器号"（key=EPC，value=其他容器号列表）
+    //   用途：按容器号查询时判断"同一 EPC 是否被分到过别的容器"（跨容器漂移）
+    QMap<QString, QStringList> queryOtherBoxcodesByEpc(const QStringList& epcs,
+                                                       const QString& excludeBox = QString());
     // ★ 2026-09-11 重扫重投：某波次某 EPC 的首条落格号（无记录返回空串）
     QString getFirstSortedGrid(const QString& orderCode, const QString& epc);
     QVector<GridSummaryRecord> queryGridSummary();                                   // ★ 2026-09-09 需求2：全格口汇总（分拣数量）
@@ -310,6 +316,9 @@ public:
 
     // 插入异常记录
     bool insertException(const ExceptionRecord& ex);
+    // ★ 2026-09-13 异常及时清理：把某波次某 EPC 的未处理异常留痕标记为已处理（handled=1）
+    //   触发时机：该 EPC 之后成功落格（异常数已 −1），留痕归档为"已处理"供弹窗/对账区分
+    bool markExceptionResolved(const QString& orderCode, const QString& epc);
     // 查询未处理异常
     QVector<ExceptionRecord> getOpenExceptions(const QString& orderCode);
     // ★ S7 多条件异常查询（T-S7-03）

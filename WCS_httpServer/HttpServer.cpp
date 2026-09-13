@@ -1,4 +1,4 @@
-#include "HttpServer.h"
+﻿#include "HttpServer.h"
 #include "ParseWorker.h"
 #include "HttpClient.h"
 #include "LogService.h"
@@ -13,6 +13,8 @@
 #include <QCoreApplication>
 #include <QUuid>
 #include <cstring>
+#include <algorithm>   // ★ 2026-09-13 性能分位采样：std::sort
+#include <cmath>       // ★ 2026-09-13 性能分位采样：std::ceil
 #include <windows.h>
 #include <tchar.h>
 #include "define.h"
@@ -386,7 +388,20 @@ HttpServer::HttpServer(QObject* parent)
                             HTTP_LOG_WARN("PLC反馈识别码无匹配 code=%s grid=%s sku=%s 计为已分拣(PLC报成功)，异常表留痕",
                                 e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(), sku.toLocal8Bit().data());
                             if (m_pWaveMgr)
+                            {
+                                // ★ 2026-09-13 异常及时清理：先判"是否仍在异常口"，再计已分拣
+                                //   （markSorted 内部也会移除异常集合，顺序颠倒会导致判定恒为 false）
+                                const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                 m_pWaveMgr->markSorted(e.code);
+                                if (wasExc)
+                                {
+                                    HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(无匹配留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
+                                    emit logMessage(QString::fromUtf8("[异常清理] EPC %1 已成功落格到格口%2 → 已从「处理/异常口」中减去")
+                                        .arg(e.code).arg(e.grid));
+                                    if (m_pSortingDb && m_pSortingDb->isOpen())
+                                        m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
+                                }
+                            }
                             // 写入异常记录（仅留痕，不增加面板异常计数）
                             if (m_pSortingDb)
                             {
@@ -413,7 +428,19 @@ HttpServer::HttpServer(QObject* parent)
                                 HTTP_LOG_WARN("PLC反馈格口无绑定 code=%s grid=%s 计为已分拣(PLC报成功)，异常表留痕",
                                     e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data());
                                 if (m_pWaveMgr)
+                                {
+                                    // ★ 2026-09-13 异常及时清理（同"无匹配"分支：先判定再计件）
+                                    const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                     m_pWaveMgr->markSorted(e.code);
+                                    if (wasExc)
+                                    {
+                                        HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(无绑定留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
+                                        emit logMessage(QString::fromUtf8("[异常清理] EPC %1 已成功落格到格口%2 → 已从「处理/异常口」中减去")
+                                            .arg(e.code).arg(e.grid));
+                                        if (m_pSortingDb && m_pSortingDb->isOpen())
+                                            m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
+                                    }
+                                }
                                 if (m_pSortingDb)
                                 {
                                     ExceptionRecord exRec;
@@ -459,7 +486,17 @@ HttpServer::HttpServer(QObject* parent)
                                             e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(),
                                             currentGridType.toLocal8Bit().data(),
                                             typeList.join(",").toLocal8Bit().data());
+                                        // ★ 2026-09-13 异常及时清理（同"无匹配/无绑定"分支：先判定再计件）
+                                        const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                         m_pWaveMgr->markSorted(e.code);
+                                        if (wasExc)
+                                        {
+                                            HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(冲突留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
+                                            emit logMessage(QString::fromUtf8("[异常清理] EPC %1 已成功落格到格口%2 → 已从「处理/异常口」中减去")
+                                                .arg(e.code).arg(e.grid));
+                                            if (m_pSortingDb && m_pSortingDb->isOpen())
+                                                m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
+                                        }
                                         if (m_pSortingDb)
                                         {
                                             ExceptionRecord exRec;
@@ -496,6 +533,17 @@ HttpServer::HttpServer(QObject* parent)
                                 if (rescanEpcs.contains(e.code))
                                 {
                                     const QString orderCodeNow = m_pWaveMgr->orderCode();
+                                    // ★ 2026-09-13 异常及时清理：该 EPC 此前掉入异常口、本次被重新投递并落格
+                                    //   → 无论落在首落格口还是别的格口，都算"落格操作成功"，异常数立即减去
+                                    const bool wasExcRescan = m_pWaveMgr->removeExceptionOnSorted(e.code);
+                                    if (wasExcRescan)
+                                    {
+                                        HTTP_LOG_INFO("[异常清理] code=%s 重投后已落格 → 处理/异常口 -1", e.code.toLocal8Bit().data());
+                                        emit logMessage(QString::fromUtf8("[异常清理] EPC %1 重投后已落格到格口%2 → 已从「处理/异常口」中减去")
+                                            .arg(e.code).arg(e.grid));
+                                        if (m_pSortingDb && m_pSortingDb->isOpen())
+                                            m_pSortingDb->markExceptionResolved(orderCodeNow, e.code);
+                                    }
                                     const QString firstGrid = m_pSortingDb
                                         ? m_pSortingDb->getFirstSortedGrid(orderCodeNow, e.code)
                                         : QString();
@@ -540,7 +588,15 @@ HttpServer::HttpServer(QObject* parent)
                                 HTTP_LOG_WARN("EPC防重拦截 code=%s order=%s 重复反馈计件(不写明细)，跳过",
                                     e.code.toLocal8Bit().data(),
                                     m_pWaveMgr->orderCode().toLocal8Bit().data());
+                                // ★ 2026-09-13 异常及时清理（先判定再计件，理由同"正常落格"分支）
+                                const bool wasExcDup = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                 m_pWaveMgr->markSorted(e.code); // 重复反馈也计 1 件（以PLC实时记录为准）
+                                if (wasExcDup)
+                                {
+                                    HTTP_LOG_WARN("[异常清理] code=%s 重复反馈落格 → 处理/异常口 -1", e.code.toLocal8Bit().data());
+                                    if (m_pSortingDb && m_pSortingDb->isOpen())
+                                        m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
+                                }
                                 continue;
                             }
                             // 数据库级防重：检查 sort_txn 表是否已有记录
@@ -549,7 +605,11 @@ HttpServer::HttpServer(QObject* parent)
                                 HTTP_LOG_WARN("EPC防重拦截(DB) code=%s order=%s 数据库已有记录，跳过",
                                     e.code.toLocal8Bit().data(),
                                     m_pWaveMgr->orderCode().toLocal8Bit().data());
+                                // ★ 2026-09-13 异常及时清理（同上）
+                                const bool wasExcDb = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                 m_pWaveMgr->markSorted(e.code); // 同步内存状态（该反馈计 1 件）
+                                if (wasExcDb && m_pSortingDb->isOpen())
+                                    m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
                                 continue;
                             }
                         }
@@ -559,7 +619,82 @@ HttpServer::HttpServer(QObject* parent)
                         //   原「格口达计划上限 拒收/入异常口」策略已移除——多SKU共格时按SKU计划数误拒
                         //   （mock 实测 6/12），且职责上只需记录已分拣数量，超不超由 WMS 计划侧把握。
 
+                        // ★ 2026-09-13 超计划标注（纯观测）：本容器该 SKU 计划件数用完后又落入的件，
+                        //   标注"超计划"并写异常表留痕——让现场第一时间发现"多出来的件"。
+                        //   ★ 仅标注，不改变任何行为：照常计件、照常进内存明细、照常进 H7 报文
+                        //   （不拦下发/不改报文，避免重新引入上面已否决的计划上限拦截）。
+                        //   命名与口径详见 noteBoxSkuSorted 注释。
+                        {
+                            const QString curSku = m_pEpcCache ? m_pEpcCache->get(e.code) : QString();
+                            if (!curSku.isEmpty())
+                            {
+                                // 本件落格容器（与下方 rec.boxcode 同口径：落格那一刻的格口绑定）
+                                QString curBox;
+                                {
+                                    std::lock_guard<std::mutex> lockBind(m_containerMutex);
+                                    curBox = m_containerBindings.value(e.grid);
+                                    if (curBox.isEmpty())
+                                    {
+                                        bool okB = false;
+                                        const int gB = e.grid.toInt(&okB);
+                                        if (okB && gB >= 1)
+                                            curBox = m_containerBindings.value(
+                                                QString("%1").arg(gB, GRID_KEY_PADDING, 10, QChar('0')));
+                                    }
+                                }
+
+                                // 计划件数：GridBuffer 里 WMS 下发的该 SKU 计划数（= H4 items[].gridNumber）
+                                const int planQty = m_pBuffer ? m_pBuffer->get(curSku).gridCount : 0;
+
+                                int overSeq = 0;
+                                if (noteBoxSkuSorted(curBox, curSku, e.code, planQty, overSeq))
+                                {
+                                    const QString orderNow = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+                                    HTTP_LOG_WARN("[超计划] 格口%s 容器%s SKU=%s EPC=%s 计划%d件 已落%d件 "
+                                                  "→ 本件为超出计划第%d件（未拦下发/未改报文，请人工确认）",
+                                        e.grid.toLocal8Bit().data(), curBox.toLocal8Bit().data(),
+                                        curSku.toLocal8Bit().data(), e.code.toLocal8Bit().data(),
+                                        planQty, planQty + overSeq, overSeq);
+                                    emit logMessage(QString::fromUtf8(
+                                        "[超计划] 格口%1 容器%2 SKU %3 计划%4件，已落%5件——本件为超出计划第%6件（仅标注留痕，请人工确认）")
+                                        .arg(e.grid).arg(curBox).arg(curSku)
+                                        .arg(planQty).arg(planQty + overSeq).arg(overSeq), true);
+
+                                    if (m_pSortingDb && m_pSortingDb->isOpen())
+                                    {
+                                        ExceptionRecord exOver;
+                                        exOver.type      = QString::fromUtf8("超计划多入");
+                                        exOver.orderCode = orderNow;
+                                        exOver.epc       = e.code;
+                                        exOver.sku       = curSku;
+                                        exOver.reason    = QString::fromUtf8(
+                                            "格口%1 容器%2 计划%3件 实际已落%4件（本件为超出计划第%5件）；仅标注留痕，未拦截下发、未修改回传报文")
+                                            .arg(e.grid).arg(curBox).arg(planQty)
+                                            .arg(planQty + overSeq).arg(overSeq);
+                                        exOver.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                                        m_pSortingDb->insertException(exOver);
+                                    }
+                                }
+                            }
+                        }
+
+                        // ★ 2026-09-13 异常及时清理（客户要求"异常要能及时清理，不是一直保留"）：
+                        //   先判"该 EPC 是否仍在异常口"，再计已分拣——
+                        //   顺序很关键：markSorted 内部也会移除异常集合（防双计），
+                        //   若先 markSorted，这里的判定就永远为 false，异常留痕无法闭环。
+                        const bool wasExcNormal = m_pWaveMgr->removeExceptionOnSorted(e.code);
                         m_pWaveMgr->markSorted(e.code);
+                        if (wasExcNormal)
+                        {
+                            // 处理/异常口数量已 −1（二者同源）；把该 EPC 的异常留痕归档为"已处理"
+                            HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(正常分拣) → 处理/异常口 -1 当前=%d order=%s",
+                                e.code.toLocal8Bit().data(), m_pWaveMgr->exception(),
+                                m_pWaveMgr->orderCode().toLocal8Bit().data());
+                            emit logMessage(QString::fromUtf8("[异常清理] EPC %1 已成功落格到格口%2 → 已从「处理/异常口」中减去")
+                                .arg(e.code).arg(e.grid));
+                            if (m_pSortingDb && m_pSortingDb->isOpen())
+                                m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
+                        }
 
                         // ★ 记录该格口已分拣件数（只计数，不做上限拦截）
                         {
@@ -1663,6 +1798,50 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
 }
 
 // ============================================================================
+// ★ 2026-09-13 超计划标注（纯观测，不改变分拣/上报行为）
+//   背景：某容器内某 SKU 的计划件数用完后，若又落入新件，该件会进入满箱报文(H7)，
+//         使报文 qty 超过 WMS 计划 → WMS 回 [2107632]…无法分配 并**整条驳回**，
+//         连带同报文内其它正常件一起不落账（现场 034 格口事件即此）。
+//   本函数只做"标注"：不改下发、不改报文、不计入"异常口"，让现场第一时间看见多出来的件。
+//   ★ 与 H7 报文 qty 同口径：同一 EPC 重复反馈/重投造成的**多条明细**也照常累加
+//     （报文 qty = 明细条数），但同一 EPC 的重复**反馈**不重复累加（epcSeen 去重），
+//     避免"没超计划的箱子被误报超计划"。
+// ============================================================================
+void HttpServer::clearBoxSkuSortedCount()
+{
+    std::lock_guard<std::mutex> lock(m_boxSkuCountMutex);
+    m_boxSkuSortedCount.clear();
+    m_boxSkuSeenEpcs.clear();
+}
+
+bool HttpServer::noteBoxSkuSorted(const QString& boxcode, const QString& sku, const QString& epc,
+                                  int planQty, int& overSeq)
+{
+    overSeq = 0;
+    const QString box = boxcode.trimmed();
+    if (box.isEmpty() || sku.isEmpty() || planQty <= 0)
+        return false;   // 无容器/无 SKU/无计划 → 不做超计划判定（避免误报）
+
+    const QString key = box + "\n" + sku;
+    std::lock_guard<std::mutex> lock(m_boxSkuCountMutex);
+
+    // 同一 EPC 重复反馈：本箱本 SKU 已计入过 → 不重复累加，也就不重复报"超计划"
+    QSet<QString>& seen = m_boxSkuSeenEpcs[key];
+    if (!epc.isEmpty() && seen.contains(epc))
+        return false;
+    if (!epc.isEmpty())
+        seen.insert(epc);
+
+    const int now = ++m_boxSkuSortedCount[key];   // 该容器该 SKU 的累计落格件数
+    if (now > planQty)
+    {
+        overSeq = now - planQty;
+        return true;
+    }
+    return false;
+}
+
+// ============================================================================
 // ★ 2026-09-06 挂起切出当前波次（供「切换波次」与「新任务」共用）：
 //   清空内存（WaveManager/格口映射/格口运行数据），状态与进度保留于 DB；
 //   未成功的 H7/H8 报文保留 outbox（切回该波次时自动补发 / 可手动重传）
@@ -1687,6 +1866,7 @@ void HttpServer::switchAwayCurrentWave()
         std::lock_guard<std::mutex> lock(m_gridCountMutex);
         m_gridSortedCount.clear();
     }
+    clearBoxSkuSortedCount();   // ★ 2026-09-13 超计划标注计数随波次切出清空
     m_pendingSkuQuery.clear();
     m_skuQueryRetryCount.clear();
     m_notReadyRetryCount.clear();
@@ -1877,6 +2057,19 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
 
             // ★ 2026-09-07 绑定沿用：无任何 active 绑定（如上一波次完结已归档）时，恢复最近绑定
             restoreBindsIfEmpty(orderCode);
+
+            // ★ 2026-09-13 自动化验证钩子（仅当进程环境变量 WCS_E2E_AUTOSORT=1 时生效）：
+            //   无人值守跑 mock/E2E 时无法人工点「开始分拣」，此处自动执行一次同样的动作。
+            //   生产默认不设置该环境变量 → 行为与以往完全一致（仍需人工点击）。
+            if (qEnvironmentVariableIsSet("WCS_E2E_AUTOSORT"))
+            {
+                if (m_pWaveMgr->startSorting())
+                {
+                    HTTP_LOG_WARN("测试钩子：自动开工(WCS_E2E_AUTOSORT=1) BOUND→SORTING orderCode=%s",
+                        orderCode.toLocal8Bit().data());
+                    emit logMessage(QString("[测试钩子] 自动开工（E2E）：orderCode=%1 已进入分拣中").arg(orderCode));
+                }
+            }
         }
     }
     else
@@ -1901,6 +2094,7 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
         std::lock_guard<std::mutex> lock(m_gridCountMutex);
         m_gridSortedCount.clear();
     }
+    clearBoxSkuSortedCount();   // ★ 2026-09-13 超计划标注计数随新波次清空
     // ★ 新波次到来，清空旧波次相关数据（EpcCache 保留，RFID 推送独立于波次生命周期）
     // ★ 纠正5: 新波次开始时恢复所有禁用格口
     if (m_pPlcMgr)
@@ -2909,6 +3103,28 @@ void HttpServer::logHealthStatus()
     HTTP_INFO("健康检查 accept=%lld close=%lld active=%d requests=%lld queue=%d bizPool=%d/%d tasks=%d plcRecvTasks=%d epcCache=%d",
         accept, close, active, request, queueSize, poolIdl, poolThr, poolTask, plcRecvTask, epcCacheSize);
 
+    // ★ 2026-09-13 性能核验：把"实时面板是否影响分拣主流程"变成可读数字
+    //   rfid→plc  = 收到 RFID 推送 → 下发 PLC 指令的耗时（现场硬窗口 PLC_SEND_TIMEOUT_MS = 1000ms）
+    //   fb延迟    = 下发 → 落格反馈（含设备处理时间，非软件瓶颈但可用于异常排查）
+    //   eventLag  = RFID 帧解析 → 业务入口（GUI 线程被 UI 绘制拖慢时此值会明显上升）
+    {
+        const PerfSnapshot ps = perfSnapshot();
+        const int waveSorted = m_pWaveMgr ? m_pWaveMgr->sorted() : 0;
+        const int waveExc    = m_pWaveMgr ? m_pWaveMgr->exception() : 0;   // = 界面「处理」/「异常口」
+        HTTP_INFO("[性能] rfid→plc p50=%d p95=%d p99=%d ms(n=%d) | 反馈时延 p95=%d ms | 主线程事件滞后 p95=%d ms "
+                  "| RFID扫描累计=%llu | 波次已分拣=%d 处理/异常口=%d",
+            ps.rfidToPlcP50, ps.rfidToPlcP95, ps.rfidToPlcP99, ps.samples,
+            ps.fbLatencyP95, ps.eventLagP95,
+            (unsigned long long)m_rfidPushTotal.load(std::memory_order_relaxed),
+            waveSorted, waveExc);
+        // 超阈值告警：p99 接近 1s 硬窗口说明主线程已被拖慢（UI 面板/DB 阻塞等）
+        if (ps.rfidToPlcP99 >= PLC_SEND_TIMEOUT_MS)
+        {
+            HTTP_WARN("[性能] rfid→plc p99=%dms 已达/超过 %dms 硬窗口，主线程存在阻塞（UI面板/日志/DB查询）",
+                ps.rfidToPlcP99, PLC_SEND_TIMEOUT_MS);
+        }
+    }
+
     // ★ 2026-09-04 P2观测：EpcCache 膨胀检测（300s TTL 懒清理，理论容量=推送速率×300s，超阈值预警）
     if (epcCacheSize > EPC_CACHE_ALERT_THRESHOLD)
     {
@@ -3673,7 +3889,105 @@ void HttpServer::recordRfidPush()
     ++bucket;
     if (bucket > m_peakPerMinuteToday)
         m_peakPerMinuteToday = bucket;
+
+    // 3) ★ 2026-09-13 波次面板「RFID扫描次数」：本次运行累计推送 EPC 次数
+    //    口径与上面完全同源（一条推送一个非空 EPC 记 1 次；重复 EPC 逐次累加；跨波次不清零）
+    m_rfidPushTotal.fetch_add(1, std::memory_order_relaxed);
 }
+
+// ============================================================================
+// ★ 2026-09-13 性能核验：环形采样实现（无动态分配、无锁、常数开销）
+//   写侧：主线程（RFID 推送 / 落格反馈 / PLC 发送）单点写入，游标原子自增
+//   读侧：健康日志每 60s 复制快照后排序取分位（256 槽，开销可忽略）
+// ============================================================================
+void HttpServer::perfSampleRfidToPlc(int ms)
+{
+    if (ms < 0) return;
+    const int i = m_perfIdx.fetch_add(1, std::memory_order_relaxed);
+    m_perfRfidToPlc[i % PERF_RING_SLOTS] = ms;
+    m_perfRfidCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HttpServer::perfSampleFbLatency(int ms)
+{
+    if (ms < 0) return;
+    const int i = m_perfIdx.fetch_add(1, std::memory_order_relaxed);
+    m_perfFbLatency[i % PERF_RING_SLOTS] = ms;
+    m_perfFbCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HttpServer::perfSampleEventLag(int ms)
+{
+    if (ms < 0) return;
+    const int i = m_perfIdx.fetch_add(1, std::memory_order_relaxed);
+    m_perfEventLag[i % PERF_RING_SLOTS] = ms;
+}
+
+int HttpServer::perfPercentile(const int* ring, int validCount, double pct)
+{
+    if (validCount <= 0) return -1;
+    if (validCount > PERF_RING_SLOTS) validCount = PERF_RING_SLOTS;
+    QVector<int> v;
+    v.reserve(validCount);
+    for (int i = 0; i < validCount; ++i)
+        v.append(ring[i]);
+    std::sort(v.begin(), v.end());
+    int idx = qBound(0, (int)std::ceil(pct * v.size()) - 1, v.size() - 1);
+    return v.at(idx);
+}
+
+HttpServer::PerfSnapshot HttpServer::perfSnapshot() const
+{
+    PerfSnapshot s;
+    const quint64 rfidN = m_perfRfidCount.load(std::memory_order_relaxed);
+    const quint64 fbN   = m_perfFbCount.load(std::memory_order_relaxed);
+    s.samples      = (int)qMin<quint64>(rfidN, PERF_RING_SLOTS);
+    s.rfidToPlcP50 = perfPercentile(m_perfRfidToPlc, s.samples, 0.50);
+    s.rfidToPlcP95 = perfPercentile(m_perfRfidToPlc, s.samples, 0.95);
+    s.rfidToPlcP99 = perfPercentile(m_perfRfidToPlc, s.samples, 0.99);
+    const int fbValid = (int)qMin<quint64>(fbN, PERF_RING_SLOTS);
+    s.fbLatencyP95 = perfPercentile(m_perfFbLatency, fbValid, 0.95);
+    // 事件滞后采样与上面共用游标，槽内数据按"最近 PERF_RING_SLOTS 次任一事件"计，取分位仍具参考性
+    s.eventLagP95  = perfPercentile(m_perfEventLag, PERF_RING_SLOTS, 0.95);
+    return s;
+}
+
+QString HttpServer::containerForGrid(const QString& grid) const
+{
+    if (grid.isEmpty()) return QString();
+    std::lock_guard<std::mutex> lock(m_containerMutex);
+    QString box = m_containerBindings.value(grid);
+    if (box.isEmpty())
+    {
+        // 兼容 "7" / "007" 两种写法（与落格时取容器号的兜底口径一致）
+        bool ok = false;
+        const int g = grid.toInt(&ok);
+        if (ok && g >= 1)
+            box = m_containerBindings.value(QString("%1").arg(g, GRID_KEY_PADDING, 10, QChar('0')));
+    }
+    return box;
+}
+
+bool HttpServer::isPlcSendInFlight(const QString& epc) const
+{
+    return isEpcInFlightReadOnly(epc);
+}
+
+int HttpServer::rescanResendTimes(const QString& epc) const
+{
+    return m_rescanResendTimes.value(epc, 0);
+}
+
+bool HttpServer::isEpcInFlightReadOnly(const QString& epc) const
+{
+    if (epc.isEmpty() || !m_sentEpcs.contains(epc)) return false;
+    const AppConfig& cfg = ConfigManager::instance()->config();
+    const int ttlMs = cfg.plcInFlightTimeoutMs > 0 ? cfg.plcInFlightTimeoutMs : PLC_INFLIGHT_TIMEOUT_MS;
+    const qint64 sentAt = m_sentAtMs.value(epc, 0);
+    if (sentAt <= 0) return true;
+    return (QDateTime::currentMSecsSinceEpoch() - sentAt) <= ttlMs;
+}
+
 
 int HttpServer::rfidPushPerMinute() const
 {
@@ -4372,6 +4686,7 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
             std::lock_guard<std::mutex> lock(m_gridCountMutex);
             m_gridSortedCount.clear();
         }
+        clearBoxSkuSortedCount();   // ★ 2026-09-13 超计划标注计数随波次清理
         if (m_pPlcMgr)
             m_pPlcMgr->enableAllGrids();
         m_pendingSkuQuery.clear();
@@ -4652,6 +4967,15 @@ WaveReconciliation HttpServer::getReconciliation() const
 // ============================================================================
 QJsonObject HttpServer::handleRfidCarNumReport(const QJsonObject& body)
 {
+    // ★ 2026-09-13 性能核验：主线程事件滞后采样
+    //   RfidPushClient 在 HP-Socket 工作线程解析帧时把解析时刻写进 body.recvMs；
+    //   本函数在主线程执行，两者之差 = "业务入口等主线程"的滞后（UI 变慢会体现在这里）
+    {
+        const qint64 recvMs = (qint64)body.value("recvMs").toDouble(0);
+        if (recvMs > 0)
+            perfSampleEventLag((int)(QDateTime::currentMSecsSinceEpoch() - recvMs));
+    }
+
     QJsonArray dataArr = body["data"].toArray();
     if (dataArr.isEmpty())
     {
@@ -5228,10 +5552,26 @@ void HttpServer::clearEpcInFlight(const QString& epc)
     if (epc.isEmpty()) return;
     if (m_sentEpcs.remove(epc))   // Qt5 QSet::remove 返回 bool
     {
+        // ★ 2026-09-13 性能核验：下发→落格反馈时延采样（在途时刻 → 现在）
+        const qint64 sentAt = m_sentAtMs.value(epc, 0);
+        if (sentAt > 0)
+            perfSampleFbLatency((int)(QDateTime::currentMSecsSinceEpoch() - sentAt));
         HTTP_LOG_INFO("在途解除（已收到PLC落格反馈）epc=%s——之后可重扫重投",
             epc.toLocal8Bit().data());
     }
     m_sentAtMs.remove(epc);
+
+    // ★ 2026-09-13 需求：只要发生了落格操作（成功落格 **或** 掉入异常口），
+    //   该 EPC 的超时相关限制当场归 0 ——
+    //     · receivedAt 重置为当前时刻 → RFID推送→PLC发送的 1s 超时窗口（PLC_SEND_TIMEOUT_MS）重新起算
+    //     · sentAt 清空           → "开始处理→发送"耗时窗口重新起算
+    //   本函数由落格反馈批处理入口对**每条**反馈调用（覆盖成功/无匹配/无绑定/冲突/status 2·3 全部分支），
+    //   因此"再次投放"不会再沿用上一次投递的旧计时而被误判超时。
+    if (m_pEpcCache)
+        m_pEpcCache->resetTiming(epc);
+
+    // ★ 未就绪重试计数一并清理（否则跨多次投递累积，达到 NOT_READY_RETRY_MAX 后误判放弃）
+    m_notReadyRetryCount.remove(epc);
 }
 
 bool HttpServer::isEpcInFlight(const QString& epc)
@@ -5396,7 +5736,11 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
     }
 
     // ★ 2026-09-11 重扫重投保护（仅对"非首次下发"生效）：总开关 + 冷却 + 每波次重发次数上限
-    //   场景：操作员把已落格的件拿起重新上料 → 允许按原格口映射重投，但需限频/限量防指令风暴
+    //   场景：操作员把已落格的件拿起重新上料 → 允许按原格口映射重投
+    // ★ 2026-09-13 调整（客户要求：已落格后的物件再次投放，WCS 依旧处理）：
+    //   · rescanResendMaxTimes = 0（默认）→ **不限制重投次数**，只要重新上料就重发原格口；
+    //     >0 时才启用上限保护（超限拦截 + 异常表"重扫超限"留痕）
+    //   · rescanResendCooldownMs = 0（默认）→ 不做冷却拦截；>0 时恢复防连读限频
     {
         const AppConfig& cfg = ConfigManager::instance()->config();
         const qint64 nowMs  = QDateTime::currentMSecsSinceEpoch();
@@ -5409,18 +5753,18 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
                 HTTP_LOG_INFO("重扫重投已关闭（rescanResendEnabled=false）epc=%s 不再下发", epc.toLocal8Bit().data());
                 return false;
             }
-            const int cooldownMs = cfg.rescanResendCooldownMs > 0 ? cfg.rescanResendCooldownMs
-                                                                  : RESCAN_RESEND_COOLDOWN_MS;
-            if (nowMs - lastMs < cooldownMs)
+            // 冷却：默认 0 = 不限制（XML/宏取当前配置值，0 即关闭冷却拦截）
+            const int cooldownMs = cfg.rescanResendCooldownMs;
+            if (cooldownMs > 0 && nowMs - lastMs < cooldownMs)
             {
                 HTTP_LOG_INFO("重扫重投 冷却中跳过 epc=%s 距上次下发%lldms < %dms",
                     epc.toLocal8Bit().data(), (long long)(nowMs - lastMs), cooldownMs);
                 return false;
             }
-            const int maxTimes = cfg.rescanResendMaxTimes > 0 ? cfg.rescanResendMaxTimes
-                                                             : RESCAN_RESEND_MAX_TIMES;
+            // 次数上限：默认 0 = 不限制（仅当配置 >0 时才做上限保护）
+            const int maxTimes = cfg.rescanResendMaxTimes;
             const int times = m_rescanResendTimes.value(epc, 0);
-            if (times >= maxTimes)
+            if (maxTimes > 0 && times >= maxTimes)
             {
                 HTTP_LOG_WARN("重扫重投 已达上限 epc=%s times=%d/%d 不再下发（人工处理）",
                     epc.toLocal8Bit().data(), times, maxTimes);
@@ -5442,8 +5786,11 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
             }
 
             m_rescanResendTimes[epc] = times + 1;
-            const QString rescanLog = QString::fromUtf8("[重扫] EPC=%1 已落格→按原格口映射重新下发 grid=%2（本波次第%3次）")
-                                          .arg(epc).arg(entry.gridNum).arg(times + 1);
+            const QString rescanLog = maxTimes > 0
+                ? QString::fromUtf8("[重扫] EPC=%1 已落格→按原格口映射重新下发 grid=%2（本波次第%3次，上限%4）")
+                      .arg(epc).arg(entry.gridNum).arg(times + 1).arg(maxTimes)
+                : QString::fromUtf8("[重扫] EPC=%1 已落格→按原格口映射重新下发 grid=%2（本波次第%3次，不限次）")
+                      .arg(epc).arg(entry.gridNum).arg(times + 1);
             HTTP_LOG_INFO("%s", rescanLog.toLocal8Bit().data());
             emit logMessage(rescanLog, false);
         }
@@ -5455,6 +5802,8 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
     bool sendOk = m_pPlcMgr->sendBatchCodesWithEpcCache(codeGridMap);
     if (m_pEpcCache) m_pEpcCache->markSent(epc);   // ★ 记录 PLC 发送指令时间（计时终点，无论成败）
     qint64 sendElapsed = m_pEpcCache ? m_pEpcCache->getHandleSendMs(epc) : -1;   // 开始处理→发送 耗时
+    // ★ 2026-09-13 性能核验：RFID推送→PLC下发 时延采样（现场 1s 硬窗口的关键指标）
+    if (sendElapsed >= 0) perfSampleRfidToPlc((int)sendElapsed);
     if (!sendOk)
     {
         // ★ 发送失败：可能原因 ① 映射内格口全部"满箱未重绑(禁用)"→ 按客户口径不发；② PLC 未连接

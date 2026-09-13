@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QDateTime>   // ★ 2026-09-13 性能核验：帧解析时刻（事件滞后采样）
 #include <tchar.h>          // ★ _T() 宏（HP-Socket Start(LPCTSTR) 需要）
 
 // ============================================================================
@@ -357,6 +358,9 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
             dataArr.append(item);
             QJsonObject body;
             body["data"] = dataArr;
+            // ★ 2026-09-13 性能核验：帧解析时刻（epoch ms）随报文交业务侧，
+            //   供 HttpServer 计算"主线程事件滞后"（实时面板是否拖慢主链路的直接证据）
+            body["recvMs"] = (double)QDateTime::currentMSecsSinceEpoch();
 
             RFID_INFO("[解析] 数据帧 seq=%s car=%s epc=%s → 交业务处理",
                       seq.toLocal8Bit().constData(), carNum.toLocal8Bit().constData(),

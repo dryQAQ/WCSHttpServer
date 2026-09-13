@@ -2,11 +2,10 @@
 // ============================================================================
 // MainWindow.h — WMS退货HTTP服务主窗口
 //
-// 界面布局（★ 2026-09-08 UI看板调整：默认启动最大化全屏）：
-//   第一行：任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息
-//   第二行：运行日志      ｜ 容器绑定状态
-//   第三行：分拣记录查询  ｜ 波次数据记录（全部已传输波次）
-//   第四行：RFID推送数据（实时滚动） ｜ PLC落格反馈数据（实时滚动）
+// 界面布局（★ 2026-09-13 UI改版：第二行改为"左侧标签页"多页窗口）：
+//   第一行（保持不变）：任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息
+//   第二行：QTabWidget（标签在左侧），5 页——
+//     ① 容器绑定状态  ② 分拣记录查询  ③ 波次数据历史记录  ④ 实时面板  ⑤ 运行日志
 //
 // 定时刷新：QTimer 每秒查询 HttpServer 状态并更新 UI
 // ============================================================================
@@ -24,14 +23,16 @@
 #include <QTableWidget>
 #include <QSpinBox>
 #include <QComboBox>
+#include <QHash>
 #include "HttpServer.h"
 #include "HttpClient.h"
 #include "PlcManager.h"
 #include "ConfigManager.h"
 #include "SortingDatabase.h"
 
-class QDialog;   // ★ 2026-09-07 效率统计弹窗指针（仅在 .cpp 中定义具体类）
-class QSplitter; // ★ 2026-09-08 各行水平分隔条（默认宽度分配用，完整类型在 .cpp 中使用）
+class QDialog;     // ★ 2026-09-07 效率统计弹窗指针（仅在 .cpp 中定义具体类）
+class QTabWidget;  // ★ 2026-09-13 第二行多页窗口（标签在左侧）
+class QSplitter;   // ★ 第一行水平分隔条（默认宽度分配用，完整类型在 .cpp 中使用）
 
 class MainWindow : public QMainWindow
 {
@@ -47,13 +48,14 @@ protected:
 
 private:
     // ★ 2026-09-08 UI调整：水平分隔条默认等分（波次信息占首行一半）
+    //   ★ 2026-09-13：第二行改为标签页后，此处只处理第一行的分栏
     void applyDefaultColumnWidths();
 
 private slots:
     void onStartStop();       // 启动/结束任务按钮
     void onRefreshBindings(); // 刷新容器绑定状态
     void onClearAllGridBinds();  // ★ 2026-09-07 清空格口容器绑定（人工重置，DB归档留史）
-    void onRefreshWaveRecords(); // ★ 手动刷新「波次数据记录」列表
+    void onRefreshWaveRecords(); // ★ 手动刷新「波次数据历史记录」列表
     void onViewWaveQueue();      // ★ 2026-09-08 查看接收波次队列（弹窗：接收新任务 + 剩余待执行波次）
     void onResendSelectedH7();     // ★ 重传满箱切换(H7)（服务控制区；选中行优先，否则当前波次）
     void onResendSelectedH8();     // ★ 重传任务完结(H8)（服务控制区；选中行优先，否则当前波次）
@@ -66,6 +68,14 @@ private slots:
     void onStartSortingClicked(); // ★ 开始分拣按钮点击
     void doActualStop();     // ★ 实际执行「停止任务接收」收尾（H8回传完成/超时/取消后调用；设备保持连接）
     void onOpenEffChart();   // ★ 2026-09-07 打开 RFID 推送效率统计弹窗（QCustomPlot）
+    // ★ 2026-09-13 需求：波次信息「异常」旁按钮 —— 弹窗查看本波次全部异常 EPC 信息
+    void onViewExceptions();
+    // ★ 2026-09-13 需求：实时面板驻留行的超时打标（"待落格/未落格（无反馈）"）
+    void refreshLivePanelPendingRows();
+    // ★ 2026-09-13 需求：EPC 全信息窗（异常弹窗与查询结果共用）
+    void showEpcDetail(const QString& epc);
+    // ★ 2026-09-13 需求：按容器号查询渲染（查该容器下全部 EPC 物件明细+计划对照）
+    void renderContainerQuery();
 
 private:
     // ★ 2026-09-02 修复"结束任务卡死/闪退"：停止流程阶段状态机
@@ -139,13 +149,21 @@ private:
     QLabel*      m_lblWaveCode     = nullptr;  // 当前波次号
     QLabel*      m_lblWaveStatus   = nullptr;  // 波次状态（空闲/已接收/分拣中/回传中/已完成）
     QLabel*      m_lblSkuCount     = nullptr;  // SKU种类数
-    QLabel*      m_lblSorted       = nullptr;  // 已分拣数量
-    QLabel*      m_lblException    = nullptr;  // 异常数量
-    QLabel*      m_lblSumLocation  = nullptr;  // 去重格口总数
+    QLabel*      m_lblSorted       = nullptr;  // 已分拣件数（PLC 落格反馈累计件次）
+    QLabel*      m_lblPlanQty      = nullptr;  // ★ 2026-09-13 计划件数（orderQty，与已分拣/异常对照）
+    QLabel*      m_lblException    = nullptr;  // ★ 异常 = 当前仍在异常口的件数（去重 EPC，可被成功落格清理）
+    QLabel*      m_lblExcBin       = nullptr;  // ★ 异常口（= 仍在异常口、尚未处理完的件数；成功落格即递减）
+    QLabel*      m_lblExcTrace     = nullptr;  // ★ 2026-09-13 异常留痕条数（exception_record，含仅留痕项）
+    int          m_cachedExcTraceCount = -1;   // ★ 该值以 10s 周期刷新（避免每秒同步 DB 查询阻塞主线程）
+    QLabel*      m_lblSumLocation  = nullptr;  // 分拣件数（已落格去重 EPC 数；H8 sumLocation 用此值）
+    QLabel*      m_lblRfidScanCount= nullptr;  // ★ 2026-09-13 RFID 扫描次数（= RFID 推送 EPC 次数，重复计数）
     QLabel*      m_lblLastWave     = nullptr;  // 上一个波次号
+    QLabel*      m_lblElapsed      = nullptr;  // ★ 2026-09-13 波次时长（mm:ss）
+    // ★ 2026-09-13 客户要求：波次信息面板不再显示容器绑定数据（改由第 0 页标签页展示）
     QLabel*      m_lblEfficiency   = nullptr;  // ★ 2026-09-07 分拣效率（折算件/时）
     QLabel*      m_lblPeakEff      = nullptr;  // ★ 2026-09-07 峰值效率（当日最大，件/时；落库 daily_peak）
     QPushButton* m_btnStartSorting = nullptr;  // ★ 开始分拣按钮（手动触发分拣中状态）
+    QPushButton* m_btnViewException= nullptr;  // ★ 2026-09-13 「查看异常」按钮（异常数值右侧）
 
     // ──── 容器绑定面板 UI（92格口 6列×16行）────
     QWidget*     m_bindingWidget   = nullptr;  // 绑定状态容器
@@ -178,18 +196,25 @@ private:
     // ──── 日志区 ────
     QTextEdit*   m_txtLog = nullptr;           // 运行日志文本框
 
-    // ──── ★ 2026-09-08 第四行：实时滚动数据面板 UI ────
-    QTableWidget* m_tblRfidPush      = nullptr;  // RFID推送数据实时表（序号/时间/EPC编码/小车号）
-    QTableWidget* m_tblPlcFeedback   = nullptr;  // PLC落格反馈数据实时表（序号/时间/EPC编码/格口号/小车号(首车/尾车)/状态码）
-    quint32       m_rfidPushSeq      = 0;        // RFID表序号（本会话从1递增）
-    quint32       m_plcFeedbackSeq   = 0;        // PLC表序号（本会话从1递增）
+    // ──── ★ 2026-09-13 实时面板：落格反馈数据（实时）────
+    //   表头：序号｜时间｜EPC｜对应SKU｜格口号｜容器号｜小车号｜状态
+    //   数据源：RFID 推送先建"待落格"占位行 → PLC 落格反馈到达后就地补全同一行
+    QTableWidget* m_tblLive       = nullptr;   // 合并后的落格反馈实时表
+    quint32       m_liveSeq       = 0;         // 行序号（本会话自增，占位创建时分配）
+    QHash<QString, int> m_livePendingRows;     // EPC → 占位行号（仅主线程访问）
+    QHash<QString, qint64> m_livePendingAtMs;  // EPC → 占位创建时刻（判断"超时未反馈"用）
+    // ★ 2026-09-13 实时面板行操作（仅主线程调用）
+    void livePanelInsertPendingRow(const QString& epc, const QStringList& cells); // RFID 先到 → 占位行
+    void livePanelApplyFeedback(const QString& epc, const QStringList& cells, bool bad); // PLC 反馈 → 就地补全/新增
+    void livePanelRebuildPendingIndex();       // 行裁剪后重建占位索引（行号会整体位移）
+    void livePanelTrimRows();                  // 超上限裁掉最旧行
 
-    // ──── ★ 2026-09-08 水平分隔条（默认宽度分配：波次信息占首行一半，其余两栏行各占一半）────
+    // ──── ★ 2026-09-13 第二行多页窗口（标签在左侧）────
+    QTabWidget*  m_tabMain = nullptr;          // 5 页：绑定状态/记录查询/波次历史/实时面板/运行日志
+
+    // ──── ★ 2026-09-08 水平分隔条（默认宽度分配：波次信息占首行一半）────
     QSplitter* m_rowTopInner    = nullptr;   // 第一行左半内部：任务接收控制 | 设备状态
     QSplitter* m_rowTopSplit    = nullptr;   // 第一行：左半 | 波次信息（默认 1:1）
-    QSplitter* m_rowLogSplit    = nullptr;   // 第二行：运行日志 | 容器绑定状态
-    QSplitter* m_rowQuerySplit  = nullptr;   // 第三行：分拣记录查询 | 波次数据记录
-    QSplitter* m_rowLiveSplit   = nullptr;   // 第四行：RFID推送数据 | PLC落格反馈数据
     bool       m_defaultColSplitApplied = false;  // 默认列宽是否已按最大化宽度等分过一次
 
     // ──── 日志缓冲（防高频卡死） ────
@@ -225,4 +250,5 @@ private:
     QTimer*      m_dbCleanupTimer    = nullptr;   // ★ 数据库清理定时器（每日凌晨）
     QTimer*      m_stopTimeoutTimer = nullptr;   // ★ 停止超时安全网（30秒）
     QDialog*     m_effDlg            = nullptr;   // ★ 2026-09-07 效率统计弹窗实例（单例复用，关闭即删）
+    QDialog*     m_excDlg            = nullptr;   // ★ 2026-09-13 异常明细弹窗实例（单例复用，关闭即删）
 };

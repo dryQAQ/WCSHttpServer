@@ -50,8 +50,11 @@ struct WaveSnapshot
     QString orderCode;         // 波次号
     int     orderQty    = 0;   // 波次总件数（WMS推送的orderQty字段）
     int     skuCount    = 0;   // WMS推送的SKU种类数（去重后）
-    int     sortedCount = 0;   // 已分拣数量
-    int     exceptionCount = 0;// 异常数量
+    int     sortedCount = 0;   // 已分拣数量（PLC 落格反馈累计件次）
+    // ★ 2026-09-13 异常口径重构（客户口径：界面显示为「处理」）：
+    //   处理 = **当前仍在异常口、尚未处理完的件数（去重 EPC）**；
+    //   该 EPC 之后成功落格即视为已处理 → 立即 −1（不做只增累计）。
+    int     exceptionCount = 0;
     int     totalRecv   = 0;   // 接收到的inco总数（= sorted + exception + processing）
     int     waveStatus  = WAVE_IDLE;  // 当前状态
     QString statusText;        // 状态文本（中文）
@@ -155,8 +158,12 @@ public:
                      bool hasFullboxRecord);
 
     // ──── 分拣状态（线程安全，内部加锁）────
-    void markSorted(const QString& code);       // 标记已分拣
-    void markException(const QString& code);    // 标记异常
+    void markSorted(const QString& code);       // 标记已分拣（同时把该 EPC 从异常集合中清理）
+    void markException(const QString& code);    // 标记异常（掉入异常口：仍在异常口待处理的件数 +1，同一 EPC 只算 1 件）
+    // ★ 2026-09-13 异常及时清理：成功落格时把该 EPC 从"仍在异常口"集合移除并让异常数 −1
+    //   返回 true = 本次确实清掉了一条异常（调用方据此写日志 / 标记异常留痕已处理）
+    //   与集合判定在同一把锁内完成，重复调用只会减一次
+    bool removeExceptionOnSorted(const QString& code);
     bool isSorted(const QString& code) const;   // 是否已分拣
     bool isCodeSorted(const QString& code) const; // ★ S7 是否已分拣（含DB防重，T-S7-02）
     bool isException(const QString& code) const;// 是否异常
@@ -197,7 +204,8 @@ public:
     QString orderCode() const { return m_orderCode; }
     int     totalRecv() const;
     int     sorted() const;
-    int     exception() const;
+    int     exception() const;                  // ★ 仍在异常口待处理的件数（去重 EPC，界面上显示为「处理」）
+    QStringList exceptionEpcs() const;          // ★ 仍在异常口的 EPC 列表（只读快照，UI 诊断用）
     int     sumLocation() const;                // 去重格口总数（供WMS回传的sumLocation字段）
     int     orderQty() const { return m_orderQty; }  // ★ S8 波次总件数（对账用，T-S8-01）
     QSet<QString> getUnsortedCodes() const;          // 获取未分拣的EPC列表（received - sorted - exception）
@@ -223,6 +231,10 @@ private:
     // ──── 数据源 ────
     GridBuffer*     m_pBuffer;               // DoubleBuffer 格口映射（只读，无需锁）
 
+    // ★ 2026-09-13 异常及时清理的锁内实现（调用方必须已持有 m_lock）
+    //   从"仍在异常口"集合移除并让异常件数 −1；返回 true = 本次确实清掉一条
+    bool removeExceptionOnSortedLocked(const QString& code);
+
     // ──── 波次基本信息 ────
     QString         m_orderCode;             // 当前波次号
     QString         m_lastOrderCode;         // ★ 上一个波次号（覆盖/切出时记录，UI「上波次」显示）
@@ -237,14 +249,19 @@ private:
     // ──── 分拣状态集（由 m_lock 保护）────
     QSet<QString>      m_setCodeRecv;        // 波次中包含的所有 inco
     QSet<QString>      m_setCodeSorted;      // 已成功分拣的 inco（去重集合：防重判定/恢复/未分拣计算用）
-    QSet<QString>      m_setCodeException;   // 异常的 inco（去重集合）
+    QSet<QString>      m_setCodeException;   // 仍在异常口的 inco（去重集合；成功落格即移除）
     QSet<QString>      m_setCodeProcessing;  // 正在分拣中的 inco（防并发重复）
     QMap<QString, int> m_mapCodeRetry;       // 每个 inco 的已重试次数
 
+    // ★ 2026-09-13 异常口径（客户口径）：
+    //   面板「处理」与面板「异常口」= **同一个量** = 当前仍在异常口、尚未处理完的件数（去重 EPC）
+    //   —— 掉入异常口时 +1（同一 EPC 不重复计），该 EPC 成功落格即视为处理完 → −1。
+    //   实现上只保留这一个集合，界面两个标签都读它的 size，避免两个数字对不上。
+
     // ★ 2026-09-09 需求8：分拣数量以 PLC 实时反馈为准——按 PLC 反馈行数累计（重复反馈也计件）
-    //   面板"已分拣/异常"与 H8 sumLocation 用此计数；上面集合仅用于去重判定/恢复/未分拣计算
+    //   面板"已分拣"与 H8 sumLocation 用此计数；上面集合仅用于去重判定/恢复/未分拣计算
     int                 m_sortedTotal    = 0;   // 成功落格反馈累计（含重复反馈/no_match/no_bind/conflict）
-    int                 m_exceptionTotal = 0;   // PLC 判定失败(2/3)反馈累计
+    int                 m_exceptionTotal = 0;   // ★ 仍在异常口待处理的件数（去重 EPC，= m_setCodeException.size()）
 
     // ──── 并发控制 ────
     mutable std::mutex m_lock;               // 保护所有分拣状态集（QSet/QMap）

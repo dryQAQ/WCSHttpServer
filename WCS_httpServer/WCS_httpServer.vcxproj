@@ -128,6 +128,7 @@
     <ClCompile Include="snap7.cpp" />
     <ClCompile Include="SortingDatabase.cpp" />
     <ClCompile Include="sqlite3.c" />
+    <ClCompile Include="VerticalTabBar.cpp" />
     <ClCompile Include="WaveManager.cpp" />
     <ClCompile Include="WCS_httpServer.cpp" />
     <ClCompile Include="main.cpp" />
@@ -159,6 +160,8 @@
     <!-- ★ 2026-09-07 QCustomPlot Q_OBJECT moc -->
     <ClInclude Include="SiemensPLC.h" />
     <ClInclude Include="snap7.h" />
+    <!-- ★ 2026-09-13 左侧标签页：中文逐字竖排自绘标签栏（Q_OBJECT 需 moc） -->
+    <QtMoc Include="VerticalTabBar.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

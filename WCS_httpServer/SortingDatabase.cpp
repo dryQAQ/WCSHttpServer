@@ -704,6 +704,88 @@ QVector<SortingRecord> SortingDatabase::queryBySku(const QString& sku, int limit
     });
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-13 需求：按容器号查询该容器下的所有 EPC 物件明细
+//   数据源 sorting_records.boxcode（落格时按当时"格口绑定"固化的容器号）
+//   返回按 id 正序（= 落格时间正序），便于按装箱先后核对
+// ═════════════════════════════════════════════════════════════════════════════
+QVector<SortingRecord> SortingDatabase::queryByBoxcode(const QString& boxcode, int limit)
+{
+    const QString boxInput = boxcode.trimmed();
+
+    return runOnDbThread([&]() -> QVector<SortingRecord> {
+        QVector<SortingRecord> result;
+        if (!m_bOpened || boxInput.isEmpty()) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_QUERY_BY_BOXCODE);
+        q.addBindValue(boxInput);
+        q.addBindValue(limit);
+        if (!q.exec()) return result;
+        while (q.next()) {
+            SortingRecord rec;
+            rec.id = q.value(0).toInt();
+            rec.orderCode = q.value(1).toString();
+            rec.barcode = q.value(2).toString();     // EPC
+            rec.sku = q.value(3).toString();
+            rec.gridNum = q.value(4).toString();     // 实际落格号
+            rec.carNum = q.value(5).toString();
+            rec.firstCar = q.value(6).toString();
+            rec.lastCar  = q.value(7).toString();
+            rec.gridCount = q.value(8).toInt();
+            rec.volu = q.value(9).toString();
+            rec.sortTime = q.value(10).toString();
+            rec.createTime = q.value(11).toString();
+            rec.boxcode    = q.value(12).toString();
+            result.append(rec);
+        }
+        Data_INFO("[SortingDB] queryByBoxcode boxcode=%s limit=%d resultCount=%d",
+            boxInput.toLocal8Bit().data(), limit, result.size());
+        return result;
+    });
+}
+
+// ★ 2026-09-13 需求（按容器号查询配套）：批量反查一组 EPC 各自出现过的"其他容器号"
+//   为什么需要：按容器号查询只取"本容器"的记录，从结果里看不出某件是否也曾落到别的容器，
+//   而"重扫重投 + 中途换箱"恰恰会造成同一件跨容器（本次现场 034 格口五箱事件即此症状）。
+//   实现：一次 runOnDbThread 内对每个 EPC 走同一条 prepared 语句（EPC 数量有上限，开销可控）
+QMap<QString, QStringList> SortingDatabase::queryOtherBoxcodesByEpc(const QStringList& epcs,
+                                                                   const QString& excludeBox)
+{
+    const QStringList epcList = epcs;
+    const QString     exclude = excludeBox.trimmed();
+
+    return runOnDbThread([&]() -> QMap<QString, QStringList> {
+        QMap<QString, QStringList> result;
+        if (!m_bOpened || epcList.isEmpty()) return result;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return result;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_QUERY_BOXCODES_BY_EPC);
+        for (const QString& epc : epcList)
+        {
+            if (epc.trimmed().isEmpty()) continue;
+            q.addBindValue(epc.trimmed());
+            q.addBindValue(exclude);
+            q.addBindValue(10);                 // 单个 EPC 最多记 10 个其他容器，足够定位
+            if (!q.exec()) continue;
+            QStringList boxes;
+            while (q.next())
+            {
+                const QString b = q.value(0).toString().trimmed();
+                if (!b.isEmpty() && !boxes.contains(b)) boxes << b;
+            }
+            if (!boxes.isEmpty()) result.insert(epc, boxes);
+        }
+        Data_INFO("[SortingDB] queryOtherBoxcodesByEpc epcCount=%d excludeBox=%s hitCount=%d",
+            epcList.size(), exclude.isEmpty() ? "(none)" : exclude.toLocal8Bit().data(), result.size());
+        return result;
+    });
+}
+
 // ★ 2026-09-11 重扫重投：某波次某 EPC 的首条落格号（无记录返回空串）
 //   用途：重扫落格时比对"本次落格号 vs 首落格号"，不一致则告警 + 异常留痕（不改账）
 QString SortingDatabase::getFirstSortedGrid(const QString& orderCode, const QString& epc)
@@ -1993,6 +2075,41 @@ bool SortingDatabase::insertException(const ExceptionRecord& ex)
     });
 }
 
+// ============================================================================
+// ★ 2026-09-13 异常及时清理：把某波次某 EPC 的未处理异常留痕归档为"已处理"
+//   触发：该 EPC 掉入异常口后又被重新投递并成功落格（异常数已 −1）
+//   作用：异常弹窗/历史对账可用 handled 区分"仍未闭环"与"已闭环"，不必再猜
+// ============================================================================
+bool SortingDatabase::markExceptionResolved(const QString& orderCode, const QString& epc)
+{
+    if (epc.isEmpty()) return false;
+    return runOnDbThread([&]() -> bool {
+        if (!m_bOpened) return false;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isValid() || !db.isOpen()) return false;
+
+        QSqlQuery q(db);
+        if (orderCode.isEmpty())
+        {
+            q.prepare("UPDATE exception_record SET handled = 1 WHERE epc = ? AND handled = 0");
+            q.addBindValue(epc);
+        }
+        else
+        {
+            q.prepare("UPDATE exception_record SET handled = 1 WHERE order_code = ? AND epc = ? AND handled = 0");
+            q.addBindValue(orderCode);
+            q.addBindValue(epc);
+        }
+        if (!q.exec()) return false;
+        if (q.numRowsAffected() > 0)
+        {
+            Data_INFO("[SortingDB] 异常留痕已闭环 order=%s epc=%s rows=%d",
+                orderCode.toLocal8Bit().data(), epc.toLocal8Bit().data(), q.numRowsAffected());
+        }
+        return true;
+    });
+}
+
 QVector<ExceptionRecord> SortingDatabase::getOpenExceptions(const QString& orderCode)
 {
     return runOnDbThread([&]() -> QVector<ExceptionRecord> {
@@ -2034,7 +2151,8 @@ QVector<ExceptionRecord> SortingDatabase::queryExceptions(
         if (!db.isOpen()) return result;
 
         // 动态构建 SQL：WHERE 条件按传入参数拼接
-        QString sql = "SELECT id, type, order_code, epc, sku, reason, time FROM exception_record WHERE 1=1";
+        // ★ 2026-09-13 异常弹窗需要区分"仍未闭环/已闭环"：SELECT 增列 handled
+        QString sql = "SELECT id, type, order_code, epc, sku, reason, time, handled FROM exception_record WHERE 1=1";
         QVector<QPair<QString, QVariant>> bindings;
 
         if (!orderCode.isEmpty()) {
@@ -2074,6 +2192,7 @@ QVector<ExceptionRecord> SortingDatabase::queryExceptions(
             rec.sku = q.value(4).toString();
             rec.reason = q.value(5).toString();
             rec.time = q.value(6).toString();
+            rec.handled = (q.value(7).toInt() != 0);   // ★ 2026-09-13
             result.append(rec);
         }
         return result;

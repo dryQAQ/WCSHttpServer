@@ -30,18 +30,38 @@
 #include <QXmlStreamReader>
 #include <QFile>
 #include <QSplitter>
+#include <QTabWidget>
+#include <QTabBar>
+#include <QFormLayout>
+#include <QGroupBox>
 #include <QShowEvent>
 #include <QHideEvent>
+#include <QElapsedTimer>
+#include <functional>      // ★ 2026-09-13 弹窗上下文注入（std::function 回调）
 #include "qcustomplot.h"   // ★ 2026-09-07 效率统计图（QCustomPlot）
+#include "VerticalTabBar.h" // ★ 2026-09-13 左侧标签页：中文逐字竖排自绘标签栏
 
 // ============================================================================
-// ★ 2026-09-08 UI调整 第四行实时滚动表公共逻辑：
+// ★ 2026-09-13 UI改版说明（第二行 = 左侧标签页多页窗口）：
+//   第一行（任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息）保持不变；
+//   其下为一个 QTabWidget，标签置于**左侧**，共 5 页：
+//     ① 容器绑定状态  ② 分拣记录查询  ③ 波次数据历史记录  ④ 实时面板  ⑤ 运行日志
+//   实时面板 = 合并后的「落格反馈数据（实时）」：
+//     RFID 推送先占一行"待落格"，PLC 落格反馈到达后就地补全同一行（8 列）。
+// ============================================================================
+
+// ============================================================================
+// ★ 2026-09-08 UI调整 实时滚动表公共逻辑：
 //   新数据插到第 0 行（最新在最上，面板持续滚动不跳动），
 //   超过 LIVE_TABLE_MAX_ROWS 行后自动裁掉最旧（末）行，控制内存与渲染量。
 //   行数上限只影响"保留明细时长"，不影响性能：QTableView 只绘制可见行，
 //   插头/删尾均为轻量操作（经现场实测 600~800ms/件 速率下占用可忽略）。
+// ★ 2026-09-13：合并为单张「落格反馈数据（实时）」表；占位行索引需随裁剪重建
 // ============================================================================
 static const int LIVE_TABLE_MAX_ROWS = 5000;
+
+// 实时面板占位行状态文本（用于识别"仍是占位、未被 PLC 反馈补全"）
+static const char* LIVE_STATUS_PENDING = "待落格";
 
 // ============================================================================
 // ★ 2026-09-10 查询更新：格口号归一（显示与匹配统一口径）
@@ -55,27 +75,25 @@ static QString gridKeyOf(const QString& gridStr)
     return normalizeGridKey(gridStr);
 }
 
-static void pushLiveRow(QTableWidget* tbl, const QStringList& cells, bool warnRed = false)
+// ============================================================================
+// ★ 2026-09-13 实时面板：把一行单元格直接写到表格第 row 行（不插入新行）
+//   与 livePanelInsertPendingRow / livePanelApplyFeedback 共用同一套单元格样式规则
+// ============================================================================
+static void writeLiveRow(QTableWidget* tbl, int row, const QStringList& cells,
+                         bool warnRed, bool pendingBlue)
 {
-    if (!tbl) return;
+    if (!tbl || row < 0 || row >= tbl->rowCount()) return;
     const int n = qMin(cells.size(), tbl->columnCount());
-    if (n <= 0) return;
-    if (tbl->rowCount() >= LIVE_TABLE_MAX_ROWS)
-        tbl->removeRow(tbl->rowCount() - 1);   // 裁掉最旧行
-
-    tbl->insertRow(0);                          // 最新插入最上
     for (int c = 0; c < n; ++c)
     {
         QTableWidgetItem* it = new QTableWidgetItem(cells.at(c));
-        // 序号/时间居中，内容列左对齐；EPC 用等宽字体便于现场比对
         if (c == 2) { QFont f = it->font(); f.setFamily("Consolas"); it->setFont(f); }
-        it->setTextAlignment((c == 0 || c == 1)
-            ? int(Qt::AlignHCenter | Qt::AlignVCenter)
-            : int(Qt::AlignLeft | Qt::AlignVCenter));
-        if (warnRed) it->setForeground(QColor("#E53935"));   // 异常状态整行标红
-        tbl->setItem(0, c, it);
+        it->setTextAlignment((c == 0 || c == 1) ? int(Qt::AlignHCenter | Qt::AlignVCenter)
+                                               : int(Qt::AlignLeft | Qt::AlignVCenter));
+        if (warnRed) it->setForeground(QColor("#D32F2F"));
+        else if (pendingBlue && c == 7) it->setForeground(QColor("#1976D2"));
+        tbl->setItem(row, c, it);
     }
-    tbl->scrollToTop();
 }
 
 // ============================================================================
@@ -228,6 +246,442 @@ private:
 };
 
 // ============================================================================
+// ★ 2026-09-13 EpcDetailDialog — 「EPC 全信息」弹窗
+//   数据来源（全部只读查询，走 SortingDatabase 的线程局部只读连接，不占用 DB 写线程）：
+//     · sorting_records   → 该 EPC 的全部分拣/落格历史（波次、格口、容器、首尾车、时间）
+//     · exception_record  → 该 EPC 的全部异常留痕（是否计入处理数、是否已闭环）
+//     · return_wave_item  → 该 SKU 的计划格口/计划数量（计划视角对照）
+//   入口：波次信息「查看异常」弹窗双击行；分拣记录查询（按EPC/按SKU/按格口）双击行
+// ============================================================================
+class EpcDetailDialog : public QDialog
+{
+public:
+    EpcDetailDialog(SortingDatabase* db, const QString& epc, QWidget* parent = nullptr)
+        : QDialog(parent), m_db(db), m_epc(epc)
+    {
+        setWindowTitle(QString::fromUtf8("EPC 全信息 — %1").arg(epc));
+        resize(1080, 720);
+
+        QVBoxLayout* root = new QVBoxLayout(this);
+
+        // ── 字段区：一眼看全该 EPC 的当前状态 ──
+        QGroupBox* grpInfo = new QGroupBox(QString::fromUtf8("基本信息"));
+        QFormLayout* form = new QFormLayout(grpInfo);
+        form->setLabelAlignment(Qt::AlignRight);
+        auto addField = [&](const QString& title, QLabel*& out) {
+            out = new QLabel("--");
+            out->setStyleSheet("font-size: 13px; font-weight: bold; color: #1565C0;");
+            out->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            form->addRow(new QLabel(title), out);
+        };
+        addField(QString::fromUtf8("EPC："),      m_lblEpc);
+        addField(QString::fromUtf8("对应SKU："),  m_lblSku);
+        addField(QString::fromUtf8("所属波次："), m_lblOrder);
+        addField(QString::fromUtf8("实际落格号："), m_lblGrid);
+        addField(QString::fromUtf8("计划格口/数量："), m_lblPlan);
+        addField(QString::fromUtf8("容器号："),   m_lblBox);
+        addField(QString::fromUtf8("小车号："),   m_lblCar);
+        addField(QString::fromUtf8("分拣时间："), m_lblTime);
+        addField(QString::fromUtf8("状态："),     m_lblStatus);
+        addField(QString::fromUtf8("异常："),     m_lblExc);
+
+        // ── 三张明细表 ──
+        QTabWidget* tabs = new QTabWidget(this);
+
+        m_tblSorted = new QTableWidget();
+        styleDetailTable(m_tblSorted, QStringList()
+            << "序号" << "波次号" << "格口号" << "容器号" << "首车" << "尾车" << "件数" << "库位" << "分拣时间");
+        m_tblSorted->setToolTip(QString::fromUtf8("sorting_records：该 EPC 全部落格实绩（受\"同波次同 EPC 防重\"保护）"));
+        tabs->addTab(m_tblSorted, QString::fromUtf8("分拣/落格历史"));
+
+        m_tblExc = new QTableWidget();
+        styleDetailTable(m_tblExc, QStringList()
+            << "序号" << "发生时间" << "异常类型" << "SKU" << "原因" << "是否计入处理数" << "闭环状态");
+        tabs->addTab(m_tblExc, QString::fromUtf8("异常留痕"));
+
+        m_tblPlan = new QTableWidget();
+        styleDetailTable(m_tblPlan, QStringList()
+            << "序号" << "波次号" << "计划格口" << "格口类型" << "计划数量" << "已分拣数量" << "库位" << "容器号(WMS)");
+        tabs->addTab(m_tblPlan, QString::fromUtf8("计划明细"));
+
+        root->addWidget(grpInfo);
+        root->addWidget(tabs, 1);
+
+        QDialogButtonBox* box = new QDialogButtonBox(QDialogButtonBox::Close, this);
+        box->button(QDialogButtonBox::Close)->setText(QString::fromUtf8("关闭"));
+        connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        root->addWidget(box);
+
+        load();
+    }
+
+private:
+    static void styleDetailTable(QTableWidget* t, const QStringList& headers)
+    {
+        t->setColumnCount(headers.size());
+        t->setHorizontalHeaderLabels(headers);
+        t->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        t->setSelectionBehavior(QAbstractItemView::SelectRows);
+        t->setSelectionMode(QAbstractItemView::SingleSelection);
+        t->setAlternatingRowColors(true);
+        t->verticalHeader()->setVisible(false);
+        t->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        t->horizontalHeader()->setStretchLastSection(true);
+        t->horizontalHeader()->setDefaultSectionSize(120);
+        t->verticalHeader()->setDefaultSectionSize(28);
+        t->setStyleSheet(
+            "QTableWidget { font-size: 13px; }"
+            "QTableWidget::item { padding: 3px 6px; }"
+            "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 5px; }");
+    }
+
+    // 是否计入"异常数"（只有 PLC 主动判定失败才计入；其余为仅留痕）
+    static bool isCountedException(const QString& type)
+    {
+        return type == "plc_no_grid" || type == "plc_info_incomplete"
+            || type == QString::fromUtf8("无格口") || type == QString::fromUtf8("信息不全");
+    }
+
+    void fill(QTableWidget* t, const QStringList& cells)
+    {
+        const int row = t->rowCount();
+        t->insertRow(row);
+        for (int c = 0; c < cells.size() && c < t->columnCount(); ++c)
+        {
+            QTableWidgetItem* it = new QTableWidgetItem(cells.at(c));
+            if (c == 0) it->setTextAlignment(Qt::AlignCenter);
+            t->setItem(row, c, it);
+        }
+    }
+
+    void load()
+    {
+        if (!m_db) return;
+
+        // ── ① 分拣/落格历史 ──
+        const QVector<SortingRecord> recs = m_db->queryByBarcode(m_epc, SORTING_QUERY_MAX_RESULTS);
+        for (int i = 0; i < recs.size(); ++i)
+        {
+            const SortingRecord& r = recs[i];
+            fill(m_tblSorted, QStringList()
+                << QString::number(i + 1) << r.orderCode
+                << (r.gridNum.isEmpty() ? "--" : gridKeyOf(r.gridNum))
+                << (r.boxcode.isEmpty() ? "--" : r.boxcode)
+                << (r.firstCar.isEmpty() ? r.carNum : r.firstCar)
+                << (r.lastCar.isEmpty() ? "--" : r.lastCar)
+                << QString::number(r.gridCount)
+                << (r.volu.isEmpty() ? "--" : r.volu)
+                << r.sortTime);
+        }
+        if (recs.size() >= SORTING_QUERY_MAX_RESULTS)
+            fill(m_tblSorted, QStringList() << "…" << QString::fromUtf8("已达单次查询上限，可能截断"));
+
+        // ── ② 异常留痕 ──
+        const QVector<ExceptionRecord> excs = m_db->queryExceptions(QString(), m_epc, QString(), QString(), QString(),
+                                                                   SORTING_QUERY_MAX_RESULTS);
+        for (int i = 0; i < excs.size(); ++i)
+        {
+            const ExceptionRecord& e = excs[i];
+            fill(m_tblExc, QStringList()
+                << QString::number(i + 1) << e.time << e.type
+                << (e.sku.isEmpty() ? "--" : e.sku)
+                << e.reason
+                << (isCountedException(e.type) ? QString::fromUtf8("计入处理") : QString::fromUtf8("仅留痕"))
+                << (e.handled ? QString::fromUtf8("已闭环(该EPC后已成功落格)")
+                              : QString::fromUtf8("未闭环")));
+        }
+
+        // ── ③ 字段区汇总 ──
+        m_lblEpc->setText(m_epc);
+        if (!recs.isEmpty())
+        {
+            const SortingRecord& r0 = recs.first();
+            m_lblSku->setText(r0.sku.isEmpty() ? QString::fromUtf8("--（落格时未取到 SKU）") : r0.sku);
+            m_lblOrder->setText(r0.orderCode);
+            const QString gk = gridKeyOf(r0.gridNum);
+            m_lblGrid->setText(QString("%1（WMS编码 %2）").arg(gk, gridToWmsCode(gk)));
+            m_lblBox->setText(r0.boxcode.isEmpty() ? "--" : r0.boxcode);
+            m_lblCar->setText(QString::fromUtf8("首车:%1  尾车:%2")
+                .arg(r0.firstCar.isEmpty() ? r0.carNum : r0.firstCar,
+                     r0.lastCar.isEmpty() ? "--" : r0.lastCar));
+            m_lblTime->setText(r0.sortTime);
+            m_lblStatus->setText(QString::fromUtf8("已落格（本 EPC 共 %1 条落格记录）").arg(recs.size()));
+
+            // 计划对照（同 SKU + 同波次）
+            QVector<ReturnWaveItemRecord> plans;
+            for (const ReturnWaveItemRecord& it : m_db->querySkuGridMapping(r0.sku))
+            {
+                if (it.orderCode == r0.orderCode) plans.append(it);
+            }
+            for (int i = 0; i < plans.size(); ++i)
+            {
+                const ReturnWaveItemRecord& it = plans[i];
+                QString typeText = it.gridType;
+                if (it.gridType == "0") typeText = QString::fromUtf8("分类");
+                else if (it.gridType == "1") typeText = QString::fromUtf8("异常");
+                else if (it.gridType == "2") typeText = QString::fromUtf8("发货");
+                fill(m_tblPlan, QStringList()
+                    << QString::number(i + 1) << it.orderCode << gridKeyOf(it.gridNum)
+                    << typeText << QString::number(it.planQty) << QString::number(it.sortedQty)
+                    << (it.volu.isEmpty() ? "--" : it.volu)
+                    << (it.obxCode.isEmpty() ? "--" : it.obxCode));
+            }
+            QStringList planTexts;
+            for (const ReturnWaveItemRecord& it : plans)
+                planTexts << QString("%1(计划%2)").arg(gridKeyOf(it.gridNum)).arg(it.planQty);
+            m_lblPlan->setText(planTexts.isEmpty()
+                ? QString::fromUtf8("--（本波次未下发该 SKU 的计划格口）")
+                : planTexts.join(QString::fromUtf8("、")));
+        }
+        else
+        {
+            m_lblStatus->setText(QString::fromUtf8("无落格记录（可能仅异常留痕，或未进入分拣）"));
+            m_lblOrder->setText(excs.isEmpty() ? "--" : excs.first().orderCode);
+            m_lblSku->setText(excs.isEmpty() || excs.first().sku.isEmpty() ? "--" : excs.first().sku);
+            // 无落格记录时用计划明细反查该 EPC 所属 SKU 的计划
+            if (!m_lblSku->text().isEmpty() && m_lblSku->text() != "--")
+            {
+                const QVector<ReturnWaveItemRecord> plans = m_db->querySkuGridMapping(m_lblSku->text());
+                for (int i = 0; i < plans.size(); ++i)
+                {
+                    const ReturnWaveItemRecord& it = plans[i];
+                    fill(m_tblPlan, QStringList()
+                        << QString::number(i + 1) << it.orderCode << gridKeyOf(it.gridNum)
+                        << it.gridType << QString::number(it.planQty) << QString::number(it.sortedQty)
+                        << (it.volu.isEmpty() ? "--" : it.volu)
+                        << (it.obxCode.isEmpty() ? "--" : it.obxCode));
+                }
+            }
+        }
+
+        // 异常汇总（字段区）
+        if (!excs.isEmpty())
+        {
+            QStringList parts;
+            int counted = 0;
+            for (const ExceptionRecord& e : excs)
+            {
+                if (isCountedException(e.type)) ++counted;
+            }
+            parts << QString::fromUtf8("留痕 %1 条（其中计入处理数 %2 条）").arg(excs.size()).arg(counted);
+            parts << QString::fromUtf8("最新：%1 — %2").arg(excs.first().type, excs.first().reason);
+            m_lblExc->setText(parts.join(QString::fromUtf8("；")));
+            m_lblExc->setStyleSheet("font-size: 13px; font-weight: bold; color: #D32F2F;");
+        }
+        else
+        {
+            m_lblExc->setText(QString::fromUtf8("无异常留痕"));
+            m_lblExc->setStyleSheet("font-size: 13px; font-weight: bold; color: #2E7D32;");
+        }
+    }
+
+private:
+    SortingDatabase* m_db  = nullptr;
+    QString          m_epc;
+    QLabel*          m_lblEpc = nullptr;
+    QLabel*          m_lblSku = nullptr;
+    QLabel*          m_lblOrder = nullptr;
+    QLabel*          m_lblGrid = nullptr;
+    QLabel*          m_lblPlan = nullptr;
+    QLabel*          m_lblBox = nullptr;
+    QLabel*          m_lblCar = nullptr;
+    QLabel*          m_lblTime = nullptr;
+    QLabel*          m_lblStatus = nullptr;
+    QLabel*          m_lblExc = nullptr;
+    QTableWidget*    m_tblSorted = nullptr;
+    QTableWidget*    m_tblExc = nullptr;
+    QTableWidget*    m_tblPlan = nullptr;
+};
+
+// ============================================================================
+// ★ 2026-09-13 ExceptionListDialog — 「查看处理」弹窗（波次信息「处理」右侧按钮）
+//   回答"到底哪些件还在异常口/有过什么异常"：
+//     · 顶部：计划/已分拣/处理/异常口/异常留痕 的换算说明（口径显式化）
+//     · 表格：本波次全部异常留痕（含仅留痕项），标注"是否计入处理数"与"闭环状态"
+//     · 双击行 → EpcDetailDialog 查看该 EPC 全信息
+//   ★ 客户口径：面板「处理」与「异常口」是同一个量（仍未处理完的件数），成功落格即递减
+// ============================================================================
+class ExceptionListDialog : public QDialog
+{
+public:
+    ExceptionListDialog(SortingDatabase* db, const QString& orderCode, QWidget* parent = nullptr)
+        : QDialog(parent), m_db(db)
+    {
+        setWindowTitle(QString::fromUtf8("异常明细 — 波次 %1").arg(orderCode.isEmpty() ? QString::fromUtf8("(全部)") : orderCode));
+        resize(1180, 680);
+
+        QVBoxLayout* root = new QVBoxLayout(this);
+
+        // ── 顶部：口径说明（一行看懂"异常"到底记什么）──
+        m_lblSummary = new QLabel();
+        m_lblSummary->setWordWrap(true);
+        m_lblSummary->setStyleSheet("font-size: 13px; color: #333; background: #FFF8E1;"
+                                    " border: 1px solid #FFE082; border-radius: 4px; padding: 8px;");
+        root->addWidget(m_lblSummary);
+
+        // ── 波次切换 ──
+        QHBoxLayout* condRow = new QHBoxLayout();
+        condRow->addWidget(new QLabel(QString::fromUtf8("波次：")));
+        m_cmbWave = new QComboBox();
+        m_cmbWave->setMinimumWidth(260);
+        m_cmbWave->setFont(QFont(font().family(), 13));
+        m_cmbWave->addItem(QString::fromUtf8("(全部波次)"), QString());
+        if (db)
+        {
+            for (const WaveRecordProgress& w : db->getAllWaves())
+                m_cmbWave->addItem(QString("%1  [%2]").arg(w.orderCode, WaveSnapshot::statusToString(w.status)), w.orderCode);
+        }
+        const int idx = m_cmbWave->findData(orderCode);
+        m_cmbWave->setCurrentIndex(idx >= 0 ? idx : 0);
+        condRow->addWidget(m_cmbWave);
+        condRow->addStretch();
+
+        m_btnExport = new QPushButton(QString::fromUtf8("导出到运行日志"));
+        m_btnExport->setMinimumHeight(32);
+        m_btnExport->setFont(QFont(font().family(), 13));
+        condRow->addWidget(m_btnExport);
+        root->addLayout(condRow);
+
+        // ── 明细表 ──
+        m_tbl = new QTableWidget();
+        m_tbl->setColumnCount(8);
+        m_tbl->setHorizontalHeaderLabels(QStringList()
+            << "序号" << "发生时间" << "异常类型" << "EPC" << "对应SKU" << "原因"
+            << "是否计入处理数" << "闭环状态");
+        m_tbl->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        m_tbl->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_tbl->setSelectionMode(QAbstractItemView::SingleSelection);
+        m_tbl->setAlternatingRowColors(true);
+        m_tbl->verticalHeader()->setVisible(false);
+        m_tbl->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        m_tbl->horizontalHeader()->setStretchLastSection(true);
+        m_tbl->verticalHeader()->setDefaultSectionSize(28);
+        m_tbl->setStyleSheet(
+            "QTableWidget { font-size: 13px; }"
+            "QTableWidget::item { padding: 3px 6px; }"
+            "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 5px; }");
+        root->addWidget(m_tbl, 1);
+
+        QDialogButtonBox* box = new QDialogButtonBox(QDialogButtonBox::Close, this);
+        box->button(QDialogButtonBox::Close)->setText(QString::fromUtf8("关闭"));
+        connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        root->addWidget(box);
+
+        connect(m_cmbWave, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int) { reload(); });
+        connect(m_tbl, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+            QTableWidgetItem* it = m_tbl->item(row, 3);   // EPC 列
+            if (!it || it->text().isEmpty() || it->text() == "--") return;
+            EpcDetailDialog dlg(m_db, it->text(), this);
+            dlg.exec();
+        });
+        connect(m_btnExport, &QPushButton::clicked, this, [this]() { exportToLog(); });
+
+        reload();
+    }
+
+private:
+    void reload()
+    {
+        if (!m_db) return;
+        m_orderCode = m_cmbWave->currentData().toString();
+
+        m_rows = m_db->queryExceptions(m_orderCode, QString(), QString(), QString(), QString(),
+                                       SORTING_QUERY_MAX_RESULTS);
+        m_tbl->setRowCount(0);
+        m_tbl->setRowCount(m_rows.size());
+
+        int counted = 0, resolved = 0;
+        for (int i = 0; i < m_rows.size(); ++i)
+        {
+            const ExceptionRecord& e = m_rows[i];
+            const bool isCounted = (e.type == "plc_no_grid" || e.type == "plc_info_incomplete");
+            if (isCounted) ++counted;
+            if (e.handled) ++resolved;
+
+            auto setCell = [&](int col, const QString& text, const QColor& color = QColor(), bool center = false) {
+                QTableWidgetItem* it = new QTableWidgetItem(text);
+                if (center) it->setTextAlignment(Qt::AlignCenter);
+                if (color.isValid()) it->setForeground(color);
+                m_tbl->setItem(i, col, it);
+                return it;
+            };
+            setCell(0, QString::number(i + 1), QColor(), true);
+            setCell(1, e.time);
+            setCell(2, e.type, isCounted ? QColor("#D32F2F") : QColor("#616161"));
+            setCell(3, e.epc.isEmpty() ? "--" : e.epc);
+            setCell(4, e.sku.isEmpty() ? "--" : e.sku);
+            setCell(5, e.reason);
+            setCell(6, isCounted ? QString::fromUtf8("计入") : QString::fromUtf8("仅留痕"), QColor(), true);
+            setCell(7, e.handled ? QString::fromUtf8("已闭环（该 EPC 后已成功落格）")
+                                 : QString::fromUtf8("未闭环"), QColor(), false);
+        }
+
+        // 与内存实时计数对照（同一波次时才有意义）
+        QString memText = QString::fromUtf8("--");
+        if (m_srv && m_srv->waveManager() && !m_orderCode.isEmpty()
+            && m_srv->waveManager()->orderCode() == m_orderCode)
+        {
+            memText = QString::fromUtf8("处理/异常口 %1 件（仍在异常口、未处理完，去重 EPC）｜已分拣 %2 件次")
+                .arg(m_srv->waveManager()->exception())
+                .arg(m_srv->waveManager()->sorted());
+        }
+        m_lblSummary->setTextFormat(Qt::RichText);   // ★ 说明文字含 <b>/<u> 强调，需按富文本渲染
+        m_lblSummary->setText(QString::fromUtf8(
+            "口径说明：\n"
+            "  · 处理（波次面板）= <b>仍在异常口、尚未处理完的件数（去重 EPC）</b>——某 EPC 掉入异常口即 +1，"
+            "该 EPC 之后<u>成功落格</u>即视为已处理，立即 −1（不会一直保留）。\n"
+            "  · 异常口（波次面板）= <b>与「处理」同一个量</b>（同一批待处理件，去重 EPC）；成功落格时同步减少。\n"
+            "  · 异常留痕（下表）= exception_record 记录条数：其中只有 PLC 主动判定失败的 "
+            "plc_no_grid / plc_info_incomplete <b>计入处理数</b>；\n"
+            "    未匹配/未绑定/冲突/重扫超限/发送超时等属于<u>仅留痕</u>（PLC 报成功、已计已分拣），不增加处理数。\n"
+            "  · 本波次实时对照：%1    ｜ 当前筛选：留痕 %2 条（计入处理 %3 条，已闭环 %4 条）%5")
+            .arg(memText).arg(m_rows.size()).arg(counted).arg(resolved)
+            .arg(m_rows.size() >= SORTING_QUERY_MAX_RESULTS
+                     ? QString::fromUtf8("　⚠ 已达单次查询上限 %1 条，可能截断").arg(SORTING_QUERY_MAX_RESULTS)
+                     : QString()));
+    }
+
+    void exportToLog()
+    {
+        if (m_rows.isEmpty()) return;
+        QStringList lines;
+        lines << QString::fromUtf8("[异常明细] 波次=%1 共 %2 条")
+            .arg(m_orderCode.isEmpty() ? QString::fromUtf8("(全部)") : m_orderCode).arg(m_rows.size());
+        for (int i = 0; i < m_rows.size(); ++i)
+        {
+            const ExceptionRecord& e = m_rows[i];
+            lines << QString("%1. %2 [%3] EPC=%4 SKU=%5 %6 | %7")
+                .arg(i + 1).arg(e.time, e.type)
+                .arg(e.epc.isEmpty() ? "--" : e.epc)
+                .arg(e.sku.isEmpty() ? "--" : e.sku)
+                .arg(e.handled ? QString::fromUtf8("[已闭环]") : QString::fromUtf8("[未闭环]"))
+                .arg(e.reason);
+        }
+        if (m_logCb) m_logCb(lines.join("\n"));
+    }
+
+public:
+    // 主窗口注入：内存实时计数来源 + 日志导出回调（避免弹窗直接依赖 MainWindow 私有成员）
+    void setContext(HttpServer* srv, std::function<void(const QString&)> logCb)
+    {
+        m_srv = srv;
+        m_logCb = std::move(logCb);
+    }
+
+private:
+    SortingDatabase* m_db  = nullptr;
+    HttpServer*      m_srv = nullptr;
+    QString          m_orderCode;
+    QVector<ExceptionRecord> m_rows;
+    QLabel*       m_lblSummary = nullptr;
+    QComboBox*    m_cmbWave = nullptr;
+    QPushButton*  m_btnExport = nullptr;
+    QTableWidget* m_tbl = nullptr;
+    std::function<void(const QString&)> m_logCb;
+};
+
+// ============================================================================
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
@@ -326,10 +780,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
 }
 
 // ============================================================================
-// ★ 2026-09-08 UI调整：默认最大化后，把各行水平分隔条按"两大部分各占一半"
+// ★ 2026-09-08 UI调整：默认最大化后，把第一行水平分隔条按"两大部分各占一半"
 //   布置一次（第一行 = 左半(任务接收控制|设备状态) | 波次信息，各占整行一半）。
 //   在 changeEvent 收到 WindowStateChange 且窗口已最大化时触发（此时几何已确定），
 //   只执行一次，之后仍可手动拖动分隔条。
+// ★ 2026-09-13 UI改版：第二行改为左侧标签页（QTabWidget），
+//   原第二/三/四行的水平分隔条已不存在，此处只处理第一行。
 // ============================================================================
 void MainWindow::changeEvent(QEvent* event)
 {
@@ -358,10 +814,8 @@ void MainWindow::applyDefaultColumnWidths()
     };
 
     halfSplit(m_rowTopSplit);    // 左半 | 波次信息 —— 各占整行一半
-    halfSplit(m_rowLogSplit);    // 运行日志 | 容器绑定状态
-    halfSplit(m_rowQuerySplit);  // 分拣记录查询 | 波次数据记录
-    halfSplit(m_rowLiveSplit);   // RFID推送数据 | PLC落格反馈数据
     // m_rowTopInner 不强制等分：任务接收控制保持内容宽度，设备状态吃满左半余量
+    // 第二行（标签页）不需要列宽分配；垂直比例由 vsplit->setSizes 给定
 }
 
 void MainWindow::setupUI()
@@ -647,15 +1101,19 @@ void MainWindow::setupUI()
     // ═══════════════════════════════════════════
     QGroupBox* grpWave = new QGroupBox("波次信息");
     QGridLayout* waveLayout = new QGridLayout(grpWave);
+    // ★ 2026-09-13 客户要求「波次面板字体放大一点」：13px → 15px（标签与数值同步）
+    //   标签宽度也相应放宽，避免放大后文字被挤/换行
+    static const char* kWaveLabelQss = "font-size: 15px; min-width: 116px;";
+    static const char* kWaveValueQss = "font-size: 15px; font-weight: bold; color: #2196F3;";
 
     auto makeLabel = [](const QString& title) {
         QLabel* label = new QLabel(title);
-        label->setStyleSheet("font-size: 13px; min-width: 100px;");
+        label->setStyleSheet(kWaveLabelQss);
         return label;
     };
     auto makeValue = []() {
         QLabel* label = new QLabel("--");
-        label->setStyleSheet("font-size: 13px; font-weight: bold; color: #2196F3;");
+        label->setStyleSheet(kWaveValueQss);
         return label;
     };
 
@@ -668,10 +1126,50 @@ void MainWindow::setupUI()
     m_lblLastWave    = makeValue();
     m_lblEfficiency  = makeValue();   // ★ 2026-09-07 分拣效率
     m_lblPeakEff     = makeValue();   // ★ 2026-09-07 峰值效率（当日最大）
+    // ★ 2026-09-13 新增字段（客户需求）
+    m_lblPlanQty     = makeValue();   // 计划件数（orderQty）
+    m_lblExcBin      = makeValue();   // 异常口（= 仍在异常口、尚未处理完的件数，成功落格即递减）
+    m_lblExcTrace    = makeValue();   // ★ 留痕条数（exception_record；标签文案「留痕」）
+    m_lblRfidScanCount = makeValue(); // RFID 扫描次数（= RFID 推送 EPC 次数，重复计数）
+    m_lblElapsed     = makeValue();   // 波次时长
+    // ★ 2026-09-13 客户要求：波次面板不再显示"容器绑定"数值（改由第 0 页标签页展示）
+
+    // ★ 2026-09-13 需求：「处理」右边加"显示按钮" —— 点击弹窗查看待处理/异常 EPC 的全部相关信息
+    m_btnViewException = new QPushButton(QString::fromUtf8("查看处理"));
+    m_btnViewException->setMinimumHeight(24);
+    m_btnViewException->setCursor(Qt::PointingHandCursor);
+    m_btnViewException->setStyleSheet(
+        "QPushButton { font-size: 12px; font-weight: bold; padding: 1px 8px; border-radius: 3px;"
+        " background-color: #D32F2F; color: white; border: none; }"
+        "QPushButton:hover { background-color: #B71C1C; }"
+        "QPushButton:disabled { background-color: #BDBDBD; }");
+    m_btnViewException->setToolTip(QString::fromUtf8(
+        "查看本波次待处理/异常明细（exception_record 留痕）：\n"
+        "  · 处理 = 仍在异常口、尚未处理完的件数（去重 EPC）；该 EPC 之后成功落格即视为已处理，数量立即减少\n"
+        "  · 异常口 = 与「处理」同一个量（同一批待处理件），成功落格时同步减少\n"
+        "  · 留痕 = exception_record 记录条数（含未匹配/未绑定/冲突/重扫/超时等仅留痕项）\n"
+        "双击弹窗内任一行可查看该 EPC 的全信息（分拣历史/异常历史/计划明细）"));
+    connect(m_btnViewException, &QPushButton::clicked, this, &MainWindow::onViewExceptions);
+    // 异常数值 + 按钮同一水平单元格（按钮紧跟数值右侧）
+    QWidget* excCell = new QWidget();
+    QHBoxLayout* excCellLayout = new QHBoxLayout(excCell);
+    excCellLayout->setContentsMargins(0, 0, 0, 0);
+    excCellLayout->setSpacing(6);
+    excCellLayout->addWidget(m_lblException);
+    excCellLayout->addWidget(m_btnViewException);
+    excCellLayout->addStretch();
+
+    // ★ 2026-09-13 留痕 + 查看按钮（同"处理"的交互；仅留痕项不计入处理数）
+    QWidget* excTraceCell = new QWidget();
+    QHBoxLayout* excTraceCellLayout = new QHBoxLayout(excTraceCell);
+    excTraceCellLayout->setContentsMargins(0, 0, 0, 0);
+    excTraceCellLayout->setSpacing(6);
+    excTraceCellLayout->addWidget(m_lblExcTrace);
+    excTraceCellLayout->addStretch();
 
     // ★ 2026-09-08 UI调整：两列成对排布（每行左/右各一组 标签+值）
     int row = 0;
-    auto addFieldPair = [&](const QString& t1, QLabel* v1, const QString& t2, QLabel* v2) {
+    auto addFieldPair = [&](const QString& t1, QWidget* v1, const QString& t2, QWidget* v2) {
         waveLayout->addWidget(makeLabel(t1), row, 0);
         waveLayout->addWidget(v1,            row, 1);
         if (v2) {
@@ -680,11 +1178,17 @@ void MainWindow::setupUI()
         }
         ++row;
     };
-    addFieldPair("波次号:",   m_lblWaveCode,    "状态:",     m_lblWaveStatus);
-    addFieldPair("SKU数:",    m_lblSkuCount,    "已分拣:",   m_lblSorted);
-    addFieldPair("异常:",     m_lblException,   "分拣件数:", m_lblSumLocation);
-    addFieldPair("效率:",     m_lblEfficiency,  "峰值效率:", m_lblPeakEff);      // ★ 件/时 / 当日峰值 件/时
-    addFieldPair("上波次:",   m_lblLastWave,    QString(),   nullptr);           // 末行右侧留空
+    // ★ 2026-09-13 字段扩充（客户需求：口径显式化 + 新增 RFID 扫描次数/异常口）
+    //   ★ 客户口径变更：「异常」改称「处理」（= 仍在异常口、尚未处理完的件数）
+    addFieldPair("波次号:",   m_lblWaveCode,     "状态:",     m_lblWaveStatus);
+    addFieldPair("SKU数:",    m_lblSkuCount,     "计划:",     m_lblPlanQty);
+    addFieldPair("已分拣:",   m_lblSorted,       "分拣件数:", m_lblSumLocation);
+    addFieldPair("处理:",     excCell,           "异常口:",   m_lblExcBin);
+    addFieldPair("留痕:",     excTraceCell,      "RFID扫描:", m_lblRfidScanCount);
+    addFieldPair("效率:",     m_lblEfficiency,   "峰值效率:", m_lblPeakEff);
+    addFieldPair("波次时长:", m_lblElapsed,      "上波次:",   m_lblLastWave);
+    // ★ 2026-09-13 客户要求：**波次信息面板不再显示容器绑定数据**
+    //   （容器绑定状态在第 0 页标签页完整展示；此处仅保留波次自身字段）
     waveLayout->setColumnStretch(1, 1);   // 左值列占满剩余宽度
     waveLayout->setColumnStretch(3, 1);   // 右值列占满剩余宽度
 
@@ -699,7 +1203,7 @@ void MainWindow::setupUI()
     waveLayout->addWidget(m_btnStartSorting, row++, 0, 1, 4);   // ★ 2026-09-08 按钮跨整行（4列）
 
     // ═══════════════════════════════════════════
-    // 第二行（右栏）：容器绑定状态面板（66格口，4列×17行网格）
+    // ★ 2026-09-13 标签页 ①：容器绑定状态面板（66格口，4列×17行网格）
     // ═══════════════════════════════════════════
     QGroupBox* grpBinding = new QGroupBox("容器绑定状态");
     QVBoxLayout* bindOuterLayout = new QVBoxLayout(grpBinding);
@@ -811,20 +1315,25 @@ void MainWindow::setupUI()
     bindOuterLayout->addWidget(scrollBinding);
 
     // ═══════════════════════════════════════════
-    // 第三行（右栏）：★ 2026-09-06 波次数据记录面板：全部已传输波次
+    // ★ 2026-09-13 标签页 ③：波次数据历史记录（原「波次数据记录（全部已传输波次）」）
     //   刷新（手动） | 切换选中波次（恢复进度继续/终态载入查看） | 新任务（保留当前波次进度，清空待接收）
     //   H7/H8 重传按钮位于「任务接收控制」区（主工作流保障，不随本面板操作）
     // ═══════════════════════════════════════════
-    QGroupBox* grpUnfinished = new QGroupBox(QCoreApplication::translate("MainWindow", "波次数据记录（全部已传输波次）"));
+    QGroupBox* grpUnfinished = new QGroupBox(QCoreApplication::translate("MainWindow", "波次数据历史记录（全部已传输波次）"));
     QVBoxLayout* unfinishedLayout = new QVBoxLayout(grpUnfinished);
 
     QHBoxLayout* unfinishedBtnRow = new QHBoxLayout();
     m_btnRefreshWaves = new QPushButton(QCoreApplication::translate("MainWindow", "刷新"));
     m_btnResumeWave   = new QPushButton(QCoreApplication::translate("MainWindow", "切换选中波次"));
     m_btnNewTask      = new QPushButton(QCoreApplication::translate("MainWindow", "新任务"));
-    m_btnRefreshWaves->setMinimumHeight(30);
-    m_btnResumeWave->setMinimumHeight(30);
-    m_btnNewTask->setMinimumHeight(30);
+    m_btnRefreshWaves->setMinimumHeight(34);
+    m_btnResumeWave->setMinimumHeight(34);
+    m_btnNewTask->setMinimumHeight(34);
+    // ★ 2026-09-13 需求：本页控件/字体整体放大（与"分拣记录查询"页统一）
+    const QFont bigBtnFont(font().family(), 13);
+    m_btnRefreshWaves->setFont(bigBtnFont);
+    m_btnResumeWave->setFont(bigBtnFont);
+    m_btnNewTask->setFont(bigBtnFont);
     m_btnRefreshWaves->setStyleSheet(
         "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 16px; }"
@@ -843,15 +1352,31 @@ void MainWindow::setupUI()
     unfinishedBtnRow->addStretch();
 
     m_tblWaveRecords = new QTableWidget();
-    m_tblWaveRecords->setColumnCount(8);
+    m_tblWaveRecords->setColumnCount(9);
+    // ★ 2026-09-13 列头显式化口径（客户口径：「处理」= 仍在异常口待处理件数；异常口同值）
     m_tblWaveRecords->setHorizontalHeaderLabels(
-        QStringList() << "波次号" << "状态" << "件数" << "已分拣" << "异常" << "H7满箱" << "H8完结" << "更新时间");
+        QStringList() << "波次号" << "状态" << "计划件数" << "已分拣(件次)" << "处理(件)"
+                      << "异常口(件)" << "H7满箱" << "H8完结" << "更新时间");
     m_tblWaveRecords->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_tblWaveRecords->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_tblWaveRecords->setSelectionMode(QAbstractItemView::SingleSelection);
     m_tblWaveRecords->horizontalHeader()->setStretchLastSection(true);
     m_tblWaveRecords->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_tblWaveRecords->setMinimumHeight(200);
+    m_tblWaveRecords->setFont(QFont(font().family(), 13));   // ★ 2026-09-13 字体放大
+    m_tblWaveRecords->verticalHeader()->setDefaultSectionSize(28);
+    m_tblWaveRecords->setStyleSheet(
+        "QTableWidget { font-size: 13px; }"
+        "QTableWidget::item { padding: 3px 6px; }"
+        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 6px; font-size: 13px; }");
+    m_tblWaveRecords->setToolTip(QString::fromUtf8(
+        "口径说明：\n"
+        "  已分拣(件次) = PLC 落格反馈累计件次（含重复反馈与重投）\n"
+        "  处理(件)     = 仍在异常口、尚未处理完的件数（去重 EPC）——该 EPC 之后成功落格即视为已处理，立即减少\n"
+        "  异常口(件)   = 与「处理」同一个量（同源同值），成功落格时同步减少\n"
+        "  当前波次取内存实时值；历史波次取数据库未闭环计数\n"
+        "  需要「本波次曾掉入异常口的总量」请看波次面板的「异常留痕」或异常明细弹窗\n"
+        "双击行 = 切换选中波次"));
     // ★ 双击行 = 切换选中波次
     connect(m_tblWaveRecords, &QTableWidget::cellDoubleClicked, this,
         [this](int, int) { onResumeSelectedWave(); });
@@ -864,13 +1389,18 @@ void MainWindow::setupUI()
     connect(m_btnNewTask,      &QPushButton::clicked, this, &MainWindow::onStartNewWaveTask);
 
     // ═══════════════════════════════════════════
-    // 第三行（左栏）：★ 分拣记录查询面板
+    // ★ 2026-09-13 标签页 ②：分拣记录查询（客户要求"字体/控件大小调大一些"）
     // ═══════════════════════════════════════════
     QGroupBox* grpQuery = new QGroupBox(QCoreApplication::translate("MainWindow", "分拣记录查询"));
     QVBoxLayout* queryLayout = new QVBoxLayout(grpQuery);
 
+    // ★ 2026-09-13 本页统一放大参数（控件字体 & 行高）
+    const QFont queryFont(font().family(), 13);
+    const int   queryCtlH = 36;
+
     // ── 查询条件行 ──
     QHBoxLayout* queryCondRow = new QHBoxLayout();
+    queryCondRow->setSpacing(8);
 
     // ★ 查询模式下拉框
     queryCondRow->addWidget(new QLabel(QCoreApplication::translate("MainWindow", "查询模式:")));
@@ -878,19 +1408,26 @@ void MainWindow::setupUI()
     m_cmbQueryMode->addItem(QCoreApplication::translate("MainWindow", "按EPC查询"));
     m_cmbQueryMode->addItem(QCoreApplication::translate("MainWindow", "按SKU查询格口"));
     m_cmbQueryMode->addItem(QCoreApplication::translate("MainWindow", "按格口查询"));   // ★ 2026-09-09 需求2
-    m_cmbQueryMode->setMinimumWidth(140);
+    m_cmbQueryMode->addItem(QCoreApplication::translate("MainWindow", "按容器号查询")); // ★ 2026-09-13 需求：查该容器下所有EPC物件
+    m_cmbQueryMode->setMinimumWidth(160);
+    m_cmbQueryMode->setMinimumHeight(queryCtlH);   // ★ 2026-09-13 控件放大
+    m_cmbQueryMode->setFont(queryFont);
     queryCondRow->addWidget(m_cmbQueryMode);
 
     // ★ EPC编码输入（默认显示）
     m_editQueryBarcode = new QLineEdit();
     m_editQueryBarcode->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入EPC编码查询（留空查全部）"));
-    m_editQueryBarcode->setMinimumWidth(180);
+    m_editQueryBarcode->setMinimumWidth(220);
+    m_editQueryBarcode->setMinimumHeight(queryCtlH);
+    m_editQueryBarcode->setFont(queryFont);
     queryCondRow->addWidget(m_editQueryBarcode);
 
     // ★ SKU编码输入（默认隐藏，按SKU查询时显示）
     m_editQuerySku = new QLineEdit();
     m_editQuerySku->setPlaceholderText(QCoreApplication::translate("MainWindow", "输入SKU编码（显示分配格口 + 每个EPC的实际落格号）"));
-    m_editQuerySku->setMinimumWidth(180);
+    m_editQuerySku->setMinimumWidth(220);
+    m_editQuerySku->setMinimumHeight(queryCtlH);
+    m_editQuerySku->setFont(queryFont);
     m_editQuerySku->setVisible(false);
     queryCondRow->addWidget(m_editQuerySku);
 
@@ -898,31 +1435,40 @@ void MainWindow::setupUI()
     m_editQueryDateFrom = new QDateEdit(QDate::currentDate().addDays(-7));
     m_editQueryDateFrom->setCalendarPopup(true);
     m_editQueryDateFrom->setDisplayFormat("yyyy-MM-dd");
+    m_editQueryDateFrom->setMinimumHeight(queryCtlH);
+    m_editQueryDateFrom->setFont(queryFont);
     queryCondRow->addWidget(m_editQueryDateFrom);
 
     queryCondRow->addWidget(new QLabel("~"));
     m_editQueryDateTo = new QDateEdit(QDate::currentDate());
     m_editQueryDateTo->setCalendarPopup(true);
     m_editQueryDateTo->setDisplayFormat("yyyy-MM-dd");
+    m_editQueryDateTo->setMinimumHeight(queryCtlH);
+    m_editQueryDateTo->setFont(queryFont);
     queryCondRow->addWidget(m_editQueryDateTo);
 
     m_btnQueryRecords = new QPushButton(QCoreApplication::translate("MainWindow", "查询"));
-    m_btnQueryRecords->setMinimumHeight(32);
+    m_btnQueryRecords->setMinimumHeight(queryCtlH);
+    m_btnQueryRecords->setMinimumWidth(84);
+    m_btnQueryRecords->setFont(queryFont);
     m_btnQueryRecords->setStyleSheet(
-        "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
-        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton { background-color: #2196F3; color: white; font-size: 14px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 18px; }"
         "QPushButton:hover { background-color: #1976D2; }");
     queryCondRow->addWidget(m_btnQueryRecords);
 
     m_btnQueryClear = new QPushButton(QCoreApplication::translate("MainWindow", "清空"));
-    m_btnQueryClear->setMinimumHeight(32);
+    m_btnQueryClear->setMinimumHeight(queryCtlH);
+    m_btnQueryClear->setMinimumWidth(72);
+    m_btnQueryClear->setFont(queryFont);
     queryCondRow->addWidget(m_btnQueryClear);
 
     // ★ 2026-09-07 效率统计按钮：弹出 RFID 推送效率统计图（独立弹窗，不影响主界面）
     m_btnEffChart = new QPushButton(QCoreApplication::translate("MainWindow", "效率统计"));
-    m_btnEffChart->setMinimumHeight(32);
+    m_btnEffChart->setMinimumHeight(queryCtlH);
+    m_btnEffChart->setFont(queryFont);
     m_btnEffChart->setStyleSheet(
-        "QPushButton { background-color: #26A69A; color: white; font-size: 13px; font-weight: bold; "
+        "QPushButton { background-color: #26A69A; color: white; font-size: 14px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 14px; }"
         "QPushButton:hover { background-color: #00897B; }");
     m_btnEffChart->setToolTip(QCoreApplication::translate("MainWindow",
@@ -933,14 +1479,14 @@ void MainWindow::setupUI()
     // ── 统计标签 ──
     QHBoxLayout* statsRow = new QHBoxLayout();
     m_lblRecordCount = new QLabel(QCoreApplication::translate("MainWindow", "共 0 条记录"));
-    m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
+    m_lblRecordCount->setStyleSheet("font-size: 14px; color: #555; font-weight: bold;");
     m_lblDbStats = new QLabel("");
-    m_lblDbStats->setStyleSheet("font-size: 12px; color: #2196F3;");
+    m_lblDbStats->setStyleSheet("font-size: 14px; color: #2196F3;");
     statsRow->addWidget(m_lblRecordCount);
     statsRow->addWidget(m_lblDbStats);
     statsRow->addStretch();
 
-    // ── 结果表格 ──
+    // ── 结果表格 ──（★ 2026-09-13 字体放大：单元格 14px / 表头 14px / 行高 32）
     m_tblRecords = new QTableWidget();
     m_tblRecords->setColumnCount(10);
     m_tblRecords->setHorizontalHeaderLabels({
@@ -955,22 +1501,26 @@ void MainWindow::setupUI()
         QCoreApplication::translate("MainWindow", "分拣时间"),
         QCoreApplication::translate("MainWindow", "状态")
     });
-    m_tblRecords->setMinimumHeight(180);
-    m_tblRecords->setMaximumHeight(300);
+    m_tblRecords->setMinimumHeight(200);
+    // ★ 2026-09-13：取消原 300px 高度上限——本页已是满高标签页，表格应吃满剩余空间
     m_tblRecords->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_tblRecords->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_tblRecords->setSelectionMode(QAbstractItemView::SingleSelection);
     m_tblRecords->setAlternatingRowColors(true);
     m_tblRecords->horizontalHeader()->setStretchLastSection(true);
     m_tblRecords->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_tblRecords->verticalHeader()->setVisible(false);
+    m_tblRecords->verticalHeader()->setDefaultSectionSize(32);   // ★ 行高放大
+    m_tblRecords->setFont(QFont(font().family(), 14));
     m_tblRecords->setStyleSheet(
-        "QTableWidget { font-size: 12px; }"
-        "QTableWidget::item { padding: 2px 4px; }"
-        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 4px; }");
+        "QTableWidget { font-size: 14px; }"
+        "QTableWidget::item { padding: 5px 8px; }"
+        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 7px; font-size: 14px; }");
+    m_tblRecords->setToolTip(QString::fromUtf8("双击任意一行可查看该 EPC 的全信息（分拣历史/异常历史/计划明细）"));
 
     queryLayout->addLayout(queryCondRow);
     queryLayout->addLayout(statsRow);
-    queryLayout->addWidget(m_tblRecords);
+    queryLayout->addWidget(m_tblRecords, 1);
 
     // 连接信号
     connect(m_btnQueryRecords, &QPushButton::clicked, this, &MainWindow::onQueryRecords);
@@ -984,19 +1534,40 @@ void MainWindow::setupUI()
     connect(m_editQueryBarcode, &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
     connect(m_editQuerySku,     &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
 
-    // ★ 查询模式切换：显示/隐藏对应输入框（0=EPC, 1=SKU, 2=按格口 复用EPC输入框）
+    // ★ 2026-09-13 需求：双击查询结果行 → 该 EPC 全信息窗（占位"待分拣"行无 EPC 时不弹）
+    connect(m_tblRecords, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+        for (int c = 0; c < m_tblRecords->columnCount(); ++c)
+        {
+            QTableWidgetItem* it = m_tblRecords->item(row, c);
+            if (!it) continue;
+            const QString h = m_tblRecords->horizontalHeaderItem(c)
+                ? m_tblRecords->horizontalHeaderItem(c)->text() : QString();
+            if (h == QString::fromUtf8("EPC编码") || h == QString::fromUtf8("EPC"))
+            {
+                const QString epc = it->text().trimmed();
+                if (!epc.isEmpty() && epc != "--" && epc != QString::fromUtf8("—"))
+                    showEpcDetail(epc);
+                return;
+            }
+        }
+    });
+
+    // ★ 查询模式切换：显示/隐藏对应输入框
+    //   0=按EPC  1=按SKU（用 SKU 输入框）  2=按格口  3=按容器号（2/3 复用 EPC 输入框）
     connect(m_cmbQueryMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         bool isSkuMode = (index == 1);
         m_editQueryBarcode->setVisible(!isSkuMode);
         m_editQuerySku->setVisible(isSkuMode);
         if (index == 2)
             m_editQueryBarcode->setPlaceholderText(QString::fromUtf8("输入格口号查询该格明细（7 / 007 / 22007 均可；留空查全格口汇总）"));
+        else if (index == 3)
+            m_editQueryBarcode->setPlaceholderText(QString::fromUtf8("输入容器号查询该容器下全部EPC物件（如 H-T0129；留空列出全部容器汇总）"));
         else
             m_editQueryBarcode->setPlaceholderText(QString::fromUtf8("输入EPC编码查询（留空查全部）"));
     });
 
     // ═══════════════════════════════════════════
-    // 第二行（左栏）：日志区
+    // ★ 2026-09-13 标签页 ⑤：运行日志
     // ═══════════════════════════════════════════
     QGroupBox* grpLog = new QGroupBox("运行日志");
     QVBoxLayout* logLayout = new QVBoxLayout(grpLog);
@@ -1007,15 +1578,19 @@ void MainWindow::setupUI()
     m_txtLog->setStyleSheet("font-family: Consolas, 'Microsoft YaHei'; font-size: 12px;");
 
     QPushButton* btnClearLog = new QPushButton("清空日志");
+    btnClearLog->setMinimumHeight(34);
+    btnClearLog->setFont(QFont(font().family(), 13));
 
     logLayout->addWidget(m_txtLog);
     logLayout->addWidget(btnClearLog);
     connect(btnClearLog, &QPushButton::clicked, this, &MainWindow::onClearLog);
 
     // ═══════════════════════════════════════════
-    // ★ 2026-09-08 UI调整 第四行：RFID推送数据 / PLC落格反馈数据 —— 实时滚动显示
-    //   数据源：RFID = RfidPushClient::rfidPushReceived（QueuedConnection 回主线程）
-    //           PLC  = PlcManager::plcFeedbackBatch（复用现有100ms批量信号）
+    // ★ 2026-09-13 UI改版 —— 第二行：左侧标签页多页窗口的第 4 页「实时面板」
+    //   = 合并后的「落格反馈数据（实时）」：序号｜时间｜EPC｜对应SKU｜格口号｜容器号｜小车号｜状态
+    //   数据源：RFID 推送（RfidPushClient::rfidPushReceived，QueuedConnection 回主线程）
+    //           + PLC 落格反馈（PlcManager::plcFeedbackBatch，100ms 批量信号）
+    //   合并规则：RFID 先到 → 建一行"待落格"占位；PLC 反馈到达 → 就地补全同一行
     //   新行插第0行（最新在最上），超 LIVE_TABLE_MAX_ROWS 行自动裁掉最旧行
     // ═══════════════════════════════════════════
     auto styleLiveTable = [](QTableWidget* tbl, const QStringList& headers) {
@@ -1036,44 +1611,34 @@ void MainWindow::setupUI()
             "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 3px; }");
     };
 
-    // ── RFID 推送数据实时表：序号 | 时间 | EPC编码 | 小车号 ──
-    QGroupBox* grpRfidLive = new QGroupBox("RFID推送数据（实时）");
-    QVBoxLayout* rfidLiveLayout = new QVBoxLayout(grpRfidLive);
-    rfidLiveLayout->setContentsMargins(6, 4, 6, 4);
-    m_tblRfidPush = new QTableWidget();
-    styleLiveTable(m_tblRfidPush, QStringList() << "序号" << "时间" << "EPC编码" << "小车号");
-    m_tblRfidPush->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-    m_tblRfidPush->setColumnWidth(0, 64);
-    m_tblRfidPush->setColumnWidth(1, 100);
-    m_tblRfidPush->setColumnWidth(2, 160);
-    m_tblRfidPush->setColumnWidth(3, 100);
-    m_tblRfidPush->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);  // EPC列吃余量
-    rfidLiveLayout->addWidget(m_tblRfidPush);
-
-    // ── PLC 落格反馈数据实时表：序号 | 时间 | EPC编码 | 格口号 | 小车号(首车/尾车) | 状态码 ──
-    QGroupBox* grpPlcLive = new QGroupBox("PLC落格反馈数据（实时）");
-    QVBoxLayout* plcLiveLayout = new QVBoxLayout(grpPlcLive);
-    plcLiveLayout->setContentsMargins(6, 4, 6, 4);
-    m_tblPlcFeedback = new QTableWidget();
-    styleLiveTable(m_tblPlcFeedback, QStringList()
-        << "序号" << "时间" << "EPC编码" << "格口号" << "小车号(首车/尾车)" << "状态码");
-    m_tblPlcFeedback->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-    m_tblPlcFeedback->setColumnWidth(0, 64);
-    m_tblPlcFeedback->setColumnWidth(1, 100);
-    m_tblPlcFeedback->setColumnWidth(2, 150);
-    m_tblPlcFeedback->setColumnWidth(3, 90);
-    m_tblPlcFeedback->setColumnWidth(4, 170);
-    m_tblPlcFeedback->setColumnWidth(5, 110);
-    m_tblPlcFeedback->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);  // EPC列吃余量
-    plcLiveLayout->addWidget(m_tblPlcFeedback);
+    // ── 落格反馈数据（实时）表：序号｜时间｜EPC｜对应SKU｜格口号｜容器号｜小车号｜状态 ──
+    QGroupBox* grpLive = new QGroupBox(QString::fromUtf8("落格反馈数据（实时）"));
+    QVBoxLayout* liveLayout = new QVBoxLayout(grpLive);
+    liveLayout->setContentsMargins(6, 4, 6, 4);
+    m_tblLive = new QTableWidget();
+    styleLiveTable(m_tblLive, QStringList()
+        << "序号" << "时间" << "EPC" << "对应SKU" << "格口号" << "容器号" << "小车号" << "状态");
+    m_tblLive->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    m_tblLive->setColumnWidth(0, 64);
+    m_tblLive->setColumnWidth(1, 92);
+    m_tblLive->setColumnWidth(2, 168);
+    m_tblLive->setColumnWidth(3, 128);
+    m_tblLive->setColumnWidth(4, 84);
+    m_tblLive->setColumnWidth(5, 130);
+    m_tblLive->setColumnWidth(6, 150);
+    m_tblLive->setColumnWidth(7, 168);
+    m_tblLive->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);  // EPC列吃余量
+    m_tblLive->setToolTip(QString::fromUtf8(
+        "RFID 推送先占一行「待落格」，PLC 落格反馈到达后就地补全同一行。\n"
+        "数据源：RFID推送（EPC/小车号/对应SKU）+ PLC落格反馈（格口号/容器号/首尾车/状态）。\n"
+        "状态：1 成功 ｜ 2 无格口 ｜ 3 信息不全 ｜ 0（3字段格式无状态）；重投件标注（重投k次）。"));
+    liveLayout->addWidget(m_tblLive);
 
     // ═══════════════════════════════════════════
-    // 组装布局（★ 2026-09-07 QSplitter：行内水平与整体垂直分隔条均可手动拖动）
-    // ★ 2026-09-08 UI看板调整：
-    //   第一行：任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息
-    //   第二行：运行日志      ｜ 容器绑定状态
-    //   第三行：分拣记录查询  ｜ 波次数据记录（全部已传输波次）
-    //   第四行：RFID推送数据（实时） ｜ PLC落格反馈数据（实时）
+    // ★ 2026-09-13 UI改版 组装布局：
+    //   第一行：任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息（保持不变）
+    //   第二行：QTabWidget（标签在左侧），5 页——
+    //     ① 容器绑定状态 ② 分拣记录查询 ③ 波次数据历史记录 ④ 实时面板 ⑤ 运行日志
     // ═══════════════════════════════════════════
     QSplitter* vsplit = new QSplitter(Qt::Vertical, central);
     vsplit->setChildrenCollapsible(false);
@@ -1101,52 +1666,243 @@ void MainWindow::setupUI()
     m_rowTopInner = rowTopInner;
     m_rowTopSplit = rowTopSplit;
 
-    // 第二行：运行日志 + 容器绑定状态 —— 水平可拖动（★ 2026-09-08 默认各占一半）
-    QSplitter* rowLogSplit = new QSplitter(Qt::Horizontal);
-    rowLogSplit->setChildrenCollapsible(false);
-    rowLogSplit->setHandleWidth(5);
-    rowLogSplit->addWidget(grpLog);
-    rowLogSplit->addWidget(grpBinding);   // ★ 2026-09-08 容器绑定状态移到第二行右侧
-    rowLogSplit->setStretchFactor(0, 1);
-    rowLogSplit->setStretchFactor(1, 1);
-    vsplit->addWidget(rowLogSplit);
-    m_rowLogSplit = rowLogSplit;
+    // ═══════════════════════════════════════════
+    // 第二行：★ 2026-09-13 左侧标签页多页窗口（5 页，页序即客户要求的顺序）
+    //   ① 容器绑定状态  ② 分拣记录查询  ③ 波次数据历史记录  ④ 实时面板  ⑤ 运行日志
+    //   标签置于左侧（QTabWidget::West），标签宽度随文字（不拉伸占满整列）
+    //   ★ 2026-09-13 修正：Qt 默认会把侧边标签文字整体旋转 90°，中文"拧着"不可读；
+    //     改用 VerticalTabBar 自绘——中文按"逐字竖排"（每个字一行）显示，不旋转。
+    // ═══════════════════════════════════════════
+    m_tabMain = new VerticalTabWidget();   // ★ 自带"中文逐字竖排"自绘标签栏（见 VerticalTabBar.h）
+    m_tabMain->setTabPosition(QTabWidget::West);
+    m_tabMain->tabBar()->setExpanding(false);   // 标签宽度随文字，避免占满左侧整列
+    // ★ 2026-09-13 客户要求：页切换选项文字更醒目、各项之间区分更明显
+    //   要点（配合 VerticalTabBar 自绘，见该文件顶部"外观常量"）：
+    //     · 字号 15 加粗；标签之间加分隔间距 + 更清晰的边框；
+    //     · 选中项：蓝底白字 + 左侧强调条 + 右侧接页面的高亮边，未选中：浅灰底深灰字；
+    //       —— 底色/字色/强调条差异让"当前在哪一页"一眼可辨（原来只有文字颜色深浅差别）
+    {
+        QFont tabFont = m_tabMain->tabBar()->font();
+        tabFont.setPointSize(15);
+        tabFont.setBold(true);
+        m_tabMain->tabBar()->setFont(tabFont);
+    }
+    m_tabMain->setDocumentMode(true);
+    // 标签栏控件自身样式（背景/边框由自绘接管，这里主要给 pane 与内边距）
+    m_tabMain->setStyleSheet(
+        "QTabWidget::pane { border: 1px solid #B0BEC5; background: #FFFFFF; }"
+        "QTabBar { background: #ECEFF1; }"
+        "QTabBar::tab { background: #ECEFF1; color: #455A64;"
+        "               border: 1px solid #CFD8DC; border-left: none;"
+        "               margin: 2px 0px; padding: 10px 6px; min-width: 26px; }"
+        "QTabBar::tab:selected { background: #1565C0; color: #FFFFFF;"
+        "                        border: 1px solid #0D47A1; }");
+    m_tabMain->addTab(grpBinding,   QString::fromUtf8("容器绑定状态"));
+    m_tabMain->addTab(grpQuery,     QString::fromUtf8("分拣记录查询"));
+    m_tabMain->addTab(grpUnfinished,QString::fromUtf8("波次数据历史记录"));
+    m_tabMain->addTab(grpLive,      QString::fromUtf8("实时面板"));
+    m_tabMain->addTab(grpLog,       QString::fromUtf8("运行日志"));
+    // 实时面板放在倒数第二页：默认选中「容器绑定状态」（第 0 页）——现场首先看绑定
+    m_tabMain->setCurrentIndex(0);
+    vsplit->addWidget(m_tabMain);
 
-    // 第三行：分拣记录查询 + 波次数据记录 —— 水平可拖动（★ 2026-09-08 默认各占一半）
-    QSplitter* rowQuerySplit = new QSplitter(Qt::Horizontal);
-    rowQuerySplit->setChildrenCollapsible(false);
-    rowQuerySplit->setHandleWidth(5);
-    rowQuerySplit->addWidget(grpQuery);
-    rowQuerySplit->addWidget(grpUnfinished);   // ★ 2026-09-08 波次数据记录移到第三行右侧
-    rowQuerySplit->setStretchFactor(0, 1);
-    rowQuerySplit->setStretchFactor(1, 1);
-    vsplit->addWidget(rowQuerySplit);
-    m_rowQuerySplit = rowQuerySplit;
-
-    // 第四行：RFID推送数据 + PLC落格反馈数据 —— 实时滚动表（★ 2026-09-08 默认各占一半）
-    QSplitter* rowLiveSplit = new QSplitter(Qt::Horizontal);
-    rowLiveSplit->setChildrenCollapsible(false);
-    rowLiveSplit->setHandleWidth(5);
-    rowLiveSplit->addWidget(grpRfidLive);
-    rowLiveSplit->addWidget(grpPlcLive);
-    rowLiveSplit->setStretchFactor(0, 1);
-    rowLiveSplit->setStretchFactor(1, 1);
-    vsplit->addWidget(rowLiveSplit);
-    m_rowLiveSplit = rowLiveSplit;
-
-    // 垂直分配：首行按内容（stretch 0），其余行 1:1:2 优先给实时表；初始比例见 setSizes
-    vsplit->setStretchFactor(vsplit->indexOf(rowLogSplit),   1);
-    vsplit->setStretchFactor(vsplit->indexOf(rowQuerySplit), 1);
-    vsplit->setStretchFactor(vsplit->indexOf(rowLiveSplit),  2);
-    vsplit->setSizes({ 260, 250, 220, 320 });   // 初始高度（窗口尺寸变化时按比例缩放）
+    // 垂直分配：第一行按内容（stretch 0），第二行（标签页）吃满剩余高度
+    vsplit->setStretchFactor(0, 0);
+    vsplit->setStretchFactor(1, 1);
+    vsplit->setSizes({ 280, 700 });   // 初始高度（窗口尺寸变化时按比例缩放）
 
     mainLayout->addWidget(vsplit, 1);
+}
+
+// ============================================================================
+// ★ 2026-09-13 实时面板（落格反馈数据）行操作
+//   设计要点（性能）：所有操作都是 O(新增行数)，不查数据库、不做全表扫描；
+//   占位索引 m_livePendingRows / m_liveProvisionedAt 只在"插入行/补全/裁剪"时维护，
+//   因此主线程（业务关键路径所在线程）在实时面板上的开销可控且可测。
+// ============================================================================
+
+// 行裁剪：超过 LIVE_TABLE_MAX_ROWS 行时从尾部删（最旧），并整体重建占位索引
+void MainWindow::livePanelTrimRows()
+{
+    if (!m_tblLive) return;
+    if (m_tblLive->rowCount() <= LIVE_TABLE_MAX_ROWS) return;
+
+    QSet<int> removedRows;
+    while (m_tblLive->rowCount() > LIVE_TABLE_MAX_ROWS)
+    {
+        const int last = m_tblLive->rowCount() - 1;
+        removedRows.insert(last);
+        m_tblLive->removeRow(last);
+    }
+    // 行号整体位移：简单可靠的做法是按"仍存在的占位行"重建索引
+    livePanelRebuildPendingIndex();
+}
+
+// 按当前表格内容重建占位索引（裁剪后行号全部失效，必须重建）
+//   占位判定 = 状态列仍为"待落格"且 EPC 列与 key 一致（不需额外数据结构，避免失步）
+void MainWindow::livePanelRebuildPendingIndex()
+{
+    // 先记下各 EPC 的占位创建时刻，重建后回填（否则超时判定会丢失起点）
+    QHash<QString, qint64> atMs = m_livePendingAtMs;
+    m_livePendingRows.clear();
+    m_livePendingAtMs.clear();
+    if (!m_tblLive) return;
+
+    const QString pendingText = QString::fromUtf8(LIVE_STATUS_PENDING);
+    for (int r = 0; r < m_tblLive->rowCount(); ++r)
+    {
+        QTableWidgetItem* st = m_tblLive->item(r, 7);
+        QTableWidgetItem* ep = m_tblLive->item(r, 2);
+        if (!st || !ep) continue;
+        if (st->text() != pendingText) continue;      // 已补全/已打标 → 不再是占位
+        const QString epc = ep->text();
+        if (!m_livePendingRows.contains(epc))         // 同一 EPC 多条占位时保留最早一行（行号较大=较旧）
+            m_livePendingRows.insert(epc, r);
+        if (!m_livePendingAtMs.contains(epc))
+            m_livePendingAtMs.insert(epc, atMs.value(epc, QDateTime::currentMSecsSinceEpoch()));
+    }
+}
+
+// RFID 推送先到：插入"待落格"占位行
+void MainWindow::livePanelInsertPendingRow(const QString& epc, const QStringList& cells)
+{
+    if (!m_tblLive || epc.isEmpty()) return;
+
+    m_tblLive->insertRow(0);
+    const int n = qMin(cells.size(), m_tblLive->columnCount());
+    for (int c = 0; c < n; ++c)
+    {
+        QTableWidgetItem* it = new QTableWidgetItem(cells.at(c));
+        if (c == 2) { QFont f = it->font(); f.setFamily("Consolas"); it->setFont(f); }
+        it->setTextAlignment((c == 0 || c == 1) ? int(Qt::AlignHCenter | Qt::AlignVCenter)
+                                                : int(Qt::AlignLeft | Qt::AlignVCenter));
+        if ((c == 3 || c == 4 || c == 5) && cells.at(c) == QStringLiteral("--"))
+            it->setForeground(QColor("#9E9E9E"));   // SKU/格口/容器尚未知 → 置灰
+        if (c == 7) it->setForeground(QColor("#1976D2"));   // 待落格：蓝色
+        m_tblLive->setItem(0, c, it);
+    }
+
+    // 已有占位行整体下移一行 → 索引同步 +1
+    for (auto it = m_livePendingRows.begin(); it != m_livePendingRows.end(); ++it)
+        it.value() += 1;
+    m_livePendingRows.insert(epc, 0);
+    m_livePendingAtMs.insert(epc, QDateTime::currentMSecsSinceEpoch());
+
+    livePanelTrimRows();
+    // 行数少时保持最新可见；高频场景下不抢占操作员的滚动位置
+    if (m_tblLive->rowCount() <= 40)
+        m_tblLive->scrollToTop();
+}
+
+// PLC 落格反馈到达：命中占位行 → 就地补全；否则新增一行（占位被裁剪/已被补全时）
+void MainWindow::livePanelApplyFeedback(const QString& epc, const QStringList& cells, bool bad)
+{
+    if (!m_tblLive || epc.isEmpty()) return;
+
+    int row = -1;
+    const int pendingRow = m_livePendingRows.value(epc, -1);
+    if (pendingRow >= 0 && pendingRow < m_tblLive->rowCount())
+    {
+        QTableWidgetItem* st = m_tblLive->item(pendingRow, 7);
+        QTableWidgetItem* ep = m_tblLive->item(pendingRow, 2);
+        if (st && ep && ep->text() == epc && st->text() == QString::fromUtf8(LIVE_STATUS_PENDING))
+            row = pendingRow;
+    }
+
+    if (row < 0)
+    {
+        // 无占位可补（RFID 帧未到/占位已被裁剪/同一 EPC 已有落格行）→ 新增一行，序号在此分配
+        m_tblLive->insertRow(0);
+        row = 0;
+        for (auto it = m_livePendingRows.begin(); it != m_livePendingRows.end(); ++it)
+            it.value() += 1;
+    }
+    else
+    {
+        m_livePendingRows.remove(epc);   // 已补全，不再是占位
+        m_livePendingAtMs.remove(epc);
+    }
+
+    // 写入 8 列；补全占位时保留占位行原有序号（更符合"这件第几次被扫到"的直觉）
+    const bool keepSeq = (row != 0);
+    const int n = qMin(cells.size(), m_tblLive->columnCount());
+    for (int c = 0; c < n; ++c)
+    {
+        if (c == 0 && keepSeq && m_tblLive->item(row, 0))
+            continue;
+        QTableWidgetItem* it = new QTableWidgetItem(cells.at(c));
+        if (c == 2) { QFont f = it->font(); f.setFamily("Consolas"); it->setFont(f); }
+        it->setTextAlignment((c == 0 || c == 1) ? int(Qt::AlignHCenter | Qt::AlignVCenter)
+                                                : int(Qt::AlignLeft | Qt::AlignVCenter));
+        if ((c == 3 || c == 5) && cells.at(c) == QStringLiteral("--"))
+            it->setForeground(QColor("#9E9E9E"));
+        if (c == 7)
+        {
+            it->setForeground(bad ? QColor("#D32F2F") : QColor("#2E7D32"));
+            QFont f = it->font();
+            f.setBold(true);
+            it->setFont(f);
+        }
+        m_tblLive->setItem(row, c, it);
+    }
+    livePanelTrimRows();
+}
+
+// 每秒（onRefreshTimer）：给长期未补全的占位行打标，避免一直显示"待落格"造成误解
+void MainWindow::refreshLivePanelPendingRows()
+{
+    if (!m_tblLive || m_livePendingRows.isEmpty() || !m_pServer) return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const int timeoutMs = PLC_SEND_TIMEOUT_MS;
+    QList<QString> done;
+    for (auto it = m_livePendingRows.constBegin(); it != m_livePendingRows.constEnd(); ++it)
+    {
+        const QString epc = it.key();
+        const int row = it.value();
+        if (row < 0 || row >= m_tblLive->rowCount()) { done.append(epc); continue; }
+        QTableWidgetItem* st = m_tblLive->item(row, 7);
+        QTableWidgetItem* ep = m_tblLive->item(row, 2);
+        if (!st || !ep || ep->text() != epc) { done.append(epc); continue; }
+        if (st->text() != QString::fromUtf8(LIVE_STATUS_PENDING)) { done.append(epc); continue; }
+
+        // 等待时长以"RFID 推送时刻"为起点（主线程维护，跨日也准确）
+        const qint64 pushedAt = m_livePendingAtMs.value(epc, 0);
+        if (pushedAt <= 0) continue;
+        const qint64 waitedMs = nowMs - pushedAt;
+        const bool inFlight = m_pServer->isPlcSendInFlight(epc);
+        // 已不在途 → 指令已下发且已过在途窗口（或从未下发）：按等待时长分级打标
+        if (!inFlight && waitedMs > timeoutMs)
+        {
+            st->setText(QString::fromUtf8("未落格（无反馈）"));
+            st->setForeground(QColor("#9E9E9E"));
+            done.append(epc);
+        }
+        else if (waitedMs > 2 * timeoutMs)
+        {
+            st->setText(QString::fromUtf8("待落格（超时未反馈）"));
+            st->setForeground(QColor("#EF6C00"));
+            done.append(epc);
+        }
+    }
+    for (const QString& epc : done)
+    {
+        m_livePendingRows.remove(epc);
+        m_livePendingAtMs.remove(epc);
+    }
+}
+
+// ★ 2026-09-13 EPC 全信息窗（异常弹窗与查询结果共用）
+void MainWindow::showEpcDetail(const QString& epc)
+{
+    if (epc.isEmpty() || !m_pQueryDb) return;
+    EpcDetailDialog dlg(m_pQueryDb, epc, this);
+    dlg.exec();
 }
 
 void MainWindow::setupConnections()
 {
     connect(m_btnStartStop, &QPushButton::clicked, this, &MainWindow::onStartStop);
-
     // ★ 期望绑定数量变更 → 保存到配置，并实时更新到 HttpServer
     connect(m_spinBindCount, QOverload<int>::of(&QSpinBox::valueChanged), this,
         [this](int value) {
@@ -1588,29 +2344,26 @@ void MainWindow::setupCore()
             }, Qt::QueuedConnection);
 
         // ★ UI日志信号：批量处理，减少高频场景下的UI更新压力
-        // ★ 2026-09-08 UI调整：同一次批量的反馈同时追加到「PLC落格反馈数据」实时表
+        // ★ 2026-09-13 实时面板：同一次批量的反馈就地补全/新增「落格反馈数据（实时）」行
         connect(m_pPlcMgr, &PlcManager::plcFeedbackBatch, this,
             [this](const QVector<PlcFeedbackEntry>& entries) {
                 if (entries.isEmpty()) return;
 
-                // ── 追加实时表（批量一次更新，减少重绘）──
-                if (m_tblPlcFeedback)
+                // ── 合并实时表：PLC 落格反馈 → 补全 RFID 占位行 或 新增行 ──
+                if (m_tblLive)
                 {
                     const bool heavy = entries.size() > 16;
-                    if (heavy) m_tblPlcFeedback->setUpdatesEnabled(false);
+                    if (heavy) m_tblLive->setUpdatesEnabled(false);
+                    QElapsedTimer batchTimer;
+                    batchTimer.start();
                     for (const auto& e : entries)
                     {
-                        const quint32 no = ++m_plcFeedbackSeq;
-                        QString carTxt = e.lastCar.isEmpty()
-                            ? e.car                                   // 3字段格式：只有单车号
-                            : QString::fromUtf8("首:%1 尾:%2")        // 5字段格式：首车/尾车
-                                .arg(e.firstCar, e.lastCar);
                         QString statusTxt;
                         bool bad = false;
                         // ★ 2026-09-09 需求3：状态码旁附加信息描述（0/1/2/3 为已知语义；7/8 待客户确认，先给占位描述）
                         switch (e.status)
                         {
-                        case 0: statusTxt = QStringLiteral("0 —(3字段无状态)");      break;
+                        case 0: statusTxt = QStringLiteral("0 (3字段无状态)");      break;
                         case 1: statusTxt = QStringLiteral("1 成功");                 break;
                         case 2: statusTxt = QStringLiteral("2 无格口");   bad = true; break;
                         case 3: statusTxt = QStringLiteral("3 信息不全"); bad = true; break;
@@ -1618,15 +2371,44 @@ void MainWindow::setupCore()
                         case 8: statusTxt = QStringLiteral("8 状态码8(待确认含义)");  break;
                         default: statusTxt = QString::fromUtf8("状态码%1(未知)").arg(e.status); break;
                         }
-                        pushLiveRow(m_tblPlcFeedback,
-                            QStringList()
-                                << QString::number(no)
-                                << QDateTime::fromMSecsSinceEpoch(e.timestampMs).toString("HH:mm:ss")
-                                << e.code << e.grid << carTxt << statusTxt,
-                            bad);
+                        // 重投件标注（同一 EPC 本波次重投次数）
+                        const int resendTimes = m_pServer ? m_pServer->rescanResendTimes(e.code) : 0;
+                        if (resendTimes > 0)
+                            statusTxt += QString::fromUtf8("（重投%1次）").arg(resendTimes);
+
+                        // 对应SKU：优先 EpcCache（RFID 查询结果，TTL 300s），取不到显示 --
+                        const QString sku = m_pServer ? m_pServer->getSkuByEpc(e.code) : QString();
+                        // 容器号：落格时刻该格口的绑定容器（内存绑定表）
+                        const QString box = m_pServer ? m_pServer->containerForGrid(e.grid) : QString();
+                        const QString gridKey = gridKeyOf(e.grid);
+
+                        const QStringList cells = QStringList()
+                            << QString()   // 序号：补全占位时保留原序号；新增行时填充
+                            << QDateTime::fromMSecsSinceEpoch(e.timestampMs).toString("HH:mm:ss")
+                            << e.code
+                            << (sku.isEmpty() ? QStringLiteral("--") : sku)
+                            << gridKey
+                            << (box.isEmpty() ? QStringLiteral("--") : box)
+                            << (e.lastCar.isEmpty() ? e.car
+                                                    : QString::fromUtf8("首:%1 尾:%2").arg(e.firstCar, e.lastCar))
+                            << statusTxt;
+                        livePanelApplyFeedback(e.code, cells, bad);
                     }
-                    if (heavy) m_tblPlcFeedback->setUpdatesEnabled(true);
-                    m_tblPlcFeedback->viewport()->update();
+                    if (heavy) m_tblLive->setUpdatesEnabled(true);
+                    m_tblLive->viewport()->update();
+                    // ★ 性能核验：实时面板单批插入耗时（>50ms 说明 UI 已成为瓶颈，会在日志中暴露）
+                    const qint64 uiMs = batchTimer.elapsed();
+                    if (uiMs > 50)
+                    {
+                        static qint64 lastWarnMs = 0;
+                        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                        if (nowMs - lastWarnMs > 10000)   // 限流：最多每 10s 一条
+                        {
+                            lastWarnMs = nowMs;
+                            appendLog(QString::fromUtf8("[性能] 实时面板插入 %1 行耗时 %2ms（>50ms，UI 可能成为瓶颈）")
+                                .arg(entries.size()).arg(uiMs), true);
+                        }
+                    }
                 }
 
                 // ── 原有日志显示逻辑保持不变 ──
@@ -1692,32 +2474,40 @@ void MainWindow::setupCore()
         }, Qt::QueuedConnection);
     }
 
-    // ★ 2026-09-08 UI调整：RFID推送数据实时表数据接入
+    // ★ 2026-09-13 实时面板 —— RFID 推送接入（"先到先占一行"）
     //   RfidPushClient::rfidPushReceived 在 HP-Socket 工作线程 emit（body.data[].epc/carNum），
-    //   以 QueuedConnection 回主线程插表（先于 startDevices 连接，不丢后续推送帧）
+    //   以 QueuedConnection 回主线程：先建"待落格"占位行；PLC 落格反馈到达后就地补全同一行。
+    //   这样既保留"EPC 一到就能在面板看到"，又保证同一件不会出现两行。
     if (m_pServer && m_pServer->rfidPush())
     {
         connect(m_pServer->rfidPush(), &RfidPushClient::rfidPushReceived, this,
             [this](const QJsonObject& body) {
-                if (!m_tblRfidPush) return;
+                if (!m_tblLive) return;
                 const QJsonArray arr = body.value("data").toArray();
                 if (arr.isEmpty()) return;
                 const QString ts = QDateTime::currentDateTime().toString("HH:mm:ss");
                 const bool heavy = arr.size() > 16;
-                if (heavy) m_tblRfidPush->setUpdatesEnabled(false);
+                if (heavy) m_tblLive->setUpdatesEnabled(false);
                 for (const QJsonValue& v : arr)
                 {
                     const QJsonObject o = v.toObject();
                     const QString epc = o.value("epc").toString();
                     if (epc.isEmpty()) continue;   // 与业务侧一致：NOREAD 等空 EPC 不展示
-                    const quint32 no = ++m_rfidPushSeq;
-                    pushLiveRow(m_tblRfidPush,
-                        QStringList()
-                            << QString::number(no) << ts
-                            << epc << o.value("carNum").toString());
+                    // 对应SKU：优先 EpcCache（RFID SKU 绑定查询结果；查询未回来时显示 -- 并置灰）
+                    const QString sku = m_pServer ? m_pServer->getSkuByEpc(epc) : QString();
+                    // 格口号/容器号此刻未知 → 占位留空；状态标记为"待落格"
+                    livePanelInsertPendingRow(epc, QStringList()
+                        << QString::number(++m_liveSeq)
+                        << ts
+                        << epc
+                        << (sku.isEmpty() ? QStringLiteral("--") : sku)
+                        << QStringLiteral("--")
+                        << QStringLiteral("--")
+                        << o.value("carNum").toString()
+                        << QString::fromUtf8(LIVE_STATUS_PENDING));
                 }
-                if (heavy) m_tblRfidPush->setUpdatesEnabled(true);
-                m_tblRfidPush->viewport()->update();
+                if (heavy) m_tblLive->setUpdatesEnabled(true);
+                m_tblLive->viewport()->update();
             }, Qt::QueuedConnection);
     }
 
@@ -1962,6 +2752,36 @@ void MainWindow::onRefreshTimer()
     updatePlcPanel();
     updateRfidStatus();
 
+    // ★ 2026-09-13 实时面板：给长期未补全的"待落格"行打标（只遍历占位集合，规模小）
+    refreshLivePanelPendingRows();
+
+    // ★ 2026-09-13 异常留痕计数：10 秒一次同步查询后缓存（面板每秒渲染只读缓存）
+    //   这样"异常留痕(条)"既能实时更新，又不会让主线程每秒阻塞在 DB 查询上（分拣关键路径同线程）
+    //   波次切换时立即刷新一次（下面的 orderCode 比较），保证换波次后数字不滞后
+    {
+        static int excTraceCounter = 0;
+        static QString lastTraceOrder;
+        WaveManager* wm = m_pServer->waveManager();
+        const QString curOrder = wm ? wm->orderCode() : QString();
+        const bool orderChanged = (curOrder != lastTraceOrder);
+        if (orderChanged || (++excTraceCounter % 10 == 0))
+        {
+            lastTraceOrder = curOrder;
+            if (m_pQueryDb && m_pQueryDb->isOpen() && !curOrder.isEmpty())
+            {
+                m_cachedExcTraceCount = m_pQueryDb->queryExceptions(curOrder, QString(), QString(),
+                                                                    QString(), QString(),
+                                                                    SORTING_QUERY_MAX_RESULTS).size();
+            }
+            else if (curOrder.isEmpty())
+            {
+                m_cachedExcTraceCount = -1;   // 无波次 → 面板显示 --
+            }
+            if (orderChanged)
+                onRefreshWaveRecords();       // 换波次/新波次：历史列表同步一次
+        }
+    }
+
     if (m_bRunning && m_pServer->waveManager())
     {
         updateWavePanel();
@@ -1982,6 +2802,12 @@ void MainWindow::onRefreshTimer()
                 .arg(stats.totalWaves)
                 .arg(stats.totalGrids));
         }
+    }
+    // ★ 2026-09-13：波次面板改为"始终刷新"——停止接收/完结后仍需看到最终计数
+    //   （尤其"异常口/异常留痕/波次时长"为终态对账数据，不能因 m_bRunning=false 而冻结）
+    else if (m_pServer->waveManager())
+    {
+        updateWavePanel();
     }
 }
 
@@ -2022,11 +2848,95 @@ void MainWindow::updateWavePanel()
     m_lblWaveCode->setText(snap.orderCode.isEmpty() ? "-- 等待波次 --" : snap.orderCode);
     m_lblWaveStatus->setText(snap.statusText);
     m_lblSkuCount->setText(QString::number(snap.skuCount));
-    m_lblSorted->setText(QString("%1 / %2").arg(snap.sortedCount).arg(snap.totalRecv));
-    // ★ 分母含义提示：y=WMS下发的计划总件数 orderQty（H4 head.orderQty，strict校验=ΣgridNumber）
-    m_lblSorted->setToolTip(QString::fromUtf8("已分拣件数 / 计划总件数（WMS下发 orderQty=计划件数）"));
-    m_lblException->setText(QString::number(snap.exceptionCount));
+
+    // ★ 2026-09-13 口径显式化（客户需求：异常/分拣数量关系必须看得懂、异常要能及时清理）
+    m_lblPlanQty->setText(QString("%1 件").arg(snap.orderQty));
+    m_lblPlanQty->setToolTip(QString::fromUtf8(
+        "计划件数 = WMS 下发波次头 orderQty（该波次计划分拣的总件数）"));
+
+    m_lblSorted->setText(QString("%1 / %2").arg(snap.sortedCount).arg(snap.orderQty));
+    m_lblSorted->setToolTip(QString::fromUtf8(
+        "已分拣件数（件次口径） = PLC 落格反馈累计次数：\n"
+        "  · 含重复反馈与重投落格（同一件被反馈多次就计多次）\n"
+        "  · 与右侧「计划」对照可看进度"));
+    m_lblSorted->setStyleSheet("font-size: 15px; font-weight: bold; color: #2E7D32;");   // ★ 面板字体放大 13→15
+
+    // ★ 2026-09-13 客户口径：「处理」= 仍在异常口、尚未处理完的件数（去重 EPC）；
+    //   「异常口」= 同一批待处理件（同源同值）——两者都会在该 EPC **成功落格**时同步 −1。
+    m_lblException->setText(QString("%1 件").arg(snap.exceptionCount));
+    m_lblException->setToolTip(QString::fromUtf8(
+        "处理 = 仍在异常口、尚未处理完的件数（去重 EPC）：\n"
+        "  · PLC 判定失败（状态2 无格口 / 状态3 信息不全）即 +1（同一 EPC 反复掉入只算 1 件）\n"
+        "  · 该 EPC 之后**成功落格**即视为已处理 → 此数立即 −1（不做只增累计）\n"
+        "  · 不计入「已分拣」；留痕（未匹配/未绑定/冲突/重扫等）不增加此数\n"
+        "点右侧「查看处理」查看明细（双击行可看该 EPC 全信息）"));
+    m_lblException->setStyleSheet(snap.exceptionCount > 0
+        ? "font-size: 15px; font-weight: bold; color: #D32F2F;"
+        : "font-size: 15px; font-weight: bold; color: #2196F3;");
+
+    // ★ 异常口数值（同样 15px）；数量与左侧「处理」同源
+    m_lblExcBin->setStyleSheet(snap.exceptionCount > 0
+        ? "font-size: 15px; font-weight: bold; color: #FF6D00;"
+        : "font-size: 15px; font-weight: bold; color: #2196F3;");
+    m_lblExcBin->setText(QString("%1 件").arg(snap.exceptionCount));
+    m_lblExcBin->setToolTip(QString::fromUtf8(
+        "异常口 = 仍在异常口、尚未处理完的件数（去重 EPC，与左侧「处理」同一个量）：\n"
+        "  · 一个 EPC 只记一次（重复掉入不重复计）\n"
+        "  · **成功落格即视为已处理 → 本数同步减少**（不再只增不减）\n"
+        "  · 需要「本波次曾掉入异常口的总量」做对账时，请看「留痕」或异常明细弹窗"));
+
+    // 留痕条数（exception_record）：含"仅留痕、未真正入异常口"的记录
+    // ★ 2026-09-13 性能保护：该值由 onRefreshTimer 以 10 秒周期刷新到 m_cachedExcTraceCount，
+    //   面板每秒渲染时只读缓存——避免每秒一次同步 DB 查询占用主线程（分拣关键路径所在线程）
+    const int excTrace = m_cachedExcTraceCount;
+    m_lblExcTrace->setText(excTrace < 0 ? QString("--") : QString("%1 条").arg(excTrace));
+    m_lblExcTrace->setToolTip(QString::fromUtf8(
+        "留痕条数 = exception_record 记录数（含下列两类）：\n"
+        "  · 计入处理的：plc_no_grid(无格口) / plc_info_incomplete(信息不全)\n"
+        "  · 仅留痕（PLC 报成功、已计为已分拣，不增加处理数）：无匹配/无绑定/冲突/重扫超限/发送超时等\n"
+        "点右侧「查看处理」查看明细与「是否计入 / 是否已闭环」标注"));
+
     m_lblSumLocation->setText(QString::number(snap.sumLocation));
+    m_lblSumLocation->setToolTip(QString::fromUtf8(
+        "分拣件数（去重 EPC） = 已落格的不重复实物件数：\n"
+        "  · 「已分拣」是件次口径（含重复反馈/重投），本值是件口径，两者不同\n"
+        "  · WMS 完结回传（H8）的 sumLocation 用此值"));
+
+    // ★ 2026-09-13 新增：RFID 扫描次数 = RFID 推送 EPC 次数（重复 EPC 重复计数）
+    const quint64 rfidScans = m_pServer->rfidPushTotal();
+    m_lblRfidScanCount->setText(QString("%1 次").arg(rfidScans));
+    m_lblRfidScanCount->setStyleSheet("font-size: 15px; font-weight: bold; color: #6A1B9A;");
+    m_lblRfidScanCount->setToolTip(QString::fromUtf8(
+        "RFID 扫描次数 = 本次运行累计收到的 RFID 推送 EPC 条数：\n"
+        "  · 每推送一个 EPC 记 1 次；**同一个 EPC 重复推送重复计数**\n"
+        "  · 不含空 EPC / NOREAD（未读到标签不计数）\n"
+        "  · 只记推送次数，不代表分拣件数；跨波次不清零，程序重启归 0"));
+
+    // 波次时长（mm:ss / hh:mm:ss）
+    {
+        const qint64 sec = qMax<qint64>(0, snap.elapsedSec);
+        const qint64 h = sec / 3600, m = (sec % 3600) / 60, s = sec % 60;
+        m_lblElapsed->setText(h > 0 ? QString("%1:%2:%3").arg(h)
+                                          .arg(m, 2, 10, QChar('0'))
+                                          .arg(s, 2, 10, QChar('0'))
+                                    : QString("%1:%2").arg(m, 2, 10, QChar('0'))
+                                          .arg(s, 2, 10, QChar('0')));
+        m_lblElapsed->setToolTip(QString::fromUtf8("当前波次已耗时（从波次注册起算）"));
+    }
+
+    // ★ 2026-09-13 客户要求：波次信息面板不再显示容器绑定数据 → 此处同步移除刷新逻辑
+    //   （容器绑定状态在第 0 页标签页展示，含已绑定/已锁格/未绑定计数）
+
+    // 查看处理按钮：无待处理件时置灰但保留可见（避免布局跳动）
+    if (m_btnViewException)
+    {
+        m_btnViewException->setEnabled(snap.exceptionCount > 0 || excTrace > 0);
+        m_btnViewException->setText(snap.exceptionCount > 0
+            ? QString::fromUtf8("查看处理(%1)").arg(snap.exceptionCount)
+            : (excTrace > 0 ? QString::fromUtf8("查看处理(%1条留痕)").arg(excTrace)
+                            : QString::fromUtf8("查看处理")));
+    }
+
     // ★ 2026-09-07 效率显示：1分钟接收 RFID 推送件数 × 60 = 折算每小时件数（滑动窗口）
     {
         int perMin = m_pServer->rfidPushPerMinute();
@@ -2482,22 +3392,71 @@ void MainWindow::onRefreshWaveRecords()
             QTableWidgetItem* item = new QTableWidgetItem(text);
             item->setFlags(item->flags() & ~Qt::ItemIsEditable);
             m_tblWaveRecords->setItem(row, col, item);
+            return item;
         };
-        // ★ 当前运行波次的已分拣/异常显示内存实时值
+        // ★ 2026-09-13 客户口径：「处理」= 仍在异常口、尚未处理完的件数（去重 EPC）；
+        //   「异常口」= 同一批待处理件（同源同值）——成功落格即视为已处理，两个数字同步递减。
+        //   当前波次取内存实时值；历史波次按 DB 计算（已成功落格的 EPC 不再计入）。
         int sortedCnt  = w.sortedCount;
-        int excCnt     = w.exceptionCount;
+        int excCnt     = w.exceptionCount;     // 历史波次：DB 去重计数（含"未成功落格"的异常 EPC）
+        bool needDbCalc = true;
         if (!liveOrder.isEmpty() && w.orderCode == liveOrder)
         {
-            if (wm) { sortedCnt = wm->sorted(); excCnt = wm->exception(); }
+            if (wm)
+            {
+                sortedCnt   = wm->sorted();
+                excCnt      = wm->exception();
+                needDbCalc  = false;   // 当前波次 = 内存实时值
+            }
+        }
+        if (needDbCalc && m_pQueryDb && m_pQueryDb->isOpen())
+        {
+            // 历史波次：处理/异常口 = exception_record 中 PLC 判定失败（2/3）两类记录里
+            //   **在 sorting_records 中没有成功落格** 的去重 EPC（成功落格即已处理，不再计入）
+            QSet<QString> binEpcs;
+            for (const ExceptionRecord& e : m_pQueryDb->queryExceptions(w.orderCode, QString(), QString(),
+                                                                        QString(), QString(), SORTING_QUERY_MAX_RESULTS))
+            {
+                if ((e.type == "plc_no_grid" || e.type == "plc_info_incomplete")
+                    && !e.epc.isEmpty() && !e.handled)
+                    binEpcs.insert(e.epc);
+            }
+            excCnt = binEpcs.size();
         }
         setCell(0, w.orderCode);
         setCell(1, statusText);
-        setCell(2, QString::number(w.orderQty));
-        setCell(3, QString::number(sortedCnt));
-        setCell(4, QString::number(excCnt));
-        setCell(5, h7Status);
-        setCell(6, h8Status);
-        setCell(7, formatTimeFirst(w.updatedAt));   // ★ 2026-09-08 时间在前、年月在后
+        {
+            QTableWidgetItem* it = setCell(2, QString::number(w.orderQty));
+            it->setTextAlignment(Qt::AlignCenter);
+            it->setToolTip(QString::fromUtf8("WMS 下发波次计划件数（orderQty）"));
+        }
+        {
+            QTableWidgetItem* it = setCell(3, QString::number(sortedCnt));
+            it->setTextAlignment(Qt::AlignCenter);
+            it->setToolTip(QString::fromUtf8(
+                "已分拣（件次口径）= PLC 落格反馈累计次数（含重复反馈与重投）\n"
+                "当前波次=内存实时值；历史波次=sorting_records 去重 EPC 数"));
+        }
+        {
+            QTableWidgetItem* it = setCell(4, QString::number(excCnt));
+            it->setTextAlignment(Qt::AlignCenter);
+            it->setForeground(excCnt > 0 ? QColor("#D32F2F") : QColor("#333333"));
+            it->setToolTip(QString::fromUtf8(
+                "处理（件）= 仍在异常口、尚未处理完的件数（去重 EPC）\n"
+                "该 EPC 之后成功落格即视为已处理 → 立即减少；不计入「已分拣」\n"
+                "当前波次=内存实时值；历史波次=exception_record 中未闭环的 PLC 判定失败 EPC 去重数"));
+        }
+        {
+            QTableWidgetItem* it = setCell(5, QString::number(excCnt));
+            it->setTextAlignment(Qt::AlignCenter);
+            it->setToolTip(QString::fromUtf8(
+                "异常口（件）= 与「处理」同一个量（仍在异常口、尚未处理完的件数，去重 EPC）\n"
+                "一个 EPC 只记一次；**成功落格即已处理 → 同步减少**（不再只增不减）\n"
+                "需要「本波次曾掉入异常口的总量」请看「异常留痕」或异常明细弹窗"));
+        }
+        setCell(6, h7Status);
+        setCell(7, h8Status);
+        setCell(8, formatTimeFirst(w.updatedAt));   // ★ 2026-09-08 时间在前、年月在后
     }
 }
 
@@ -3114,7 +4073,355 @@ void MainWindow::onOpenEffChart()
 }
 
 // ============================================================================
-// ★ onQueryRecords — 分拣记录查询（按EPC / 按SKU查格口）
+// ★ 2026-09-13 onViewExceptions — 打开「异常明细」弹窗（波次信息「异常」右侧按钮）
+//   默认波次：当前内存波次；若列表里选中了波次则以选中为准（便于回看历史波次异常）
+//   单实例复用：已打开则置前；关闭即销毁（WA_DeleteOnClose）
+// ============================================================================
+void MainWindow::onViewExceptions()
+{
+    if (!m_pQueryDb) return;
+
+    if (!m_pQueryDb->isOpen())
+    {
+        const QString dbPath = QCoreApplication::applicationDirPath() + "/" + SORTING_DB_FILE;
+        if (!m_pQueryDb->open(dbPath))
+        {
+            appendLog("[异常] 数据库未就绪，无法查看异常明细", true);
+            return;
+        }
+    }
+
+    if (m_excDlg)
+    {
+        m_excDlg->show();
+        m_excDlg->raise();
+        m_excDlg->activateWindow();
+        return;
+    }
+
+    // 目标波次：列表选中行优先 → 当前内存波次
+    QString order = selectedOrCurrentWaveOrder();
+    if (order.isEmpty() && m_pServer && m_pServer->waveManager())
+        order = m_pServer->waveManager()->orderCode();
+
+    ExceptionListDialog* dlg = new ExceptionListDialog(m_pQueryDb, order, this);
+    dlg->setContext(m_pServer, [this](const QString& text) { appendLog(text); });
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    m_excDlg = dlg;
+    connect(dlg, &QDialog::destroyed, this, [this]() { m_excDlg = nullptr; });
+    dlg->show();
+    appendLog(QString::fromUtf8("[异常] 打开异常明细：波次=%1")
+        .arg(order.isEmpty() ? QString::fromUtf8("(全部)") : order));
+}
+
+// ============================================================================
+// ============================================================================
+// ★ 2026-09-13 需求：按容器号查询
+//   显示该容器号下**所有 EPC 物件**及其相关信息：
+//     波次号 / EPC编码 / SKU编码 / 实际落格号(格口) / WMS格口编码 / 计划格口 /
+//     格口类型 / 计划数量 / 容器号 / 落格时间 / 状态 / 备注
+//   口径说明（现场核对用）：
+//     · 落格明细来源 sorting_records.boxcode（落格那一刻的格口绑定），按落格时间正序
+//     · 计划来源 return_wave_item（按 波次+SKU 关联）——只用于判断"计划外落格 / 超计划"，
+//       ★ 不做计划上限拦截（客户明确要求：WCS 只如实记录，超不超由 WMS 计划侧把握）
+//     · 备注列自动标出三类可疑情况：同EPC多容器 / 同SKU超计划 / 计划外落格
+//   ★ 末尾附「同格口逐箱对照」，便于定位跨容器漂移（本次现场 034 格口五箱事件即此症状）
+// ============================================================================
+void MainWindow::renderContainerQuery()
+{
+    SortingDatabase* db = m_pQueryDb;
+    const QString box = m_editQueryBarcode->text().trimmed();
+
+    if (box.isEmpty())
+    {
+        appendLog("[查询] 请输入容器号（如 H-T0129）", true);
+        return;
+    }
+
+    QVector<SortingRecord> recs = db->queryByBoxcode(box, SORTING_QUERY_MAX_RESULTS);
+
+    // ── ① 计划信息缓存：波次+SKU → 计划件数 / 计划格口 / 格口类型 / 库位 ──
+    //   ★ 按 (波次,SKU) 缓存，避免逐行查库（一个容器可能有上百个 SKU）
+    struct PlanInfo
+    {
+        int         qty = 0;
+        QStringList grids;
+        QString     typeText;
+        QString     volu;
+    };
+    QMap<QString, PlanInfo> planCache;               // key = orderCode + "\n" + sku
+    QMap<QString, int>      planQtyByWaveSku;
+
+    auto planOf = [&](const QString& wave, const QString& sku) -> const PlanInfo& {
+        const QString key = wave + "\n" + sku;
+        auto it = planCache.find(key);
+        if (it != planCache.end()) return it.value();
+
+        PlanInfo pi;
+        const QVector<ReturnWaveItemRecord> items = db->querySkuGridMapping(sku, wave);
+        for (const ReturnWaveItemRecord& itm : items)
+        {
+            pi.qty += itm.planQty;
+            const QString g = gridKeyOf(itm.gridNum);
+            if (!g.isEmpty() && !pi.grids.contains(g)) pi.grids << g;
+            if (pi.typeText.isEmpty())
+            {
+                if (itm.gridType == "0")      pi.typeText = QString::fromUtf8("分类");
+                else if (itm.gridType == "1") pi.typeText = QString::fromUtf8("异常");
+                else if (itm.gridType == "2") pi.typeText = QString::fromUtf8("发货");
+                else                          pi.typeText = itm.gridType;
+            }
+            if (pi.volu.isEmpty() && !itm.volu.isEmpty()) pi.volu = itm.volu;
+        }
+        planQtyByWaveSku[key] = pi.qty;
+        return planCache.insert(key, pi).value();
+    };
+
+    // ── ② 汇总口径：EPC 去重件数 / SKU / 波次 / 格口 ──
+    QMap<QString, int>     epcRows;        // EPC → 本容器落格条数（>1 = 重复反馈/重投）
+    QMap<QString, QSet<QString>> skuEpcs;  // SKU → 本容器去重 EPC 集合
+    QSet<QString> uniqEpcs, uniqSkus, uniqWaves, gridsInBox;
+    for (const SortingRecord& r : recs)
+    {
+        epcRows[r.barcode]++;
+        skuEpcs[r.sku].insert(r.barcode);
+        uniqEpcs.insert(r.barcode);
+        uniqSkus.insert(r.sku);
+        uniqWaves.insert(r.orderCode);
+        gridsInBox.insert(gridKeyOf(r.gridNum));
+    }
+
+    // ── ③ 跨容器检测：只查本容器时看不出某件是否也落到过别的容器，需按 EPC 批量反查 ──
+    QStringList epcList;
+    for (const QString& e : uniqEpcs) if (!e.isEmpty()) epcList << e;
+    const QMap<QString, QStringList> otherBoxes = db->queryOtherBoxcodesByEpc(epcList, box);
+
+    // ── ④ 组装行 ──
+    struct BoxRow
+    {
+        QString wave, epc, sku, grid, wmsCode, planGrid, gridType, planQty, box, time, note;
+        bool planOutside = false;    // 实际落格格口不在该 SKU 的计划格口内
+        bool skuOver     = false;    // 该 SKU 在本容器的去重件数 > 计划件数（SKU 级）
+        bool skuOverflowRow = false; // ★ 本行是"超出计划"的那一件（件级）
+        int  overflowSeq = 0;        // 第几件超出计划
+        bool drift       = false;    // 同一 EPC 出现在多个容器
+        bool dupRow      = false;    // 同一 EPC 在本容器有多条明细
+    };
+    QVector<BoxRow> rows;
+    rows.reserve(recs.size());
+    QMap<QString, QSet<QString>> seenEpcsOfSku;   // 波次+SKU → 已累计的去重 EPC（定位"第几件超计划"）
+    int overflowRowCount = 0;                     // ★ 超计划件数（件级，供汇总标签显示）
+    for (const SortingRecord& r : recs)
+    {
+        BoxRow b;
+        b.wave    = r.orderCode;
+        b.epc     = r.barcode;
+        b.sku     = r.sku;
+        b.grid    = gridKeyOf(r.gridNum);
+        b.wmsCode = gridToWmsCode(b.grid);
+        b.box     = r.boxcode;
+        b.time    = r.sortTime;
+
+        const PlanInfo& pi = planOf(r.orderCode, r.sku);
+        b.planQty  = QString::number(pi.qty);
+        b.gridType = pi.typeText;
+        b.planGrid = pi.grids.isEmpty() ? QString::fromUtf8("(无计划)") : pi.grids.join("/");
+
+        // ★ 超计划要精确到"件"：按落格先后累计该 SKU 的去重 EPC，
+        //   第 (计划数+1) 件起才标"超出计划"，而不是把该 SKU 的所有行都标红
+        QSet<QString>& seen = seenEpcsOfSku[r.orderCode + "\n" + r.sku];
+        const bool isNewEpc = !seen.contains(r.barcode);
+        if (isNewEpc) seen.insert(r.barcode);
+        if (pi.qty > 0 && isNewEpc && seen.size() > pi.qty)
+        {
+            b.skuOverflowRow = true;
+            b.overflowSeq    = seen.size() - pi.qty;
+            ++overflowRowCount;
+        }
+        b.skuOver     = (pi.qty > 0) && (skuEpcs.value(r.sku).size() > pi.qty);
+        b.planOutside = pi.qty > 0 && !pi.grids.isEmpty() && !pi.grids.contains(b.grid);
+        b.drift       = otherBoxes.contains(r.barcode);
+        b.dupRow      = epcRows.value(r.barcode) > 1;
+
+        QStringList notes;
+        if (b.drift)   notes << QString::fromUtf8("同EPC多容器[%1]").arg(otherBoxes.value(r.barcode).join(","));
+        if (b.dupRow)  notes << QString::fromUtf8("本容器重复%1条").arg(epcRows.value(r.barcode));
+        if (b.skuOverflowRow) notes << QString::fromUtf8("★超出计划第%1件").arg(b.overflowSeq);
+        if (b.planOutside) notes << QString::fromUtf8("计划外落格");
+        b.note = notes.join(QString::fromUtf8(" / "));
+
+        rows.append(b);
+    }
+
+    // 超计划的 SKU 个数（按 波次+SKU 统计，不按条数）
+    int overSkuCount = 0;
+    for (auto it = skuEpcs.constBegin(); it != skuEpcs.constEnd(); ++it)
+    {
+        QSet<QString> wavesOfSku;
+        for (const SortingRecord& r : recs)
+            if (r.sku == it.key()) wavesOfSku.insert(r.orderCode);
+        for (const QString& w : wavesOfSku)
+        {
+            const int p = planQtyByWaveSku.value(w + "\n" + it.key(), 0);
+            if (p > 0 && it.value().size() > p) { ++overSkuCount; break; }
+        }
+    }
+
+    // ── ⑤ 渲染 13 列 ──
+    m_tblRecords->setColumnCount(13);
+    m_tblRecords->setHorizontalHeaderLabels({
+        QString::fromUtf8("序号"),
+        QString::fromUtf8("波次号"),
+        QString::fromUtf8("EPC编码"),
+        QString::fromUtf8("SKU编码"),
+        QString::fromUtf8("实际落格号"),
+        QString::fromUtf8("WMS格口编码"),
+        QString::fromUtf8("计划格口"),
+        QString::fromUtf8("格口类型"),
+        QString::fromUtf8("计划数量"),
+        QString::fromUtf8("容器号"),
+        QString::fromUtf8("落格时间"),
+        QString::fromUtf8("状态"),
+        QString::fromUtf8("备注")
+    });
+    m_tblRecords->setRowCount(0);
+    m_tblRecords->setRowCount(rows.size());
+
+    int outsideCount = 0, driftCount = 0;
+    for (int i = 0; i < rows.size(); ++i)
+    {
+        const BoxRow& b = rows[i];
+
+        auto* c0 = new QTableWidgetItem(QString::number(i + 1));
+        c0->setTextAlignment(Qt::AlignCenter);
+        m_tblRecords->setItem(i, 0, c0);
+
+        m_tblRecords->setItem(i, 1, new QTableWidgetItem(b.wave));
+        m_tblRecords->setItem(i, 2, new QTableWidgetItem(b.epc));
+        m_tblRecords->setItem(i, 3, new QTableWidgetItem(b.sku));
+
+        auto* gridItem = new QTableWidgetItem(b.grid);
+        gridItem->setTextAlignment(Qt::AlignCenter);
+        gridItem->setToolTip(QString::fromUtf8("WMS编码 %1").arg(b.wmsCode));
+        if (b.planOutside)
+        {
+            gridItem->setForeground(QColor("#FF8C00"));   // 橙色：计划外落格
+            QFont f = gridItem->font(); f.setBold(true); gridItem->setFont(f);
+        }
+        m_tblRecords->setItem(i, 4, gridItem);
+
+        auto* wmsItem = new QTableWidgetItem(b.wmsCode);
+        wmsItem->setTextAlignment(Qt::AlignCenter);
+        m_tblRecords->setItem(i, 5, wmsItem);
+
+        auto* planItem = new QTableWidgetItem(b.planGrid);
+        planItem->setTextAlignment(Qt::AlignCenter);
+        if (b.planOutside) planItem->setForeground(QColor("#FF8C00"));
+        m_tblRecords->setItem(i, 6, planItem);
+        m_tblRecords->setItem(i, 7, new QTableWidgetItem(b.gridType));
+
+        auto* qtyItem = new QTableWidgetItem(b.planQty);
+        qtyItem->setTextAlignment(Qt::AlignCenter);
+        m_tblRecords->setItem(i, 8, qtyItem);
+
+        m_tblRecords->setItem(i, 9,  new QTableWidgetItem(b.box));
+        m_tblRecords->setItem(i, 10, new QTableWidgetItem(b.time));
+
+        auto* statusItem = new QTableWidgetItem(QString::fromUtf8("已分拣"));
+        statusItem->setTextAlignment(Qt::AlignCenter);
+        statusItem->setForeground(b.planOutside ? QColor("#FF8C00") : QColor("#228B22"));
+        m_tblRecords->setItem(i, 11, statusItem);
+
+        auto* noteItem = new QTableWidgetItem(b.note);
+        noteItem->setTextAlignment(Qt::AlignCenter);
+        if (!b.note.isEmpty()) noteItem->setForeground(QColor("#D32F2F"));
+        // ★ 超出计划的件：整行标红加粗，现场一眼就能挑出"多出来的那一件"
+        if (b.skuOverflowRow || b.drift)
+        {
+            QFont bold = noteItem->font();
+            bold.setBold(true);
+            noteItem->setFont(bold);
+            m_tblRecords->item(i, 2)->setForeground(QColor("#D32F2F"));   // EPC 列
+            m_tblRecords->item(i, 3)->setForeground(QColor("#D32F2F"));   // SKU 列
+        }
+        m_tblRecords->setItem(i, 12, noteItem);
+
+        if (b.planOutside) ++outsideCount;
+        if (b.drift)       ++driftCount;
+    }
+
+    m_tblRecords->verticalHeader()->setDefaultSectionSize(32);
+
+    // ── ⑥ 统计标签：「同格口逐箱对照 + 本容器汇总」──
+    QStringList seg;
+
+    // 同格口其他容器逐箱对照（按落格先后=容器切换顺序）
+    QStringList boxesOfGrid;
+    for (const SortingRecord& r : recs)
+    {
+        const QString bc = r.boxcode.trimmed();
+        if (!bc.isEmpty() && !boxesOfGrid.contains(bc)) boxesOfGrid << bc;
+    }
+    if (!gridsInBox.isEmpty())
+    {
+        for (const QString& g : gridsInBox)
+        {
+            QStringList parts;
+            for (const QString& bc : boxesOfGrid)
+            {
+                int cnt = 0;
+                for (const SortingRecord& r : recs)
+                    if (gridKeyOf(r.gridNum) == g && r.boxcode.trimmed() == bc) ++cnt;
+                if (cnt > 0)
+                    parts << QString::fromUtf8("%1:%2件").arg(bc).arg(cnt);
+            }
+            if (!parts.isEmpty())
+                seg << QString::fromUtf8("同格口%1逐箱 [%2]").arg(g).arg(parts.join(QString::fromUtf8(" → ")));
+        }
+    }
+
+    seg << QString::fromUtf8("本容器 [%1]：EPC 去重 %2 件（明细 %3 条）｜SKU %4 个｜波次 %5 个｜格口 %6 个")
+            .arg(box).arg(uniqEpcs.size()).arg(recs.size())
+            .arg(uniqSkus.size()).arg(uniqWaves.size()).arg(gridsInBox.size());
+    seg << QString::fromUtf8("异常：同EPC多容器 %1 条｜超计划 %2 件（%3 个SKU）｜计划外落格 %4 条")
+            .arg(driftCount).arg(overflowRowCount).arg(overSkuCount).arg(outsideCount);
+
+    QString label = seg.join(QString::fromUtf8("　｜　"));
+    if (recs.size() >= SORTING_QUERY_MAX_RESULTS)
+        label += QString::fromUtf8("（已达单次查询上限 %1 条，可能截断）").arg(SORTING_QUERY_MAX_RESULTS);
+
+    m_lblRecordCount->setText(label);
+    m_lblRecordCount->setToolTip(QString::fromUtf8(
+        "按容器号查询口径：\n"
+        "  行 = 该容器号下的一条落格明细（每条明细对应 1 个 EPC）\n"
+        "  EPC 去重 = 该容器内不重复实物件数（同一 EPC 重复反馈/重投只算 1 件）\n"
+        "  计划数量/计划格口 = 该波次该 SKU 的 WMS 计划（来自波次明细 return_wave_item）\n"
+        "  备注四类提示（红色行 = 关注项）：\n"
+        "    同EPC多容器[x,y] —— 同一件也曾落到别的容器（重扫重投+中途换箱的典型症状）\n"
+        "    本容器重复N条 —— 同一 EPC 在本容器有多条明细（重复反馈/重投）\n"
+        "    ★超出计划第N件 —— 该 SKU 在本容器已累计超过计划件数，本行就是多出来的那件\n"
+        "    计划外落格 —— 实际落格格口不在该 SKU 的计划格口内\n"
+        "  最后一栏「同格口逐箱」按容器切换顺序给出各箱件数，可直接看出跨箱漂移\n"
+        "双击任意行可查看该 EPC 的全信息（分拣历史/异常/计划明细）"));
+    m_lblRecordCount->setStyleSheet(
+        (driftCount > 0 || overflowRowCount > 0 || outsideCount > 0 || uniqWaves.size() > 1)
+            ? "font-size: 13px; color: #D32F2F; font-weight: bold;"
+            : "font-size: 13px; color: #555; font-weight: bold;");
+
+    // ── ⑦ 运行日志留痕 ──
+    appendLog(QString::fromUtf8("[查询] 容器 [%1]：EPC 去重 %2 件（明细 %3 条）、SKU %4 个、波次 %5 个")
+        .arg(box).arg(uniqEpcs.size()).arg(recs.size()).arg(uniqSkus.size()).arg(uniqWaves.size()));
+    if (driftCount > 0 || overflowRowCount > 0 || outsideCount > 0)
+    {
+        appendLog(QString::fromUtf8("[查询] 容器 [%1] 发现异常：同EPC多容器 %2 条、超计划 %3 件（%4 个SKU）、计划外落格 %5 条")
+            .arg(box).arg(driftCount).arg(overflowRowCount).arg(overSkuCount).arg(outsideCount), true);
+    }
+    if (recs.isEmpty())
+        appendLog(QString::fromUtf8("[查询] 容器 [%1] 无落格记录（请确认容器号，或该容器尚未有物件落入）").arg(box), true);
+}
+
+
+// ★ onQueryRecords — 分拣记录查询（按EPC / 按SKU查格口 / 按格口查询 / 按容器号查询）
 // ============================================================================
 
 void MainWindow::onQueryRecords()
@@ -3247,6 +4554,12 @@ void MainWindow::onQueryRecords()
         return;
     }
 
+    if (queryMode == 3)
+    {
+        renderContainerQuery();
+        return;
+    }
+
     if (queryMode == 1)
     {
         // ★ 按 SKU 查询格口分配
@@ -3266,8 +4579,13 @@ void MainWindow::onQueryRecords()
 
         // 波次 → 该 SKU 的计划格口列表（判断"实际落格号是否计划外"）
         QMap<QString, QStringList> planGridsByWave;
+        QMap<QString, QString>     planBoxByWave;   // ★ 波次 → WMS 下发的容器号（落格容器为空时兜底）
         for (const ReturnWaveItemRecord& it : items)
+        {
             planGridsByWave[it.orderCode] << gridKeyOf(it.gridNum);
+            if (!it.obxCode.isEmpty() && !planBoxByWave.contains(it.orderCode))
+                planBoxByWave[it.orderCode] = it.obxCode;
+        }
 
         // 行数据（先组装再渲染，便于展开/去重/配色）
         struct SkuRow
@@ -3282,6 +4600,7 @@ void MainWindow::onQueryRecords()
         QSet<QString> actualGridSet;    // 实际落格号去重（跨波次同格口算一个）
         QSet<QString> planGridSet;      // 计划格口去重（同上）
         int planRowCount = 0;
+        int mismatchCount = 0;          // ★ 2026-09-13 实际落格号不在计划格口内的条数（"计划外"）
 
         // ① 计划视角：每个计划格口展开其已落格 EPC
         for (const ReturnWaveItemRecord& item : items)
@@ -3341,18 +4660,23 @@ void MainWindow::onQueryRecords()
         }
 
         // ② 实绩视角补漏：已落格但不属于任何计划格口的 EPC（实际落格号 ≠ 计划格口）
+        QSet<QString> uniqEpcs;   // ★ 2026-09-13 去重 EPC（件数口径，区别于"行数"）
         for (int k = 0; k < details.size(); ++k)
         {
-            if (used[k]) continue;
             const SortingRecord& d = details[k];
+            uniqEpcs.insert(d.barcode);
+            if (used[k]) continue;
 
             SkuRow r;
             r.wave       = d.orderCode;
             r.epc        = d.barcode;
             r.actualGrid = gridKeyOf(d.gridNum);
-            r.planGrid   = planGridsByWave.value(d.orderCode).join("/");
+            // ★ 2026-09-13：计划外/跨波次 EPC 回填真实计划格口（首落格口），避免"计划格口"列空白
+            const QString firstGrid = db->getFirstSortedGrid(d.orderCode, d.barcode);
+            QStringList planList = planGridsByWave.value(d.orderCode);
+            r.planGrid   = firstGrid.isEmpty() ? planList.join("/") : firstGrid;
             r.volu       = d.volu;
-            r.box        = d.boxcode;
+            r.box        = d.boxcode.isEmpty() ? planBoxByWave.value(d.orderCode) : d.boxcode;
             r.time       = d.sortTime;
             r.status     = QString::fromUtf8("已分拣");
             if (!r.planGrid.isEmpty())
@@ -3360,6 +4684,7 @@ void MainWindow::onQueryRecords()
                 r.planGrid += QString::fromUtf8("（计划外）");
                 r.mismatch  = true;
             }
+            if (r.mismatch) ++mismatchCount;   // ★ 2026-09-13 统计"计划外"条数
             rows.append(r);
             actualGridSet.insert(r.actualGrid);
         }
@@ -3451,18 +4776,29 @@ void MainWindow::onQueryRecords()
                 statusItem->setForeground(QColor("#228B22"));
             m_tblRecords->setItem(i, 12, statusItem);
         }
-        m_tblRecords->resizeRowsToContents();
+        // ★ 2026-09-13 字体放大后：不再逐行 resizeRowsToContents（1000 行会明显卡顿），
+        //   改用统一行高（32px），视觉效果一致且渲染开销恒定
+        m_tblRecords->verticalHeader()->setDefaultSectionSize(32);
 
-        // ── 统计标签 ──
-        QString label = QString::fromUtf8("SKU编码 [%1]：计划 %2 条明细（%3 个格口）｜EPC落格明细 %4 条，实际落在 %5 个格口")
-            .arg(sku).arg(planRowCount).arg(planGridSet.size()).arg(epcRowCount).arg(actualGridSet.size());
+        // ── 统计标签（★ 2026-09-13 口径分三段：计划 / 落格 EPC / 去重 EPC / 计划外）──
+        QString label = QString::fromUtf8(
+            "SKU编码 [%1]：计划 %2 条明细（%3 个格口）｜EPC 落格 %4 条 ｜ 去重 %5 个 EPC（实际落在 %6 个格口）｜ 计划外 %7 条")
+            .arg(sku).arg(planRowCount).arg(planGridSet.size())
+            .arg(epcRowCount).arg(uniqEpcs.size()).arg(actualGridSet.size())
+            .arg(mismatchCount);
         if (details.size() >= SORTING_QUERY_MAX_RESULTS)
             label += QString::fromUtf8("（已达单次查询上限 %1 条，可能截断）").arg(SORTING_QUERY_MAX_RESULTS);
         m_lblRecordCount->setText(label);
+        m_lblRecordCount->setToolTip(QString::fromUtf8(
+            "按 SKU 查询口径：\n"
+            "  计划 = WMS 下发的该 SKU 格口分配明细（一条=一个格口分配）\n"
+            "  EPC 落格 = 该 SKU 下每个 EPC 的实际落格记录（一行 = 一个 EPC）\n"
+            "  去重 EPC = 不重复实物件数；计划外 = 实际落格号不在计划格口内的条目\n"
+            "双击任意行可查看该 EPC 的全信息（分拣历史/异常历史/计划明细）"));
         // 同品多格口：高亮显示（沿用原口径）
         m_lblRecordCount->setStyleSheet(planGridSet.size() > 1
-            ? "font-size: 12px; color: #FF8C00; font-weight: bold;"
-            : "font-size: 12px; color: #555;");
+            ? "font-size: 14px; color: #FF8C00; font-weight: bold;"
+            : "font-size: 14px; color: #555; font-weight: bold;");
 
         // 更新数据库统计
         SortingStatistics stats = db->statistics();
@@ -3472,8 +4808,9 @@ void MainWindow::onQueryRecords()
             .arg(stats.totalWaves)
             .arg(stats.totalGrids));
 
-        appendLog(QString::fromUtf8("[查询] SKU编码 [%1]：计划 %2 条明细（%3 个格口），EPC落格明细 %4 条（实际落在 %5 个格口）")
-            .arg(sku).arg(planRowCount).arg(planGridSet.size()).arg(epcRowCount).arg(actualGridSet.size()));
+        appendLog(QString::fromUtf8("[查询] SKU编码 [%1]：计划 %2 条明细（%3 个格口），EPC落格 %4 条，去重 %5 个 EPC（实际落在 %6 个格口）")
+            .arg(sku).arg(planRowCount).arg(planGridSet.size())
+            .arg(epcRowCount).arg(uniqEpcs.size()).arg(actualGridSet.size()));
         return;
     }
 

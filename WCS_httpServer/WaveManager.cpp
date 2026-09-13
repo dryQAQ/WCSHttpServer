@@ -139,7 +139,8 @@ void WaveManager::markSorted(const QString& code)
         {
             m_setCodeSorted.insert(code);
             // ★ 2026-09-06 双计修复：曾异常(如PLC临时失败)后重投成功的件，从异常集合移除
-            m_setCodeException.remove(code);
+            // ★ 2026-09-13 异常及时清理：移除时同步让"异常件数" −1（内部同锁完成，重复调用只减一次）
+            removeExceptionOnSortedLocked(code);
             m_setCodeProcessing.remove(code);
             m_mapCodeRetry.remove(code);
             lock.unlock();
@@ -151,7 +152,8 @@ void WaveManager::markSorted(const QString& code)
         // ★ 2026-09-06 双计修复：同一 code 曾入异常集合（PLC 报无格口/信息不全等临时失败后重投成功），
         //   成功时必须从异常集合移除——否则 sorted 与 exception 两集合同时含该 code，
         //   导致 UI 异常数虚高、波次完成判定/对账双计
-        m_setCodeException.remove(code);
+        // ★ 2026-09-13 异常及时清理：同一 EPC 之后成功落格 → 异常数立即 −1（不再一直保留）
+        removeExceptionOnSortedLocked(code);
         m_setCodeProcessing.remove(code);
         m_mapCodeRetry.remove(code);
 
@@ -195,13 +197,15 @@ void WaveManager::markException(const QString& code)
     {
         std::unique_lock<std::mutex> lock(m_lock);
 
-        // ★ 2026-09-09 需求8：异常数量以 PLC 实时反馈为准——每次失败反馈(2/3)累计 +1（含重复反馈）
-        m_exceptionTotal++;
+        // ★ 2026-09-13 异常口径（客户口径：界面「处理」/「异常口」= 同一个量）：
+        //   m_setCodeException = 当前仍在异常口、尚未处理完的件（去重 EPC）。
+        //   同一 EPC 反复掉入异常口（重复反馈 / 重投再失败）只算 1 件，不刷高件数。
+        m_setCodeException.insert(code);
+        m_exceptionTotal = m_setCodeException.size();
 
         // 快速路径：波次已回传，跳过所有检查，仅记录状态
         if (m_bReported.load(std::memory_order_relaxed))
         {
-            m_setCodeException.insert(code);
             m_setCodeProcessing.remove(code);
             int retry = m_mapCodeRetry.value(code, 0) + 1;
             m_mapCodeRetry[code] = retry;
@@ -210,7 +214,6 @@ void WaveManager::markException(const QString& code)
             return;
         }
 
-        m_setCodeException.insert(code);
         m_setCodeProcessing.remove(code);
 
         int retry = m_mapCodeRetry.value(code, 0) + 1;
@@ -233,6 +236,31 @@ void WaveManager::markException(const QString& code)
         // ★ 锁格回传（H7）：仅发送状态报告，不改变波次状态
         emit waveReadyToReport(m_orderCode);
     }
+}
+
+bool WaveManager::removeExceptionOnSortedLocked(const QString& code)
+{
+    // 调用方必须已持有 m_lock
+    if (!m_setCodeException.remove(code))   // Qt5 QSet::remove 返回 bool
+        return false;
+    if (m_exceptionTotal > 0)
+        --m_exceptionTotal;
+    if (m_exceptionTotal != m_setCodeException.size())   // 防御：两者永不失步
+        m_exceptionTotal = m_setCodeException.size();
+    // ★ 2026-09-13 客户口径：成功落格即视为"已处理" → 「处理」与「异常口」两个数字同步 −1
+    return true;
+}
+
+bool WaveManager::removeExceptionOnSorted(const QString& code)
+{
+    std::unique_lock<std::mutex> lock(m_lock);
+    const bool removed = removeExceptionOnSortedLocked(code);
+    if (removed)
+    {
+        WCS_INFO("[WaveMgr] 异常件已处理完 code=%s 成功落格 → 处理/异常口 -1（当前=%d）",
+            code.toLocal8Bit().data(), m_exceptionTotal);
+    }
+    return removed;
 }
 
 bool WaveManager::isSorted(const QString& code) const
@@ -308,9 +336,11 @@ WaveSnapshot WaveManager::snapshot() const
 
     {
         std::unique_lock<std::mutex> lock(m_lock);
-        // ★ 2026-09-09 需求8：面板已分拣/异常按 PLC 实时反馈累计数（以实时记录为准）
+        // ★ 2026-09-09 需求8：面板已分拣按 PLC 实时反馈累计数（以实时记录为准）
         snap.sortedCount    = m_sortedTotal;
-        snap.exceptionCount = m_exceptionTotal;
+        // ★ 2026-09-13 客户口径：界面「处理」= 仍在异常口、尚未处理完的件数（去重 EPC）；
+        //   该 EPC 成功落格即视为已处理 → 此数实时减少（不做只增累计）
+        snap.exceptionCount = m_setCodeException.size();
         snap.totalRecv      = m_orderQty;  // ★ 总件数，非去重SKU数
     }
 
@@ -431,9 +461,18 @@ int WaveManager::sorted() const
 
 int WaveManager::exception() const
 {
-    // ★ 2026-09-09 需求8：返回 PLC 判定失败(2/3)反馈累计数
+    // ★ 2026-09-13 客户口径：返回「处理」件数 = 仍在异常口、尚未处理完的件数（去重 EPC）。
+    //   该 EPC 成功落格即视为已处理 → 此数实时减少（不做只增累计）。
     std::unique_lock<std::mutex> lock(m_lock);
-    return m_exceptionTotal;
+    return m_setCodeException.size();
+}
+
+QStringList WaveManager::exceptionEpcs() const
+{
+    std::unique_lock<std::mutex> lock(m_lock);
+    QStringList list = m_setCodeException.values();
+    list.sort();
+    return list;
 }
 
 int WaveManager::sumLocation() const
