@@ -90,9 +90,38 @@ static void writeLiveRow(QTableWidget* tbl, int row, const QStringList& cells,
         if (c == 2) { QFont f = it->font(); f.setFamily("Consolas"); it->setFont(f); }
         it->setTextAlignment((c == 0 || c == 1) ? int(Qt::AlignHCenter | Qt::AlignVCenter)
                                                : int(Qt::AlignLeft | Qt::AlignVCenter));
-        if (warnRed) it->setForeground(QColor("#D32F2F"));
-        else if (pendingBlue && c == 7) it->setForeground(QColor("#1976D2"));
+        if (warnRed) it->setForeground(QColor("#FF6B6B"));
+        else if (pendingBlue && c == 7) it->setForeground(QColor("#4FC3F7"));
         tbl->setItem(row, c, it);
+    }
+}
+
+// ============================================================================
+// ★ 2026-09-13 深色主题（#18252E / 边框 #C83030）：QCustomPlot 图底、坐标轴、
+//   刻度文字与网格配色（QCustomPlot 默认白底，在深色界面里会非常刺眼）
+// ============================================================================
+static void ApplyDarkPlotTheme(QCustomPlot* plot)
+{
+    if (!plot) return;
+    const QColor bg  ("#101A22");   // 图底（比窗口背景更深一档）
+    const QColor fg  ("#C7D3DB");   // 坐标轴/刻度文字
+    const QColor grid("#2C3E4C");   // 网格线
+
+    plot->setBackground(QBrush(bg));
+    if (plot->axisRect()) plot->axisRect()->setBackground(QBrush(bg));
+
+    const QVector<QCPAxis*> axes = { plot->xAxis, plot->yAxis, plot->xAxis2, plot->yAxis2 };
+    for (QCPAxis* ax : axes)
+    {
+        if (!ax) continue;
+        ax->setBasePen(QPen(fg));
+        ax->setTickPen(QPen(fg));
+        ax->setSubTickPen(QPen(grid));
+        ax->setTickLabelColor(fg);
+        ax->setLabelColor(fg);
+        ax->grid()->setPen(QPen(grid, 1, Qt::DotLine));
+        ax->grid()->setSubGridPen(QPen(grid, 1, Qt::DotLine));
+        ax->grid()->setZeroLinePen(QPen(grid));
     }
 }
 
@@ -116,7 +145,7 @@ public:
 
         // ── 图1：最近 30 分钟柱状（每分钟件数，取自主流程分桶）──
         auto* capMin = new QLabel(QString::fromUtf8("柱状图：最近 30 分钟 · 每分钟 RFID 推送件数"), this);
-        capMin->setStyleSheet("font-size: 12px; font-weight: bold; color: #333;");
+        capMin->setStyleSheet("font-size: 12px; font-weight: bold; color: #E6EDF3;");
         lay->addWidget(capMin);
         m_plotMin = new QCustomPlot(this);
         m_plotMin->setMinimumHeight(250);
@@ -135,10 +164,11 @@ public:
         //   （QCP 2.1.1 自动外边距已计入斜向文字高度，无需手工留边）
         m_plotMin->xAxis->setTickLabelRotation(60);
         m_plotMin->xAxis->setTickLabelFont(QFont(font().family(), 8));
+        ApplyDarkPlotTheme(m_plotMin);   // ★ 2026-09-13 深色主题：图底深色 + 坐标轴/网格浅色
 
         // ── 图2：今日 0~23 时折线（每小时记 1 点 = 该小时峰值效率：小时峰值件数 ×60 件/时）──
         auto* capDay = new QLabel(QString::fromUtf8("折线图：今天 0 点~23 点 · 每小时峰值效率（件/时）"), this);
-        capDay->setStyleSheet("font-size: 12px; font-weight: bold; color: #333;");
+        capDay->setStyleSheet("font-size: 12px; font-weight: bold; color: #E6EDF3;");
         lay->addWidget(capDay);
         m_plotDay = new QCustomPlot(this);
         m_plotDay->setMinimumHeight(250);
@@ -154,10 +184,11 @@ public:
         m_plotDay->xAxis->setRange(-1.0, 24.0);   // x = 小时 0..23
         m_plotDay->yAxis->setRange(0, 10);
         m_plotDay->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+        ApplyDarkPlotTheme(m_plotDay);   // ★ 2026-09-13 深色主题：图底深色 + 坐标轴/网格浅色
 
         // 标题行：日期 + 当前/峰值提示（轻量刷新，不重建控件）
         m_lblInfo = new QLabel(QString::fromUtf8("当前日期：%1").arg(QDate::currentDate().toString("yyyy-MM-dd")));
-        m_lblInfo->setStyleSheet("font-size: 13px; font-weight: bold; color: #555;");
+        m_lblInfo->setStyleSheet("font-size: 13px; font-weight: bold; color: #9FB0BC;");
         lay->insertWidget(0, m_lblInfo);
 
         m_timer = new QTimer(this);
@@ -270,7 +301,7 @@ public:
         form->setLabelAlignment(Qt::AlignRight);
         auto addField = [&](const QString& title, QLabel*& out) {
             out = new QLabel("--");
-            out->setStyleSheet("font-size: 13px; font-weight: bold; color: #1565C0;");
+            out->setStyleSheet("font-size: 13px; font-weight: bold; color: #4FC3F7;");
             out->setTextInteractionFlags(Qt::TextSelectableByMouse);
             form->addRow(new QLabel(title), out);
         };
@@ -332,7 +363,7 @@ private:
         t->setStyleSheet(
             "QTableWidget { font-size: 13px; }"
             "QTableWidget::item { padding: 3px 6px; }"
-            "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 5px; }");
+            "QHeaderView::section { background-color: #1F2F3A; color: #E6EDF3; font-weight: bold; padding: 5px; }");
     }
 
     // 是否计入"异常数"（只有 PLC 主动判定失败才计入；其余为仅留痕）
@@ -515,7 +546,7 @@ public:
         // ── 顶部：口径说明（一行看懂"异常"到底记什么）──
         m_lblSummary = new QLabel();
         m_lblSummary->setWordWrap(true);
-        m_lblSummary->setStyleSheet("font-size: 13px; color: #333; background: #FFF8E1;"
+        m_lblSummary->setStyleSheet("font-size: 13px; color: #4E342E; background: #FFF8E1;"
                                     " border: 1px solid #FFE082; border-radius: 4px; padding: 8px;");
         root->addWidget(m_lblSummary);
 
@@ -559,7 +590,7 @@ public:
         m_tbl->setStyleSheet(
             "QTableWidget { font-size: 13px; }"
             "QTableWidget::item { padding: 3px 6px; }"
-            "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 5px; }");
+            "QHeaderView::section { background-color: #1F2F3A; color: #E6EDF3; font-weight: bold; padding: 5px; }");
         root->addWidget(m_tbl, 1);
 
         QDialogButtonBox* box = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -608,7 +639,7 @@ private:
             };
             setCell(0, QString::number(i + 1), QColor(), true);
             setCell(1, e.time);
-            setCell(2, e.type, isCounted ? QColor("#D32F2F") : QColor("#616161"));
+            setCell(2, e.type, isCounted ? QColor("#FF6B6B") : QColor("#A8B7C2"));
             setCell(3, e.epc.isEmpty() ? "--" : e.epc);
             setCell(4, e.sku.isEmpty() ? "--" : e.sku);
             setCell(5, e.reason);
@@ -979,7 +1010,7 @@ void MainWindow::setupUI()
     // ── TCP 连接状态 ──
     QHBoxLayout* tcpRow1 = new QHBoxLayout();
     m_lblTcpStatus = new QLabel(QCoreApplication::translate("MainWindow", "TCP: 未连接"));
-    m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
+    m_lblTcpStatus->setStyleSheet("font-size: 13px; color: #A8B7C2; font-weight: bold;");
     m_lblTcpIp = new QLabel("");
     m_lblTcpIp->setStyleSheet("font-size: 13px; color: #2196F3;");
     m_lblTcpUptime = new QLabel("");
@@ -1015,7 +1046,7 @@ void MainWindow::setupUI()
     // ── S7 连接状态 ──
     QHBoxLayout* s7Row1 = new QHBoxLayout();
     m_lblS7Status = new QLabel(QCoreApplication::translate("MainWindow", "S7: 未连接"));
-    m_lblS7Status->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
+    m_lblS7Status->setStyleSheet("font-size: 13px; color: #A8B7C2; font-weight: bold;");
     m_lblS7Ip = new QLabel("");
     m_lblS7Ip->setStyleSheet("font-size: 13px; color: #2196F3;");
     s7Row1->addWidget(m_lblS7Status);
@@ -1044,12 +1075,12 @@ void MainWindow::setupUI()
     // ── RFID 连接状态（★ 2026-09-06 WCS作客户端主动连接 RFID 服务端，随程序启动常驻）──
     QHBoxLayout* rfidRow = new QHBoxLayout();
     m_lblRfidStatus = new QLabel(QCoreApplication::translate("MainWindow", "RFID: 连接中..."));
-    m_lblRfidStatus->setStyleSheet("font-size: 13px; color: #888; font-weight: bold;");
+    m_lblRfidStatus->setStyleSheet("font-size: 13px; color: #A8B7C2; font-weight: bold;");
     ConfigManager* rfidCfg = ConfigManager::instance();
     m_lblRfidIp = new QLabel(QString("%1:%2")
         .arg(rfidCfg->config().rfidPushServerIp)
         .arg(rfidCfg->config().rfidPushServerPort));
-    m_lblRfidIp->setStyleSheet("font-size: 13px; color: #888;");
+    m_lblRfidIp->setStyleSheet("font-size: 13px; color: #A8B7C2;");
     rfidRow->addWidget(m_lblRfidStatus);
     rfidRow->addWidget(m_lblRfidIp);
     rfidRow->addStretch();
@@ -1057,11 +1088,11 @@ void MainWindow::setupUI()
     // ── 最近数据 ──
     QHBoxLayout* lastDataRow1 = new QHBoxLayout();
     m_lblLastSendCode = new QLabel(QCoreApplication::translate("MainWindow", "最近发送: --"));
-    m_lblLastSendCode->setStyleSheet("font-size: 12px; color: #555;");
+    m_lblLastSendCode->setStyleSheet("font-size: 12px; color: #9FB0BC;");
     m_lblLastSendGrid = new QLabel("");
     m_lblLastSendGrid->setStyleSheet("font-size: 12px; color: #2196F3;");
     m_lblLastSendTime = new QLabel("");
-    m_lblLastSendTime->setStyleSheet("font-size: 12px; color: #888;");
+    m_lblLastSendTime->setStyleSheet("font-size: 12px; color: #A8B7C2;");
     lastDataRow1->addWidget(m_lblLastSendCode);
     lastDataRow1->addWidget(m_lblLastSendGrid);
     lastDataRow1->addWidget(m_lblLastSendTime);
@@ -1069,11 +1100,11 @@ void MainWindow::setupUI()
 
     QHBoxLayout* lastDataRow2 = new QHBoxLayout();
     m_lblLastRecvCode = new QLabel(QCoreApplication::translate("MainWindow", "最近接收: --"));
-    m_lblLastRecvCode->setStyleSheet("font-size: 12px; color: #555;");
+    m_lblLastRecvCode->setStyleSheet("font-size: 12px; color: #9FB0BC;");
     m_lblLastRecvGrid = new QLabel("");
     m_lblLastRecvGrid->setStyleSheet("font-size: 12px; color: #2196F3;");
     m_lblLastRecvTime = new QLabel("");
-    m_lblLastRecvTime->setStyleSheet("font-size: 12px; color: #888;");
+    m_lblLastRecvTime->setStyleSheet("font-size: 12px; color: #A8B7C2;");
     lastDataRow2->addWidget(m_lblLastRecvCode);
     lastDataRow2->addWidget(m_lblLastRecvGrid);
     lastDataRow2->addWidget(m_lblLastRecvTime);
@@ -1142,7 +1173,7 @@ void MainWindow::setupUI()
         "QPushButton { font-size: 12px; font-weight: bold; padding: 1px 8px; border-radius: 3px;"
         " background-color: #D32F2F; color: white; border: none; }"
         "QPushButton:hover { background-color: #B71C1C; }"
-        "QPushButton:disabled { background-color: #BDBDBD; }");
+        "QPushButton:disabled { background-color: #2A3A46; color: #6B7B87; }");
     m_btnViewException->setToolTip(QString::fromUtf8(
         "查看本波次待处理/异常明细（exception_record 留痕）：\n"
         "  · 处理 = 仍在异常口、尚未处理完的件数（去重 EPC）；该 EPC 之后成功落格即视为已处理，数量立即减少\n"
@@ -1195,7 +1226,7 @@ void MainWindow::setupUI()
         overplanLayout->setSpacing(6);
 
         m_lblOverplanWarn = new QLabel("0");
-        m_lblOverplanWarn->setStyleSheet("font-size: 13px; font-weight: bold; color: #555;");
+        m_lblOverplanWarn->setStyleSheet("font-size: 13px; font-weight: bold; color: #9FB0BC;");
         m_lblOverplanWarn->setToolTip(QString::fromUtf8(
             "超计划预警条目数（按 格口+SKU 统计：实际落格件数 > 计划件数的条目）\n"
             "成因：同一 SKU 有两件同时在线上、或人工多放，导致箱内实落超过计划\n"
@@ -1208,7 +1239,7 @@ void MainWindow::setupUI()
             "QPushButton { font-size: 12px; padding: 2px 10px; "
             "background-color: #FFE0B2; color: #E65100; border: 1px solid #FFB74D; border-radius: 3px; } "
             "QPushButton:hover { background-color: #FFCC80; } "
-            "QPushButton:disabled { background-color: #EEEEEE; color: #AAAAAA; border-color: #DDDDDD; }");
+            "QPushButton:disabled { background-color: #2A3A46; color: #6B7B87; border-color: #3A4C5A; }");
         m_btnOverplanView->setEnabled(false);
         connect(m_btnOverplanView, &QPushButton::clicked, this, &MainWindow::showOverplanWarningDialog);
 
@@ -1228,7 +1259,7 @@ void MainWindow::setupUI()
         "QPushButton { font-size: 14px; font-weight: bold; padding: 6px 20px; "
         "background-color: #FF9800; color: white; border: none; border-radius: 4px; } "
         "QPushButton:hover { background-color: #F57C00; } "
-        "QPushButton:disabled { background-color: #BDBDBD; }");
+        "QPushButton:disabled { background-color: #2A3A46; color: #6B7B87; }");
     m_btnStartSorting->setEnabled(false);  // 初始灰色禁用，到达 BOUND 状态时激活
     waveLayout->addWidget(m_btnStartSorting, row++, 0, 1, 4);   // ★ 2026-09-08 按钮跨整行（4列）
 
@@ -1255,7 +1286,7 @@ void MainWindow::setupUI()
     btnClearBinds->setToolTip(QString::fromUtf8("清空全部格口当前容器绑定（恢复初始状态）；历史记录归档保留在数据库，可追溯/可沿用"));
     // ★ 2026-09-11 图例补充橙色态（已解锁·待重绑）
     QLabel* bindHint = new QLabel(QString::fromUtf8("绿色=已绑定  灰色=未绑定  黄色=满箱锁格  橙色=已解锁·待重绑"));
-    bindHint->setStyleSheet("font-size: 12px; color: #888;");
+    bindHint->setStyleSheet("font-size: 12px; color: #A8B7C2;");
     bindBtnRow->addWidget(btnRefreshBind);
     bindBtnRow->addWidget(btnClearBinds);
     bindBtnRow->addWidget(bindHint);
@@ -1283,7 +1314,7 @@ void MainWindow::setupUI()
     QScrollArea* scrollBinding = new QScrollArea();
     scrollBinding->setWidgetResizable(true);
     scrollBinding->setMinimumHeight(150);
-    scrollBinding->setStyleSheet("QScrollArea { border: 1px solid #ddd; }");
+    scrollBinding->setStyleSheet("QScrollArea { border: 1px solid #C83030; }");
 
     m_bindingWidget = new QWidget();
     m_bindingGrid = new QGridLayout(m_bindingWidget);
@@ -1300,7 +1331,7 @@ void MainWindow::setupUI()
         // 每个格口一个 Frame 包裹
         QFrame* frame = new QFrame();
         frame->setFrameShape(QFrame::Box);
-        frame->setStyleSheet("QFrame { background: #f5f5f5; border: 1px solid #ddd; border-radius: 2px; }");
+        frame->setStyleSheet("QFrame { background: #16222B; border: 1px solid #C83030; border-radius: 2px; }");
         frame->setMinimumHeight(36);
 
         QHBoxLayout* fLayout = new QHBoxLayout(frame);
@@ -1313,7 +1344,7 @@ void MainWindow::setupUI()
         QLabel* lblGrid = new QLabel(displayName);
         lblGrid->setFixedWidth(80);
         lblGrid->setAlignment(Qt::AlignCenter);
-        lblGrid->setStyleSheet("font-size: 11px; font-weight: bold; color: #333; border: none; background: transparent;");
+        lblGrid->setStyleSheet("font-size: 11px; font-weight: bold; color: #E6EDF3; border: none; background: transparent;");
 
         // 绑定状态指示器标签
         QLabel* lblStatus = new QLabel("--");
@@ -1326,7 +1357,7 @@ void MainWindow::setupUI()
             QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'))));
 
         QLabel* lblBox = new QLabel("--");
-        lblBox->setStyleSheet("font-size: 11px; color: #888; border: none; background: transparent;");
+        lblBox->setStyleSheet("font-size: 11px; color: #A8B7C2; border: none; background: transparent;");
         lblBox->setMinimumWidth(90);
 
         fLayout->addWidget(lblGrid);
@@ -1398,7 +1429,7 @@ void MainWindow::setupUI()
     m_tblWaveRecords->setStyleSheet(
         "QTableWidget { font-size: 13px; }"
         "QTableWidget::item { padding: 3px 6px; }"
-        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 6px; font-size: 13px; }");
+        "QHeaderView::section { background-color: #1F2F3A; color: #E6EDF3; font-weight: bold; padding: 6px; font-size: 13px; }");
     m_tblWaveRecords->setToolTip(QString::fromUtf8(
         "口径说明：\n"
         "  已分拣(件次) = PLC 落格反馈累计件次（含重复反馈与重投）\n"
@@ -1509,7 +1540,7 @@ void MainWindow::setupUI()
     // ── 统计标签 ──
     QHBoxLayout* statsRow = new QHBoxLayout();
     m_lblRecordCount = new QLabel(QCoreApplication::translate("MainWindow", "共 0 条记录"));
-    m_lblRecordCount->setStyleSheet("font-size: 14px; color: #555; font-weight: bold;");
+    m_lblRecordCount->setStyleSheet("font-size: 14px; color: #9FB0BC; font-weight: bold;");
     m_lblDbStats = new QLabel("");
     m_lblDbStats->setStyleSheet("font-size: 14px; color: #2196F3;");
     statsRow->addWidget(m_lblRecordCount);
@@ -1545,7 +1576,7 @@ void MainWindow::setupUI()
     m_tblRecords->setStyleSheet(
         "QTableWidget { font-size: 14px; }"
         "QTableWidget::item { padding: 5px 8px; }"
-        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 7px; font-size: 14px; }");
+        "QHeaderView::section { background-color: #1F2F3A; color: #E6EDF3; font-weight: bold; padding: 7px; font-size: 14px; }");
     m_tblRecords->setToolTip(QString::fromUtf8("双击任意一行可查看该 EPC 的全信息（分拣历史/异常历史/计划明细）"));
 
     queryLayout->addLayout(queryCondRow);
@@ -1638,7 +1669,7 @@ void MainWindow::setupUI()
         tbl->setStyleSheet(
             "QTableWidget { font-size: 12px; }"
             "QTableWidget::item { padding: 1px 4px; }"
-            "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 3px; }");
+            "QHeaderView::section { background-color: #1F2F3A; color: #E6EDF3; font-weight: bold; padding: 3px; }");
     };
 
     // ── 落格反馈数据（实时）表：序号｜时间｜EPC｜对应SKU｜格口号｜容器号｜小车号｜状态 ──
@@ -1720,13 +1751,13 @@ void MainWindow::setupUI()
     m_tabMain->setDocumentMode(true);
     // 标签栏控件自身样式（背景/边框由自绘接管，这里主要给 pane 与内边距）
     m_tabMain->setStyleSheet(
-        "QTabWidget::pane { border: 1px solid #B0BEC5; background: #FFFFFF; }"
-        "QTabBar { background: #ECEFF1; }"
-        "QTabBar::tab { background: #ECEFF1; color: #455A64;"
-        "               border: 1px solid #CFD8DC; border-left: none;"
+        "QTabWidget::pane { border: 1px solid #C83030; background: #18252E; }"
+        "QTabBar { background: #16222B; }"
+        "QTabBar::tab { background: #16222B; color: #A8B7C2;"
+        "               border: 1px solid #C83030; border-left: none;"
         "               margin: 2px 0px; padding: 10px 6px; min-width: 26px; }"
-        "QTabBar::tab:selected { background: #1565C0; color: #FFFFFF;"
-        "                        border: 1px solid #0D47A1; }");
+        "QTabBar::tab:selected { background: #C83030; color: #FFFFFF;"
+        "                        border: 1px solid #C83030; }");
     m_tabMain->addTab(grpBinding,   QString::fromUtf8("容器绑定状态"));
     m_tabMain->addTab(grpQuery,     QString::fromUtf8("分拣记录查询"));
     m_tabMain->addTab(grpUnfinished,QString::fromUtf8("波次数据历史记录"));
@@ -1807,8 +1838,8 @@ void MainWindow::livePanelInsertPendingRow(const QString& epc, const QStringList
         it->setTextAlignment((c == 0 || c == 1) ? int(Qt::AlignHCenter | Qt::AlignVCenter)
                                                 : int(Qt::AlignLeft | Qt::AlignVCenter));
         if ((c == 3 || c == 4 || c == 5) && cells.at(c) == QStringLiteral("--"))
-            it->setForeground(QColor("#9E9E9E"));   // SKU/格口/容器尚未知 → 置灰
-        if (c == 7) it->setForeground(QColor("#1976D2"));   // 待落格：蓝色
+            it->setForeground(QColor("#8FA0AD"));   // SKU/格口/容器尚未知 → 置灰
+        if (c == 7) it->setForeground(QColor("#4FC3F7"));   // 待落格：蓝色
         m_tblLive->setItem(0, c, it);
     }
 
@@ -1865,10 +1896,10 @@ void MainWindow::livePanelApplyFeedback(const QString& epc, const QStringList& c
         it->setTextAlignment((c == 0 || c == 1) ? int(Qt::AlignHCenter | Qt::AlignVCenter)
                                                 : int(Qt::AlignLeft | Qt::AlignVCenter));
         if ((c == 3 || c == 5) && cells.at(c) == QStringLiteral("--"))
-            it->setForeground(QColor("#9E9E9E"));
+            it->setForeground(QColor("#8FA0AD"));
         if (c == 7)
         {
-            it->setForeground(bad ? QColor("#D32F2F") : QColor("#2E7D32"));
+            it->setForeground(bad ? QColor("#FF6B6B") : QColor("#66BB6A"));
             QFont f = it->font();
             f.setBold(true);
             it->setFont(f);
@@ -1905,13 +1936,13 @@ void MainWindow::refreshLivePanelPendingRows()
         if (!inFlight && waitedMs > timeoutMs)
         {
             st->setText(QString::fromUtf8("未落格（无反馈）"));
-            st->setForeground(QColor("#9E9E9E"));
+            st->setForeground(QColor("#8FA0AD"));
             done.append(epc);
         }
         else if (waitedMs > 2 * timeoutMs)
         {
             st->setText(QString::fromUtf8("待落格（超时未反馈）"));
-            st->setForeground(QColor("#EF6C00"));
+            st->setForeground(QColor("#FFA726"));
             done.append(epc);
         }
     }
@@ -2049,7 +2080,7 @@ void MainWindow::openConfigEditor()
         "编辑窗口打开期间请勿同时执行会写配置的操作（如绑定变更），以免被覆盖。")
         .arg(cfgPath));
     tip->setWordWrap(true);
-    tip->setStyleSheet("font-size: 12px; color: #555;");
+    tip->setStyleSheet("font-size: 12px; color: #9FB0BC;");
 
     QPlainTextEdit* ed = new QPlainTextEdit();
     ed->setPlainText(xmlText);
@@ -2865,7 +2896,7 @@ void MainWindow::updateRfidStatus()
     {
         m_lblRfidStatus->setText(QString("RFID: 未连接(自动重连中)"));
         m_lblRfidStatus->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
-        m_lblRfidIp->setStyleSheet("font-size: 13px; color: #888;");
+        m_lblRfidIp->setStyleSheet("font-size: 13px; color: #A8B7C2;");
         if (m_rfidStatusLog)
             appendLog(QString("[RFID] 推送连接断开 %1（自动重连中，无需操作）").arg(m_lblRfidIp->text()), true);
     }
@@ -3058,7 +3089,7 @@ void MainWindow::updatePlcPanel()
     if (s.tcpSendErrCount > 0)
         m_lblTcpSendErr->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
     else
-        m_lblTcpSendErr->setStyleSheet("font-size: 13px; color: #888;");
+        m_lblTcpSendErr->setStyleSheet("font-size: 13px; color: #A8B7C2;");
 
     m_lblTcpRecv->setText(QString("TCP接收: %1").arg(s.recvCount));
     m_lblTcpRecv->setToolTip(QString("反馈计数: %1").arg(m_plcFeedbackCount.loadAcquire()));
@@ -3098,7 +3129,7 @@ void MainWindow::updatePlcPanel()
             m_lblS7Status->setText(QString("● S7: 未连接"));
             m_lblS7Status->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
             m_lblS7Ip->setText(s.s7Ip.isEmpty() ? "" : s.s7Ip);
-            m_lblS7Ip->setStyleSheet("font-size: 13px; color: #888;");
+            m_lblS7Ip->setStyleSheet("font-size: 13px; color: #A8B7C2;");
         }
     }
 
@@ -3108,13 +3139,13 @@ void MainWindow::updatePlcPanel()
     // if (s.s7SendErrCount > 0)
     //     m_lblS7SendErr->setStyleSheet("font-size: 13px; color: #f44336; font-weight: bold;");
     // else
-    //     m_lblS7SendErr->setStyleSheet("font-size: 13px; color: #888;");
+    //     m_lblS7SendErr->setStyleSheet("font-size: 13px; color: #A8B7C2;");
 
     // 锁格状态
     if (s.lockedGridCount > 0)
         m_lblS7LockGrids->setStyleSheet("font-size: 13px; color: #FF5722; font-weight: bold;");
     else
-        m_lblS7LockGrids->setStyleSheet("font-size: 13px; color: #888;");
+        m_lblS7LockGrids->setStyleSheet("font-size: 13px; color: #A8B7C2;");
     m_lblS7LockGrids->setText(QString("锁格: %1").arg(s.lockedGridCount));
 
     // ══════════════════════════════════════════════════════════
@@ -3123,7 +3154,7 @@ void MainWindow::updatePlcPanel()
     if (!s.lastBarcode.isEmpty())
     {
         m_lblLastSendCode->setText(QString("最近发送: [%1]").arg(s.lastBarcode));
-        m_lblLastSendCode->setStyleSheet("font-size: 12px; color: #333; font-weight: bold;");
+        m_lblLastSendCode->setStyleSheet("font-size: 12px; color: #E6EDF3; font-weight: bold;");
         m_lblLastSendGrid->setText(QString("格口: %1 小车: %2").arg(s.lastGrid).arg(s.lastCar));
         m_lblLastSendGrid->setStyleSheet("font-size: 12px; color: #2196F3;");
         if (s.lastSendTimeMs > 0)
@@ -3132,13 +3163,13 @@ void MainWindow::updatePlcPanel()
             qint64 diff = QDateTime::currentMSecsSinceEpoch() - s.lastSendTimeMs;
             m_lblLastSendTime->setText(QString("发送: %1 (%2秒前)")
                 .arg(dt.toString("HH:mm:ss")).arg(diff / 1000));
-            m_lblLastSendTime->setStyleSheet("font-size: 12px; color: #888;");
+            m_lblLastSendTime->setStyleSheet("font-size: 12px; color: #A8B7C2;");
         }
     }
     else
     {
         m_lblLastSendCode->setText(QCoreApplication::translate("MainWindow", "最近发送: --"));
-        m_lblLastSendCode->setStyleSheet("font-size: 12px; color: #555;");
+        m_lblLastSendCode->setStyleSheet("font-size: 12px; color: #9FB0BC;");
         m_lblLastSendGrid->setText("");
         m_lblLastSendTime->setText("");
     }
@@ -3146,14 +3177,14 @@ void MainWindow::updatePlcPanel()
     if (!s.lastRecvCode.isEmpty())
     {
         m_lblLastRecvCode->setText(QString("最近接收: [%1]").arg(s.lastRecvCode));
-        m_lblLastRecvCode->setStyleSheet("font-size: 12px; color: #333; font-weight: bold;");
+        m_lblLastRecvCode->setStyleSheet("font-size: 12px; color: #E6EDF3; font-weight: bold;");
         m_lblLastRecvGrid->setText(QString("格口: %1 小车: %2").arg(s.lastRecvGrid).arg(s.lastRecvCar));
         m_lblLastRecvGrid->setStyleSheet("font-size: 12px; color: #2196F3;");
     }
     else
     {
         m_lblLastRecvCode->setText(QCoreApplication::translate("MainWindow", "最近接收: --"));
-        m_lblLastRecvCode->setStyleSheet("font-size: 12px; color: #555;");
+        m_lblLastRecvCode->setStyleSheet("font-size: 12px; color: #9FB0BC;");
         m_lblLastRecvGrid->setText("");
     }
     if (s.lastRecvTimeMs > 0)
@@ -3162,7 +3193,7 @@ void MainWindow::updatePlcPanel()
         qint64 diff = QDateTime::currentMSecsSinceEpoch() - s.lastRecvTimeMs;
         m_lblLastRecvTime->setText(QString("接收: %1 (%2秒前)")
             .arg(dt.toString("HH:mm:ss")).arg(diff / 1000));
-        m_lblLastRecvTime->setStyleSheet("font-size: 12px; color: #888;");
+        m_lblLastRecvTime->setStyleSheet("font-size: 12px; color: #A8B7C2;");
     }
     else
     {
@@ -3282,7 +3313,7 @@ void MainWindow::updateBindingPanel()
                 "font-size: 10px; color: white; border-radius: 6px; background-color: #FFC107;");
             lblStatus->setToolTip(QString("格口%1 物理锁格中（黄色）：PLC 已锁定该格口（S7 锁格位置位）").arg(gridKey));
             lblBox->setText(boxCode.isEmpty() ? QString::fromUtf8("锁格") : boxCode);
-            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
+            lblBox->setStyleSheet("font-size: 11px; color: #E6EDF3; font-weight: bold; border: none; background: transparent;");
         }
         else if (bDisabled)
         {
@@ -3294,7 +3325,7 @@ void MainWindow::updateBindingPanel()
             lblStatus->setToolTip(QString("格口%1 已解锁·待重绑（橙色）：现场已物理解锁；"
                                           "满箱后旧容器已归档，等待 WMS 重新下发容器绑定(H6)后恢复分配").arg(gridKey));
             lblBox->setText(boxCode.isEmpty() ? QString::fromUtf8("待重绑") : boxCode);
-            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
+            lblBox->setStyleSheet("font-size: 11px; color: #E6EDF3; font-weight: bold; border: none; background: transparent;");
         }
         else if (!boxCode.isEmpty())
         {
@@ -3303,7 +3334,7 @@ void MainWindow::updateBindingPanel()
                 "font-size: 10px; color: white; border-radius: 6px; background-color: #4CAF50;");
             lblStatus->setToolTip(QString("格口%1 ←→ %2 (已绑定)").arg(gridKey).arg(boxCode));
             lblBox->setText(boxCode);
-            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
+            lblBox->setStyleSheet("font-size: 11px; color: #E6EDF3; font-weight: bold; border: none; background: transparent;");
         }
         else
         {
@@ -3473,7 +3504,7 @@ void MainWindow::onRefreshWaveRecords()
         {
             QTableWidgetItem* it = setCell(4, QString::number(excCnt));
             it->setTextAlignment(Qt::AlignCenter);
-            it->setForeground(excCnt > 0 ? QColor("#D32F2F") : QColor("#333333"));
+            it->setForeground(excCnt > 0 ? QColor("#FF6B6B") : QColor("#E6EDF3"));
             it->setToolTip(QString::fromUtf8(
                 "处理（件）= 仍在异常口、尚未处理完的件数（去重 EPC）\n"
                 "该 EPC 之后成功落格即视为已处理 → 立即减少；不计入「已分拣」\n"
@@ -3712,7 +3743,7 @@ void MainWindow::onViewWaveQueue()
         "列表首行「接收新任务」= 不处理排队波次，直接开始新任务（切出当前波次并等待 WMS 下发新波次）。\n"
         "排队波次的执行：当前波次结束后自动开始；点「开始接收任务」时自动执行队首；"
         "也可在「波次数据记录」中用「切换选中波次」立即接管。"), &dlg);
-    tip->setStyleSheet("font-size: 12px; color: #555;");
+    tip->setStyleSheet("font-size: 12px; color: #9FB0BC;");
     tip->setWordWrap(true);
     lay->addWidget(tip);
 
@@ -3730,7 +3761,7 @@ void MainWindow::onViewWaveQueue()
     tbl->setMinimumHeight(250);
     tbl->setStyleSheet(
         "QTableWidget { font-size: 12px; }"
-        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 4px; }");
+        "QHeaderView::section { background-color: #1F2F3A; color: #E6EDF3; font-weight: bold; padding: 4px; }");
     lay->addWidget(tbl);
 
     // 当前波次是否处于作业态（作业中不允许直接开始新任务——按现场要求先点「结束任务」）
@@ -3801,7 +3832,7 @@ void MainWindow::onViewWaveQueue()
             tbl->insertRow(r);
             QTableWidgetItem* empty = new QTableWidgetItem(
                 QString::fromUtf8("（当前没有待执行波次——若 WMS 下发新波次而当前波次仍在执行，会自动排队显示在这里）"));
-            empty->setForeground(QColor("#888"));
+            empty->setForeground(QColor("#A8B7C2"));
             tbl->setItem(r, 0, empty);
             tbl->setSpan(r, 0, 1, 4);
         }
@@ -3995,8 +4026,8 @@ void MainWindow::appendLog(const QString& msg, bool isError)
 {
     // ★ 缓冲到队列，由定时器批量刷新到 UI，避免高频场景下 QTextEdit::append 卡死界面
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
-    QString color = isError ? "#f44336" : "#212121";
-    QString text = QString("<span style='color:#888;'>[%1]</span> "
+    QString color = isError ? "#f44336" : "#D6DEE4";
+    QString text = QString("<span style='color:#9FB0BC;'>[%1]</span> "
                            "<span style='color:%2;'>%3</span>")
                        .arg(timestamp).arg(color).arg(msg.toHtmlEscaped());
 
@@ -4189,7 +4220,7 @@ void MainWindow::showOverplanWarningDialog()
         "超计划成因：同一 SKU 有两件同时在线上（都未落格），或人工多放了一件。\n"
         "处置：多余件不进入上传报文（H7 已按计划件数裁剪），但实物可能已在箱内 → 请按下列清单现场取出。"));
     tip->setWordWrap(true);
-    tip->setStyleSheet("font-size: 13px; color: #555;");
+    tip->setStyleSheet("font-size: 13px; color: #9FB0BC;");
     lay->addWidget(tip);
 
     // ── 明细表 ──
@@ -4227,7 +4258,7 @@ void MainWindow::showOverplanWarningDialog()
             box = m_pServer->currentBoxOfGrid(w.gridKey);
         }
 
-        auto setCell = [&](int col, const QString& txt, const QColor& c = QColor("#333333")) {
+        auto setCell = [&](int col, const QString& txt, const QColor& c = QColor("#E6EDF3")) {
             QTableWidgetItem* it = new QTableWidgetItem(txt);
             it->setTextAlignment(Qt::AlignCenter);
             it->setForeground(c);
@@ -4238,7 +4269,7 @@ void MainWindow::showOverplanWarningDialog()
         setCell(2, w.sku);
         setCell(3, QString::number(w.planQty));
         setCell(4, QString::number(w.landedQty));
-        setCell(5, QString::number(w.overQty), QColor("#D32F2F"));
+        setCell(5, QString::number(w.overQty), QColor("#FF6B6B"));
 
         // 多余件 EPC 清单放进 SKU 单元格的 tooltip（列宽有限，不占表格空间）
         if (!w.epcs.isEmpty() && tbl->item(i, 2))
@@ -4490,20 +4521,20 @@ void MainWindow::renderContainerQuery()
 
         auto* statusItem = new QTableWidgetItem(QString::fromUtf8("已分拣"));
         statusItem->setTextAlignment(Qt::AlignCenter);
-        statusItem->setForeground(b.planOutside ? QColor("#FF8C00") : QColor("#228B22"));
+        statusItem->setForeground(b.planOutside ? QColor("#FF8C00") : QColor("#66BB6A"));
         m_tblRecords->setItem(i, 11, statusItem);
 
         auto* noteItem = new QTableWidgetItem(b.note);
         noteItem->setTextAlignment(Qt::AlignCenter);
-        if (!b.note.isEmpty()) noteItem->setForeground(QColor("#D32F2F"));
+        if (!b.note.isEmpty()) noteItem->setForeground(QColor("#FF6B6B"));
         // ★ 超出计划的件：整行标红加粗，现场一眼就能挑出"多出来的那一件"
         if (b.skuOverflowRow || b.drift)
         {
             QFont bold = noteItem->font();
             bold.setBold(true);
             noteItem->setFont(bold);
-            m_tblRecords->item(i, 2)->setForeground(QColor("#D32F2F"));   // EPC 列
-            m_tblRecords->item(i, 3)->setForeground(QColor("#D32F2F"));   // SKU 列
+            m_tblRecords->item(i, 2)->setForeground(QColor("#FF6B6B"));   // EPC 列
+            m_tblRecords->item(i, 3)->setForeground(QColor("#FF6B6B"));   // SKU 列
         }
         m_tblRecords->setItem(i, 12, noteItem);
 
@@ -4567,7 +4598,7 @@ void MainWindow::renderContainerQuery()
     m_lblRecordCount->setStyleSheet(
         (driftCount > 0 || overflowRowCount > 0 || outsideCount > 0 || uniqWaves.size() > 1)
             ? "font-size: 13px; color: #D32F2F; font-weight: bold;"
-            : "font-size: 13px; color: #555; font-weight: bold;");
+            : "font-size: 13px; color: #9FB0BC; font-weight: bold;");
 
     // ── ⑦ 运行日志留痕 ──
     appendLog(QString::fromUtf8("[查询] 容器 [%1]：EPC 去重 %2 件（明细 %3 条）、SKU %4 个、波次 %5 个")
@@ -4639,7 +4670,7 @@ void MainWindow::onQueryRecords()
                 m_tblRecords->setItem(i, 4, new QTableWidgetItem(g.boxcode));
                 m_tblRecords->setItem(i, 5, new QTableWidgetItem(g.lastSortTime));
             }
-            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
+            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #9FB0BC;");
             m_lblRecordCount->setText(QString::fromUtf8("全格口汇总：%1 个格口，共 %2 件")
                 .arg(sums.size()).arg(totalItems));
             appendLog(QString::fromUtf8("[查询] 按格口汇总：%1 个格口，共 %2 件").arg(sums.size()).arg(totalItems));
@@ -4689,10 +4720,10 @@ void MainWindow::onQueryRecords()
                 m_tblRecords->setItem(i, 8, new QTableWidgetItem(rec.sortTime));
                 auto* statusItem = new QTableWidgetItem(QString::fromUtf8("已分拣"));
                 statusItem->setTextAlignment(Qt::AlignCenter);
-                statusItem->setForeground(QColor("#228B22"));
+                statusItem->setForeground(QColor("#66BB6A"));
                 m_tblRecords->setItem(i, 9, statusItem);
             }
-            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
+            m_lblRecordCount->setStyleSheet("font-size: 12px; color: #9FB0BC;");
             m_lblRecordCount->setText(QString::fromUtf8("格口 [%1]（WMS编码 %2）分拣数量：%3 件")
                 .arg(gridKey).arg(wmsCode).arg(recs.size()));
             // ★ 2026-09-11：日志不体现原始输入写法（"7"/"007"/"22007" 完全一致，UI 无差异）
@@ -4886,7 +4917,7 @@ void MainWindow::onQueryRecords()
             {
                 auto* epcItem = new QTableWidgetItem(QString::fromUtf8("—"));
                 epcItem->setTextAlignment(Qt::AlignCenter);
-                epcItem->setForeground(QColor("#999999"));
+                epcItem->setForeground(QColor("#9AA9B4"));
                 m_tblRecords->setItem(i, 3, epcItem);
                 m_tblRecords->setItem(i, 4, new QTableWidgetItem(QString()));
             }
@@ -4930,11 +4961,11 @@ void MainWindow::onQueryRecords()
             auto* statusItem = new QTableWidgetItem(r.status);
             statusItem->setTextAlignment(Qt::AlignCenter);
             if (r.pending)
-                statusItem->setForeground(QColor("#999999"));
+                statusItem->setForeground(QColor("#9AA9B4"));
             else if (r.mismatch)
                 statusItem->setForeground(QColor("#FF8C00"));
             else
-                statusItem->setForeground(QColor("#228B22"));
+                statusItem->setForeground(QColor("#66BB6A"));
             m_tblRecords->setItem(i, 12, statusItem);
         }
         // ★ 2026-09-13 字体放大后：不再逐行 resizeRowsToContents（1000 行会明显卡顿），
@@ -4959,7 +4990,7 @@ void MainWindow::onQueryRecords()
         // 同品多格口：高亮显示（沿用原口径）
         m_lblRecordCount->setStyleSheet(planGridSet.size() > 1
             ? "font-size: 14px; color: #FF8C00; font-weight: bold;"
-            : "font-size: 14px; color: #555; font-weight: bold;");
+            : "font-size: 14px; color: #9FB0BC; font-weight: bold;");
 
         // 更新数据库统计
         SortingStatistics stats = db->statistics();
@@ -4992,7 +5023,7 @@ void MainWindow::onQueryRecords()
             QString::fromUtf8("分拣时间"),
             QString::fromUtf8("状态")
         });
-        m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
+        m_lblRecordCount->setStyleSheet("font-size: 12px; color: #9FB0BC;");
 
     QString barcode = m_editQueryBarcode->text().trimmed();
     QDateTime from(m_editQueryDateFrom->date(), QTime(0, 0, 0));
@@ -5059,11 +5090,11 @@ void MainWindow::onQueryRecords()
         if (excReasons.contains(rec.barcode))
         {
             statusItem->setText(QString::fromUtf8("异常: %1").arg(excReasons.value(rec.barcode)));
-            statusItem->setForeground(QColor("#D32F2F"));   // 异常红色
+            statusItem->setForeground(QColor("#FF6B6B"));   // 异常红色
             statusItem->setToolTip(excReasons.value(rec.barcode));
         }
         else if (rec.status == QString::fromUtf8("已分拣")) {
-            statusItem->setForeground(QColor("#228B22"));  // 森林绿
+            statusItem->setForeground(QColor("#66BB6A"));  // 森林绿
         } else if (rec.status == QString::fromUtf8("待分拣")) {
             statusItem->setForeground(QColor("#FF8C00"));  // 暗橙色
         }

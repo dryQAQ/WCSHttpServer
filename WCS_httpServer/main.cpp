@@ -27,6 +27,9 @@
 #include <QDir>
 #include <QMessageBox>   // ★ 2026-09-06 单实例提示
 #include <QtGlobal>      // ★ 2026-09-07 Qt 消息钩子（QtMsgType/QMessageLogContext）
+#include <QPalette>      // ★ 2026-09-13 UI主题（深色背景）
+#include <QColor>
+#include <QStyleFactory>
 #include <atomic>
 #include <string>
 // ★ 必须在 windows.h 之前包含 winsock2.h：
@@ -157,6 +160,74 @@ static void CrashSignalHandler(int sig)
 // ──── 日志系统说明（宏定义已移至 LogService.h 统一管理）────
 // ============================================================================
 
+// ============================================================================
+// ★ 2026-09-13 UI主题：深炭蓝灰背景 #18252E + 红色边框 #C83030
+//   · Fusion 样式 + 深色 QPalette：保证菜单/滚动条/输入框/禁用态等原生控件一致；
+//   · 全局 QSS 只覆盖"底色 + 边框"两类关键属性，各面板自身的强调色（按钮/状态灯）保留；
+//   · 面板内的表头/表格/输入框边框统一为红色 #C83030。
+// ============================================================================
+static void ApplyDarkTheme(QApplication& app)
+{
+    const QColor bg    ("#18252E");   // 深炭蓝灰（窗口背景）
+    const QColor base  ("#101A22");   // 输入框/表格底色（比背景更深一档）
+    const QColor alt   ("#16222B");   // 表格隔行
+    const QColor header("#1F2F3A");   // 表头/普通按钮
+    const QColor fg    ("#E6EDF3");   // 主文字
+    const QColor fgDim ("#A8B7C2");   // 次要文字
+    const QColor border("#C83030");   // 边框（红）
+    const QColor disFg ("#6B7B87");   // 禁用文字
+
+    app.setStyle(QStyleFactory::create("Fusion"));
+
+    QPalette p;
+    p.setColor(QPalette::Window,          bg);
+    p.setColor(QPalette::WindowText,      fg);
+    p.setColor(QPalette::Base,            base);
+    p.setColor(QPalette::AlternateBase,   alt);
+    p.setColor(QPalette::Text,            fg);
+    p.setColor(QPalette::Button,          header);
+    p.setColor(QPalette::ButtonText,      fg);
+    p.setColor(QPalette::BrightText,      QColor("#FF6B6B"));
+    p.setColor(QPalette::ToolTipBase,     bg);
+    p.setColor(QPalette::ToolTipText,     fg);
+    p.setColor(QPalette::Highlight,       border);
+    p.setColor(QPalette::HighlightedText, QColor("#FFFFFF"));
+    p.setColor(QPalette::Link,            QColor("#4FC3F7"));
+    p.setColor(QPalette::Disabled, QPalette::Text,       disFg);
+    p.setColor(QPalette::Disabled, QPalette::WindowText, disFg);
+    p.setColor(QPalette::Disabled, QPalette::ButtonText, disFg);
+    app.setPalette(p);
+
+    app.setStyleSheet(QString(
+        "QMainWindow, QDialog, QMessageBox { background-color: %1; }"
+        "QGroupBox { border: 1px solid %2; border-radius: 4px; margin-top: 12px; padding-top: 6px; }"
+        "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: %3; }"
+        "QTabWidget::pane { border: 1px solid %2; background: %1; }"
+        "QTabBar::tab { background: %4; color: %5; border: 1px solid %2; padding: 8px 8px; margin: 2px 0; }"
+        "QTabBar::tab:selected { background: %2; color: #FFFFFF; }"
+        "QSplitter::handle { background-color: %2; }"
+        "QSplitter::handle:hover { background-color: #E04A4A; }"
+        "QTableWidget, QTableView, QTreeView, QListWidget, QListView { background-color: %6; alternate-background-color: %7;"
+        " gridline-color: #2C3E4C; border: 1px solid %2; }"
+        "QHeaderView::section { background-color: %4; color: %3; border: 1px solid %2; padding: 4px; }"
+        "QLineEdit, QComboBox, QSpinBox, QDateEdit, QPlainTextEdit, QTextEdit { background-color: %6; color: %3;"
+        " border: 1px solid %2; border-radius: 3px; padding: 2px 4px; }"
+        "QComboBox QAbstractItemView { background-color: %6; color: %3; selection-background-color: %2; selection-color: #FFFFFF; }"
+        "QPushButton { background-color: %4; color: %3; border: 1px solid %2; border-radius: 4px; padding: 4px 10px; }"
+        "QPushButton:hover { background-color: #27394A; }"
+        "QPushButton:disabled { color: %8; border-color: #5A2A2A; }"
+        "QScrollArea { border: 1px solid %2; background-color: %1; }"
+        "QScrollBar:vertical, QScrollBar:horizontal { background: %6; border: none; }"
+        "QScrollBar::handle { background: #2C3E4C; border-radius: 3px; min-height: 24px; min-width: 24px; }"
+        "QScrollBar::handle:hover { background: %2; }"
+        "QCheckBox, QRadioButton { color: %3; }"
+        "QToolTip { background-color: %1; color: %3; border: 1px solid %2; }"
+        "QMenu { background-color: %4; color: %3; border: 1px solid %2; }"
+        "QMenu::item:selected { background-color: %2; color: #FFFFFF; }"
+    ).arg(bg.name()).arg(border.name()).arg(fg.name()).arg(header.name())
+     .arg(fgDim.name()).arg(base.name()).arg(alt.name()).arg(disFg.name()));
+}
+
 int main(int argc, char* argv[])
 {
     // ★ 2026-09-04 注册崩溃捕获：
@@ -171,6 +242,10 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     app.setApplicationName("WMS_HttpServer");
     app.setApplicationVersion("1.0.0");
+
+    // ★ 2026-09-13 UI主题：深炭蓝灰背景 #18252E + 红色边框 #C83030
+    //   在创建任何窗口/弹窗之前应用（含单实例提示框、主窗口、各对话弹窗）
+    ApplyDarkTheme(app);
 
     // ★ 2026-09-07 Qt 消息钩子：qFatal 等文本进 run.log（崩溃前最后一条=abort 根因）
     qInstallMessageHandler(QtMsgHook);
