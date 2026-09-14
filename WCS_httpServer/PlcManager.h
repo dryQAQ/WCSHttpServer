@@ -151,8 +151,9 @@ typedef std::function<QString(const QString& code)> PlcCarNumCallback;
 struct PlcPlanAllocInfo
 {
     bool               valid = false;  // 是否查到该 SKU 的计划（false → 选格退回旧逻辑）
-    QMap<QString, int> planQtyPerGrid; // 格口号(内部数字串) → 计划件数
-    QMap<QString, int> landedNum;      // 格口号(内部数字串) → 已落格件数（PLC 反馈成功累计）
+    QMap<QString, int> planQtyPerGrid; // 格口号(内部3位key) → 计划件数
+    QMap<QString, QString> gridTypePerGrid; // 格口号(内部3位key) → 类型 "0"=分类/"1"=异常/"2"=发货
+    QMap<QString, int> landedNum;      // 格口号(内部3位key) → 已落格件数（PLC 反馈成功累计）
     int                excGrid = -1;   // 超计划（各计划格口均已满额）时的兜底去往格口，-1=未配置
 };
 // 入参 = EPC编码（=SKU编码），返回该 SKU 的计划分配信息

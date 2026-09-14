@@ -4207,8 +4207,9 @@ void MainWindow::showOverplanWarningDialog()
     // ── 顶部说明 ──
     QLabel* tip = new QLabel(QString::fromUtf8(
         "口径：按「格口 + SKU」比较 本格口计划件数 与 PLC 确认真正落入该格口的去重件数（跨容器累计）。\n"
-        "★ 同品多格口：计划按格口分列（如 034 计划 1 件 + 048 计划 3 件），故「计划件数」列是该格口的计划，\n"
-        "   「SKU总计划」列是该 SKU 各格口之和，仅作参考。\n"
+        "★ 每个格口各有自己的产品计划数（正常分拣/分类口 与 发货口 分别一份计划），故：\n"
+        "   「本格口计划」= 该 SKU 在这个格口的计划件数（分配与封顶都以它为准）；\n"
+        "   「SKU总计划」= 该 SKU 各格口计划之和，仅作参考；「类型」用于区分分类口/发货口/异常口。\n"
         "超计划成因：同一 SKU 有两件同时在线上（都未落格），或人工多放了一件；改投异常口的件不计入本表。\n"
         "处置：多余件不进入上传报文（H7 已按本格口计划件数裁剪），但实物可能已在箱内 → 请按下列清单现场取出。"));
     tip->setWordWrap(true);
@@ -4217,9 +4218,10 @@ void MainWindow::showOverplanWarningDialog()
 
     // ── 明细表 ──
     QTableWidget* tbl = new QTableWidget();
-    tbl->setColumnCount(7);
+    tbl->setColumnCount(8);
     tbl->setHorizontalHeaderLabels({
         QString::fromUtf8("格口号"),
+        QString::fromUtf8("类型"),
         QString::fromUtf8("容器号"),
         QString::fromUtf8("SKU编码"),
         QString::fromUtf8("本格口计划"),
@@ -4257,18 +4259,26 @@ void MainWindow::showOverplanWarningDialog()
             it->setForeground(c);
             tbl->setItem(i, col, it);
         };
+        // 格口类型显示名（0=分类/正常分拣, 1=异常, 2=发货）
+        QString typeText = w.gridType;
+        if (w.gridType == "0")      typeText = QString::fromUtf8("分类");
+        else if (w.gridType == "1") typeText = QString::fromUtf8("异常");
+        else if (w.gridType == "2") typeText = QString::fromUtf8("发货");
+        else                        typeText = QString::fromUtf8("—");
+
         setCell(0, w.gridKey);
-        setCell(1, box.isEmpty() ? QString::fromUtf8("—") : box);
-        setCell(2, w.sku);
-        setCell(3, QString::number(w.planQty));
-        setCell(4, QString::number(w.skuPlanQty));
-        setCell(5, QString::number(w.landedQty));
-        setCell(6, QString::number(w.overQty), QColor("#D32F2F"));
+        setCell(1, typeText);
+        setCell(2, box.isEmpty() ? QString::fromUtf8("—") : box);
+        setCell(3, w.sku);
+        setCell(4, QString::number(w.planQty));
+        setCell(5, QString::number(w.skuPlanQty));
+        setCell(6, QString::number(w.landedQty));
+        setCell(7, QString::number(w.overQty), QColor("#D32F2F"));
 
         // 多余件 EPC 清单放进 SKU 单元格的 tooltip（列宽有限，不占表格空间）
-        if (!w.epcs.isEmpty() && tbl->item(i, 2))
+        if (!w.epcs.isEmpty() && tbl->item(i, 3))
         {
-            tbl->item(i, 2)->setToolTip(QString::fromUtf8("多余件 EPC 清单（%1 件）：\n%2")
+            tbl->item(i, 3)->setToolTip(QString::fromUtf8("多余件 EPC 清单（%1 件）：\n%2")
                 .arg(w.epcs.size()).arg(w.epcs.join("\n")));
         }
     }
@@ -5148,6 +5158,11 @@ void MainWindow::onStartSortingClicked()
     if (wm->startSorting())
     {
         appendLog(QString("[分拣] 手动开始分拣 orderCode=%1").arg(wm->orderCode()));
+        // ★ 2026-09-14 开工前「计划格口 vs 容器绑定」预检：
+        //   每个格口（正常分拣/发货）各有自己的计划件数，按数量分配的前提是这些格口都有容器可落。
+        //   这里把"计划里有件但未绑定容器/已禁用"的格口一次性列出来（只告警不阻塞）。
+        if (m_pServer)
+            m_pServer->precheckPlanGridBindings(wm->orderCode());
         // 按钮由定时器自动刷新为灰色禁用状态（状态已变为 SORTING）
     }
     else

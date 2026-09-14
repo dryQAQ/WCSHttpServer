@@ -705,6 +705,8 @@ HttpServer::HttpServer(QObject* parent)
                                 const int planQty = curEntry.planQtyPerGrid.contains(gridKey)
                                     ? curEntry.planQtyPerGrid.value(gridKey)
                                     : curEntry.gridCount;
+                                // 本格口类型（0=分类/正常分拣, 1=异常, 2=发货）——便于人工判断该口性质
+                                const QString gridTypeNow = curEntry.gridTypePerGrid.value(gridKey, curEntry.gridType);
 
                                 // ★ 2026-09-14 同品多格口分配计数：以「PLC 反馈落格成功」为准登记（同一 EPC 只计一次）
                                 noteGridLanded(curSku, gridKey, e.code);
@@ -713,9 +715,10 @@ HttpServer::HttpServer(QObject* parent)
                                 {
                                     const QString orderNow = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
                                     const int overQty = landedNow - planQty;
-                                    HTTP_LOG_WARN("[超计划-预警] 格口%s 容器%s SKU=%s EPC=%s 本格口计划%d件(SKU总计划%d件) "
+                                    HTTP_LOG_WARN("[超计划-预警] 格口%s(类型%s) 容器%s SKU=%s EPC=%s 本格口计划%d件(SKU总计划%d件) "
                                                   "实际落格%d件 多余%d件 → 已登记预警；该多余件不进入上传报文，请现场取出",
-                                        gridKey.toLocal8Bit().data(), curBox.toLocal8Bit().data(),
+                                        gridKey.toLocal8Bit().data(), gridTypeNow.toLocal8Bit().data(),
+                                        curBox.toLocal8Bit().data(),
                                         curSku.toLocal8Bit().data(), e.code.toLocal8Bit().data(),
                                         planQty, curEntry.gridCount, landedNow, overQty);
                                     emit logMessage(QString::fromUtf8(
@@ -1762,6 +1765,9 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
             // 同格口重复行取大者、新格口另计；gridCount 同步为各格口之和
             int& q = e.planQtyPerGrid[gKey];
             q = it.planQty > q ? it.planQty : q;
+            // ★ 每格口类型同样保存（同品可同时计划到"正常分拣(分类)"与"发货"格口）
+            if (!it.gridType.isEmpty())
+                e.gridTypePerGrid.insert(gKey, it.gridType);
             int sum = 0;
             for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
                 sum += pit.value();
@@ -1776,6 +1782,7 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
             entry.volu      = it.volu;
             entry.obxCode   = it.obxCode;
             entry.planQtyPerGrid.insert(gKey, it.planQty);   // ★ 分格口计划
+            entry.gridTypePerGrid.insert(gKey, entry.gridType);   // ★ 分格口类型
             entry.orderCode = orderCode;
             entry.orderQty  = wave.orderQty;
             entry.skuCount  = 0;
@@ -1786,20 +1793,28 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
     // ★ 恢复场景同样重置按格口落格计数：否则残留上一个波次的计数会让本波次分配被打偏
     clearGridLandedCount();
     {
+        auto typeNameR = [](const QString& t) -> QString {
+            if (t == "1") return QString::fromUtf8("异常");
+            if (t == "2") return QString::fromUtf8("发货");
+            return QString::fromUtf8("分类");
+        };
         int multiSku = 0;
         QStringList detail;
         for (auto mit = newMap->constBegin(); mit != newMap->constEnd(); ++mit)
         {
-            if (mit.value().planQtyPerGrid.size() < 2) continue;
+            const GridEntry& e = mit.value();
+            if (e.planQtyPerGrid.size() < 2) continue;
             ++multiSku;
             if (detail.size() >= 20) continue;
             QStringList one;
-            for (auto pit = mit.value().planQtyPerGrid.constBegin(); pit != mit.value().planQtyPerGrid.constEnd(); ++pit)
-                one << QString("%1:%2件").arg(pit.key()).arg(pit.value());
+            for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+                one << QString("%1(%2):%3件").arg(pit.key())
+                           .arg(typeNameR(e.gridTypePerGrid.value(pit.key(), e.gridType)))
+                           .arg(pit.value());
             detail << QString("%1→[%2]").arg(mit.key()).arg(one.join("+"));
         }
         if (multiSku > 0)
-            HTTP_LOG_INFO("恢复波次 同品多格口分配 order=%s 涉及SKU=%d 明细: %s",
+            HTTP_LOG_INFO("恢复波次 同品多格口分配 order=%s 涉及SKU=%d 明细(格口(类型):件数): %s",
                 orderCode.toLocal8Bit().data(), multiSku, detail.join("; ").toLocal8Bit().data());
     }
     if (items.isEmpty())
@@ -1987,13 +2002,14 @@ PlcPlanAllocInfo HttpServer::planAllocOf(const QString& sku)
     if (sku.isEmpty())
         return info;
 
-    // 1) 计划件数（H4 解析结果）
+    // 1) 计划件数（H4 解析结果）+ 每格口类型（分类/异常/发货）
     if (m_pBuffer)
     {
         GridEntry entry = m_pBuffer->get(sku);
         if (!entry.planQtyPerGrid.isEmpty())
         {
-            info.planQtyPerGrid = entry.planQtyPerGrid;
+            info.planQtyPerGrid  = entry.planQtyPerGrid;
+            info.gridTypePerGrid = entry.gridTypePerGrid;
             info.valid = true;
         }
         else if (entry.gridCount > 0 && !entry.gridNum.isEmpty())
@@ -2003,9 +2019,13 @@ PlcPlanAllocInfo HttpServer::planAllocOf(const QString& sku)
             if (!first.isEmpty())
             {
                 info.planQtyPerGrid.insert(first, entry.gridCount);
+                info.gridTypePerGrid.insert(first, entry.gridType);
                 info.valid = true;
             }
         }
+        // 计划全为空但类型表有值（异常数据）时，仍把类型表带出，供日志显示
+        if (info.gridTypePerGrid.isEmpty() && !entry.gridTypePerGrid.isEmpty())
+            info.gridTypePerGrid = entry.gridTypePerGrid;
     }
 
     // 2) 超计划兜底格口（配置项 exceptionGrid，未配置 = -1 表示不做异常口改投）
@@ -2024,6 +2044,7 @@ PlcPlanAllocInfo HttpServer::planAllocOf(const QString& sku)
         if (info.planQtyPerGrid.contains(excKey))
         {
             const int drop = info.planQtyPerGrid.take(excKey);
+            info.gridTypePerGrid.remove(excKey);
             HTTP_LOG_WARN("[计划分配] SKU=%s 的计划含异常格口%s(计划%2件) —— 已从计划中剔除，该格口只收超计划件",
                 sku.toLocal8Bit().data(), excKey.toLocal8Bit().data(), drop);
         }
@@ -2193,7 +2214,11 @@ QVector<HttpServer::OverplanWarning> HttpServer::overplanWarnings() const
 
         // 计划件数：取该 SKU 在**本格口**的计划数（同品多格口时各格口计划不同）
         w.planQty = planQtyOfGrid(w.sku, w.gridKey);
-        w.skuPlanQty = m_pBuffer ? m_pBuffer->get(w.sku).gridCount : 0;
+        {
+            const GridEntry e = m_pBuffer ? m_pBuffer->get(w.sku) : GridEntry();
+            w.skuPlanQty = e.gridCount;
+            w.gridType   = e.gridTypePerGrid.value(normalizeGridKey(w.gridKey), e.gridType);
+        }
 
         if (w.planQty <= 0 || w.landedQty <= w.planQty)
             continue;                                 // 未超计划 → 不列入预警
@@ -2403,6 +2428,123 @@ QVector<ReturnWaveItemRecord> HttpServer::buildWaveItems(const QString& orderCod
     return items;
 }
 
+// ============================================================================
+// ★ 2026-09-14 「计划格口 vs 容器绑定/类型」预检（新波次开工前）
+//   客户口径：**每个格口都有对应这个产品的数量**（正常分拣/发货格口各自一份计划），
+//   按这些数量分配的前提是——计划里的每个格口都必须有容器可落。
+//   因此开工前把"计划里有件、但当前没绑定容器"的格口一次性列出来，
+//   避免件被发到无容器格口（PLC 回报"无格口"→落不进箱→人工翻找）。
+//   只告警、不阻塞（绑定可能随后由 WMS 的 H6 补上）。
+// ============================================================================
+void HttpServer::precheckPlanGridBindings(const QString& orderCode)
+{
+    if (!m_pBuffer || !m_pPlcMgr)
+        return;
+
+    // 1) 计划：格口号 → (所属SKU数、计划件数合计、类型)
+    QMap<QString, int> gridQty;      // 格口 → 计划件数合计
+    QMap<QString, int> gridSkuCnt;   // 格口 → 涉及 SKU 数
+    QMap<QString, QString> gridType; // 格口 → 类型（取首个非空）
+    {
+        const QMap<QString, GridEntry>* pMap = m_pBuffer->activeMap();
+        if (!pMap)
+            return;
+        for (auto it = pMap->constBegin(); it != pMap->constEnd(); ++it)
+        {
+            const GridEntry& e = it.value();
+            for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+            {
+                if (pit.value() <= 0) continue;
+                gridQty[pit.key()] += pit.value();
+                gridSkuCnt[pit.key()] += 1;
+                if (!gridType.contains(pit.key()))
+                    gridType.insert(pit.key(), e.gridTypePerGrid.value(pit.key(), e.gridType));
+            }
+        }
+    }
+    if (gridQty.isEmpty())
+    {
+        HTTP_LOG_INFO("计划格口预检 order=%s 无分格口计划数据，跳过", orderCode.toLocal8Bit().data());
+        return;
+    }
+
+    // 2) 当前绑定（内存绑定表，key 统一为内部 3 位 key）
+    QMap<QString, QString> binds;
+    {
+        std::lock_guard<std::mutex> lockBind(m_containerMutex);
+        for (auto it = m_containerBindings.constBegin(); it != m_containerBindings.constEnd(); ++it)
+        {
+            const QString k = normalizeGridKey(it.key());
+            if (!k.isEmpty() && !it.value().isEmpty() && !binds.contains(k))
+                binds.insert(k, it.value());
+        }
+    }
+
+    auto typeName = [](const QString& t) -> QString {
+        if (t == "1") return QString::fromUtf8("异常");
+        if (t == "2") return QString::fromUtf8("发货");
+        return QString::fromUtf8("分类");
+    };
+
+    // 3) 逐格口核对
+    int planGrids = 0, unbound = 0, disabled = 0, excSkipped = 0;
+    QStringList unboundDesc, disabledDesc, typeSummary;
+    for (auto it = gridQty.constBegin(); it != gridQty.constEnd(); ++it)
+    {
+        const QString g = it.key();
+        ++planGrids;
+        const bool bIsExc = isExceptionGridKey(g);
+        if (bIsExc) { ++excSkipped; continue; }   // 异常口不在计划内（planAllocOf 已剔除），此处跳过
+
+        const QString t = typeName(gridType.value(g));
+        bool okG = false;
+        const int gInt = g.toInt(&okG);
+        if (okG && gInt > 0 && m_pPlcMgr && m_pPlcMgr->isGridDisabled(gInt))
+        {
+            ++disabled;
+            if (disabledDesc.size() < 20)
+                disabledDesc << QString("%1(%2,%3件)").arg(g).arg(t).arg(it.value());
+        }
+        if (!binds.contains(g))
+        {
+            ++unbound;
+            if (unboundDesc.size() < 20)
+                unboundDesc << QString("%1(%2,%3件)").arg(g).arg(t).arg(it.value());
+        }
+    }
+
+    // 4) 类型分布摘要（证明"分类口 + 发货口"各自的计划都被保留）
+    {
+        QMap<QString, int> cntByType;
+        for (auto it = gridQty.constBegin(); it != gridQty.constEnd(); ++it)
+            cntByType[typeName(gridType.value(it.key()))] += 1;
+        for (auto it = cntByType.constBegin(); it != cntByType.constEnd(); ++it)
+            typeSummary << QString("%1格口%2个").arg(it.key()).arg(it.value());
+    }
+
+    HTTP_LOG_INFO("计划格口预检 order=%s 计划格口=%d（%s）已绑定=%d 未绑定=%d 已禁用=%d 异常口跳过=%d",
+        orderCode.toLocal8Bit().data(), planGrids, typeSummary.join("+").toLocal8Bit().data(),
+        planGrids - unbound, unbound, disabled, excSkipped);
+
+    if (unbound > 0)
+    {
+        HTTP_LOG_WARN("计划格口预检 未绑定容器的计划格口 %d 个：%s%s —— 件落到这些格口无法进箱，请先下发 H6 绑定",
+            unbound, unboundDesc.join(" ") .toLocal8Bit().data(),
+            unbound > 20 ? " …（其余见绑定表）" : "");
+        emit logMessage(QString::fromUtf8(
+            "[计划预检] 有 %1 个计划格口尚未绑定容器：%2 —— 请先让 WMS 下发容器绑定，否则这些计划件无处可落")
+            .arg(unbound).arg(unboundDesc.join(" ")).arg(unbound > 20 ? QString::fromUtf8(" …") : QString()), true);
+    }
+    if (disabled > 0)
+    {
+        HTTP_LOG_WARN("计划格口预检 已禁用(满箱未重绑)的计划格口 %d 个：%s —— 该格口的计划件会改分到同 SKU 的其它计划格口",
+            disabled, disabledDesc.join(" ").toLocal8Bit().data());
+        emit logMessage(QString::fromUtf8(
+            "[计划预检] 有 %1 个计划格口处于满箱未重绑(禁用)状态：%2 —— 其计划件将改分到同 SKU 的其它计划格口")
+            .arg(disabled).arg(disabledDesc.join(" ")), true);
+    }
+}
+
 // ★ 2026-09-04 P0修复：波次明细异步落库完成回调（主线程）——推进 BOUND + 清理旧波次状态
 //   由 wavePersistenceFinished 信号触发（业务线程池 emit → AutoConnection 回主线程）
 void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, int skuCount)
@@ -2440,6 +2582,7 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
                     HTTP_LOG_WARN("测试钩子：自动开工(WCS_E2E_AUTOSORT=1) BOUND→SORTING orderCode=%s",
                         orderCode.toLocal8Bit().data());
                     emit logMessage(QString("[测试钩子] 自动开工（E2E）：orderCode=%1 已进入分拣中").arg(orderCode));
+                    precheckPlanGridBindings(orderCode);   // ★ 2026-09-14 计划格口 vs 容器绑定预检
                 }
             }
         }

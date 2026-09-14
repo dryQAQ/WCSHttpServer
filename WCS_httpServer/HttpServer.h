@@ -276,6 +276,7 @@ public:
     struct OverplanWarning
     {
         QString gridKey;      // 格口号（内部 3 位 key）
+        QString gridType;     // ★ 该格口类型（0=分类/正常分拣, 1=异常, 2=发货）
         QString sku;
         int     planQty   = 0;      // ★ 本格口计划件数（多格口时各格口不同）
         int     skuPlanQty = 0;     // 该 SKU 计划总数（各格口之和，供人工参考）
@@ -294,6 +295,11 @@ public:
     void noteGridLanded(const QString& sku, const QString& gridKey, const QString& epc);
     // 清空按格口落格计数（H4 新波次重下发/波次清理时调用，与计划件数一同重置）
     void clearGridLandedCount();
+
+    // ★ 2026-09-14 开工前预检：把「计划里有件、但未绑定容器/已禁用」的格口一次性列出并告警。
+    //   依据：客户口径「每个格口有对应这个产品的数量」（正常分拣/发货格口各自一份计划），
+    //   按数量分配的前提是计划格口都能落箱；只告警不阻塞（绑定可由 WMS 后续 H6 补上）。
+    void precheckPlanGridBindings(const QString& orderCode);
 
 signals:
     void serverStarted(int port);

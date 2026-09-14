@@ -490,12 +490,20 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                 }
                 if (bHasPlan)
                 {
-                    // 分配表摘要（日志用）：「格口:计划N件/已落M」
+                    // 类型显示名（每格口类型：0=分类/正常分拣, 1=异常, 2=发货）
+                    auto typeNameOf = [](const QString& t) -> QString {
+                        if (t == "1") return QString::fromUtf8("异常");
+                        if (t == "2") return QString::fromUtf8("发货");
+                        return QString::fromUtf8("分类");
+                    };
+                    // 分配表摘要（日志用）：「格口(类型):计划N件/已落M」
                     QString planDesc;
                     {
                         QStringList sl;
                         for (auto pit = info.planQtyPerGrid.constBegin(); pit != info.planQtyPerGrid.constEnd(); ++pit)
-                            sl << QString("%1:%2件/已落%3").arg(pit.key()).arg(pit.value())
+                            sl << QString("%1(%2):%3件/已落%4").arg(pit.key())
+                                      .arg(typeNameOf(info.gridTypePerGrid.value(pit.key())))
+                                      .arg(pit.value())
                                       .arg(info.landedNum.value(pit.key(), 0));
                         planDesc = sl.join(" ");
                     }
@@ -521,11 +529,13 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                     {
                         vecGrid   = { chosen };
                         bPlanDecided = true;
-                        selReason = QString::fromUtf8("按计划分配[%1]→格口%2(计划%3件,已落%4件)")
-                                        .arg(gridStr).arg(chosen).arg(planQty).arg(landed);
-                        PLC_LOG_INFO("选格-按计划分配 code=%s 映射=[%s] 选中格=%d 计划=%d件 已落=%d件 分配表=%s",
+                        const QString chosenType = typeNameOf(info.gridTypePerGrid.value(planKeyOf(chosen)));
+                        selReason = QString::fromUtf8("按计划分配[%1]→格口%2(%3,计划%4件,已落%5件)")
+                                        .arg(gridStr).arg(chosen).arg(chosenType).arg(planQty).arg(landed);
+                        PLC_LOG_INFO("选格-按计划分配 code=%s 映射=[%s] 选中格=%d(%s) 计划=%d件 已落=%d件 分配表=%s",
                             code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
-                            chosen, planQty, landed, planDesc.toLocal8Bit().data());
+                            chosen, chosenType.toLocal8Bit().data(),
+                            planQty, landed, planDesc.toLocal8Bit().data());
                     }
                     else
                     {

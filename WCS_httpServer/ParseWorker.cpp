@@ -171,6 +171,9 @@ void ParseWorker::run()
                 const QString gKey = normalizeGridKey(gridNum);
                 int& q = ent.planQtyPerGrid[gKey];      // 不存在则插入
                 q = gridNumber > q ? gridNumber : q;    // 同格口重复行取下发值（一般相等，取大者更安全）
+                // ★ 每格口类型一并保存（同品可同时计划到"正常分拣(分类)"与"发货"格口，各格口数量不同）
+                if (!gridType.isEmpty())
+                    ent.gridTypePerGrid.insert(gKey, gridType);
                 int sum = 0;
                 for (auto pit = ent.planQtyPerGrid.constBegin(); pit != ent.planQtyPerGrid.constEnd(); ++pit)
                     sum += pit.value();
@@ -187,6 +190,7 @@ void ParseWorker::run()
                 // ★ 2026-09-14 记录该 SKU 在该格口的计划件数（多格口分配依据）
                 //   key = 3 位内部 key（normalizeGridKey），与选格侧查表口径一致
                 entry.planQtyPerGrid.insert(normalizeGridKey(gridNum), gridNumber);
+                entry.gridTypePerGrid.insert(normalizeGridKey(gridNum), entry.gridType);
                 // 批次信息：每个SKU编码都关联到所属批次
                 entry.orderCode = orderCode;
                 entry.orderQty  = orderQty;
@@ -203,24 +207,34 @@ void ParseWorker::run()
             }
         }
 
-        // ★ 2026-09-14 同品多格口分配摘要：让「哪些 SKU 拆了多格口、各格口各几件」在日志中可核对
+        // ★ 2026-09-14 同品多格口分配摘要：让「哪些 SKU 拆了多格口、各格口各几件、是分类口还是发货口」
+        //   在日志中可核对（客户口径：每个格口有对应这个产品的数量，按数量分）
         {
+            auto typeName = [](const QString& t) -> QString {
+                if (t == "1") return QString::fromUtf8("异常");
+                if (t == "2") return QString::fromUtf8("发货");
+                return QString::fromUtf8("分类");
+            };
             int multiSku = 0;
             QStringList multiDetail;
             for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it)
             {
-                if (it.value().planQtyPerGrid.size() < 2)
+                const GridEntry& e = it.value();
+                if (e.planQtyPerGrid.size() < 2)
                     continue;
                 ++multiSku;
                 QStringList one;
-                for (auto pit = it.value().planQtyPerGrid.constBegin(); pit != it.value().planQtyPerGrid.constEnd(); ++pit)
-                    one << QString("%1:%2件").arg(pit.key()).arg(pit.value());
+                for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+                {
+                    const QString t = e.gridTypePerGrid.value(pit.key(), e.gridType);
+                    one << QString("%1(%2):%3件").arg(pit.key()).arg(typeName(t)).arg(pit.value());
+                }
                 if (multiDetail.size() < 50)
                     multiDetail << QString("%1→[%2]").arg(it.key()).arg(one.join("+"));
             }
             if (multiSku > 0)
             {
-                WCS_INFO("[SKU映射] 同品多格口分配 orderCode=%s 涉及SKU=%d 明细: %s",
+                WCS_INFO("[SKU映射] 同品多格口分配 orderCode=%s 涉及SKU=%d 明细(格口(类型):件数): %s",
                     orderCode.toLocal8Bit().data(), multiSku,
                     multiDetail.join("; ").toLocal8Bit().data());
             }

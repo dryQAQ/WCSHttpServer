@@ -56,13 +56,15 @@ $allocLines     = New-Object System.Collections.Generic.List[string]   # 选格-
 $overLines     = New-Object System.Collections.Generic.List[string]   # 选格-超计划
 $excLandLines   = New-Object System.Collections.Generic.List[string]   # 异常口落格反馈
 $warnLines      = New-Object System.Collections.Generic.List[string]   # 超计划-预警
+$preLines       = New-Object System.Collections.Generic.List[string]   # 计划格口预检
 $h7NumGrids     = New-Object System.Collections.Generic.HashSet[string] # H7 报文里出现过的 num
 
-$rePlan  = [regex]'\[SKU映射\]\s*同品多格口分配\s+orderCode=(\S+)\s+涉及SKU=(\d+)\s+明细:\s*(.*)$'
-$reAlloc = [regex]'选格-按计划分配\s+code=(\S+)\s+映射=\[([^\]]*)\]\s+选中格=(\d+)\s+计划=(\d+)件\s+已落=(\d+)件'
+$rePlan  = [regex]'\[SKU映射\]\s*同品多格口分配\s+orderCode=(\S+)\s+涉及SKU=(\d+)\s+明细'
+$reAlloc = [regex]'选格-按计划分配\s+code=(\S+)\s+映射=\[([^\]]*)\]\s+选中格=(\d+)(?:\(([^)]*)\))?\s+计划=(\d+)件\s+已落=(\d+)件'
 $reOver  = [regex]'选格-超计划\s+code=(\S+)\s+映射=\[([^\]]*)\]\s+分配表=(.*?)\s*→\s*(.*)$'
 $reExcL  = [regex]'\[异常口\]\s*超计划件已真实落入异常口\s+epc=(\S+)\s+sku=(\S*)\s+grid=(\S+)\s+容器=(\S+)'
-$reWarn  = [regex]'\[超计划-预警\]\s*格口(\S+)\s+容器(\S+)\s+SKU=(\S+)\s+EPC=(\S+)\s+本格口计划(\d+)件\(SKU总计划(\d+)件\)\s+实际落格(\d+)件\s+多余(\d+)件'
+$reWarn  = [regex]'\[超计划-预警\]\s*格口(\S+?)(?:\(类型(\S*?)\))?\s+容器(\S+)\s+SKU=(\S+)\s+EPC=(\S+)\s+本格口计划(\d+)件\(SKU总计划(\d+)件\)\s+实际落格(\d+)件\s+多余(\d+)件'
+$rePre   = [regex]'计划格口预检 order=(\S+)\s+计划格口=(\d+)（([^）]*)）已绑定=(\d+)\s+未绑定=(\d+)\s+已禁用=(\d+)'
 $reNum   = [regex]'"num"\s*:\s*"(\d+)"'
 
 foreach ($f in $files) {
@@ -74,6 +76,7 @@ foreach ($f in $files) {
             if ($line -like '*选格-超计划*')    { if ($reOver.IsMatch($line))  { $overLines.Add($line) } ; continue }
             if ($line -like '*已真实落入异常口*'){ if ($reExcL.IsMatch($line)) { $excLandLines.Add($line) } ; continue }
             if ($line -like '*超计划-预警*')    { if ($reWarn.IsMatch($line))  { $warnLines.Add($line) } ; continue }
+            if ($line -like '*计划格口预检*')   { if ($rePre.IsMatch($line))   { $preLines.Add($line) } ; continue }
             if ($line -like '*"num"*')          { foreach ($m in $reNum.Matches($line)) { [void]$h7NumGrids.Add($m.Groups[1].Value) } }
         }
     } finally {
@@ -81,25 +84,46 @@ foreach ($f in $files) {
     }
 }
 
+# ── ⓪ 开工前「计划格口 vs 容器绑定」预检 ─────────────────────────────────
+Write-Head "⓪ 开工预检（计划格口是否都有容器可落）"
+if ($preLines.Count -eq 0) {
+    Write-Warn2 "未匹配到「计划格口预检」日志 —— exe 可能是旧版本（本项为 2026-09-14 新增）"
+} else {
+    $m = $rePre.Match($preLines[$preLines.Count - 1])
+    Write-Ok "计划格口=$($m.Groups[2].Value)（$($m.Groups[3].Value)）已绑定=$($m.Groups[4].Value) 未绑定=$($m.Groups[5].Value) 已禁用=$($m.Groups[6].Value)"
+    if ([int]$m.Groups[5].Value -gt 0) {
+        Write-Bad "有 $($m.Groups[5].Value) 个计划格口未绑定容器 —— 落到这些格口的件无法进箱，请先让 WMS 下发 H6"
+    } else {
+        Write-Ok "所有计划格口均有容器绑定"
+    }
+    if ([int]$m.Groups[6].Value -gt 0) {
+        Write-Warn2 "有 $($m.Groups[6].Value) 个计划格口处于满箱未重绑(禁用) —— 其计划件会改分到同 SKU 的其它计划格口"
+    }
+    $preLines | Select-Object -Last 1 | ForEach-Object { Write-Info ("  " + $_.Trim()) }
+}
+
 # ── ① 同品多格口清单（来自解析期分配日志）────────────────────────────────
-Write-Head "① H4 同品多格口 SKU 清单（解析期「分配表」是否保留）"
+Write-Head "① H4 同品多格口 SKU 清单（各格口计划件数 + 格口类型）"
 $planSku = @{}     # SKU -> @{ order; grids=@( @{grid;qty} ) }
 $lastOrder = ""
 foreach ($ln in $planLines) {
     $m = $rePlan.Match($ln)
     $lastOrder = $m.Groups[1].Value
-    $detail = $m.Groups[3].Value
-    foreach ($seg in ($detail -split ';\s*')) {
-        $seg = $seg.Trim()
-        if ($seg -eq "") { continue }
-        $mm = [regex]::Match($seg, '^(\S+?)→\[(.*)\]$')
-        if (-not $mm.Success) { continue }
-        $sku = $mm.Groups[1].Value
+    # 明细段直接按 "SKU→[格口(类型):N件+…]" 逐个提取（不使用"第一个冒号"这类脆弱切分：
+    # 日志里明细前缀本身带冒号，如 明细(格口(类型):件数):）
+    foreach ($sm in [regex]::Matches($ln, '(\S+?)→\[([^\]]*)\]')) {
+        $sku = $sm.Groups[1].Value
+        # 去掉可能残留的前缀字符（如 "件数): "）
+        $sku = ($sku -split '[^\w\-]')[-1]
+        if ([string]::IsNullOrEmpty($sku)) { continue }
         $gl  = New-Object System.Collections.Generic.List[object]
-        foreach ($g in ($mm.Groups[2].Value -split '\+')) {
-            $gm = [regex]::Match($g.Trim(), '^(\d+):(\d+)件$')
+        foreach ($g in ($sm.Groups[2].Value -split '\+')) {
+            # 兼容两种明细写法：034(分类):1件（含每格口类型） 与旧版 034:1件
+            $gm = [regex]::Match($g.Trim(), '^(\d+)(?:\(([^)]*)\))?:(\d+)件$')
             if ($gm.Success) {
-                $gl.Add([pscustomobject]@{ Grid = $gm.Groups[1].Value; Qty = [int]$gm.Groups[2].Value })
+                $gt = $gm.Groups[2].Value
+                if ([string]::IsNullOrEmpty($gt)) { $gt = "—" }
+                $gl.Add([pscustomobject]@{ Grid = $gm.Groups[1].Value; Type = $gt; Qty = [int]$gm.Groups[3].Value })
             }
         }
         if ($gl.Count -gt 0) { $planSku[$sku] = [pscustomobject]@{ Order = $lastOrder; Grids = $gl } }
@@ -112,10 +136,19 @@ if ($planSku.Count -eq 0) {
     $i = 0
     foreach ($kv in ($planSku.GetEnumerator() | Sort-Object Name)) {
         if ($i -ge $Top) { Write-Info "…（其余 $($planSku.Count - $Top) 个见日志）"; break }
-        $desc = ($kv.Value.Grids | ForEach-Object { "$($_.Grid):$($_.Qty)件" }) -join " + "
+        $desc = ($kv.Value.Grids | ForEach-Object { "$($_.Grid)($($_.Type)):$($_.Qty)件" }) -join " + "
         Write-Info ("{0}  合计{1}件  [{2}]" -f $kv.Key, (($kv.Value.Grids | Measure-Object Qty -Sum).Sum), $desc)
         $i++
     }
+    $typeCnt = @{}
+    foreach ($kv in $planSku.GetEnumerator()) {
+        foreach ($g in $kv.Value.Grids) {
+            $k = if ($g.Type -eq "2") { "发货" } elseif ($g.Type -eq "1") { "异常" } elseif ($g.Type -eq "0" -or $g.Type -eq "—") { "分类/未标" } else { $g.Type }
+            if (-not $typeCnt.ContainsKey($k)) { $typeCnt[$k] = 0 }
+            $typeCnt[$k]++
+        }
+    }
+    Write-Info ("其中格口类型分布：" + (($typeCnt.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)个格口" }) -join "  "))
 }
 
 # ── ② 按计划分配统计 ────────────────────────────────────────────────────
@@ -128,10 +161,12 @@ if ($allocLines.Count -eq 0) {
     foreach ($ln in $allocLines) {
         $m = $reAlloc.Match($ln)
         $g = $m.Groups[3].Value
-        if (-not $perGrid.ContainsKey($g)) { $perGrid[$g] = 0 }
-        $perGrid[$g]++
+        $t = $m.Groups[4].Value
+        $k = if ([string]::IsNullOrEmpty($t)) { $g } else { "$g($t)" }
+        if (-not $perGrid.ContainsKey($k)) { $perGrid[$k] = 0 }
+        $perGrid[$k]++
     }
-    Write-Info ("选中格口分布：" + (($perGrid.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Key)=$($_.Value)次" }) -join "  "))
+    Write-Info ("选中格口分布（格口(类型)）：" + (($perGrid.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Key)=$($_.Value)次" }) -join "  "))
     Write-Info "样例："
     $allocLines | Select-Object -First 3 | ForEach-Object { Write-Info ("  " + $_.Trim()) }
 }
@@ -191,8 +226,8 @@ if ($warnLines.Count -eq 0) {
 
 # ── 汇总 ────────────────────────────────────────────────────────────────
 Write-Head "汇总"
-Write-Info ("多格口SKU数={0}  按计划分配={1}次  超计划改投={2}次  异常口落格={3}件  误落预警={4}条" -f `
-    $planSku.Count, $allocLines.Count, $overLines.Count, $excLandLines.Count, $warnLines.Count)
+Write-Info ("多格口SKU数={0}  按计划分配={1}次  超计划改投={2}次  异常口落格={3}件  误落预警={4}条  开工预检={5}次" -f `
+    $planSku.Count, $allocLines.Count, $overLines.Count, $excLandLines.Count, $warnLines.Count, $preLines.Count)
 if ($planSku.Count -gt 0 -and $allocLines.Count -eq 0) {
     Write-Bad "存在多格口 SKU 但没有任何「按计划分配」日志 → exe 可能仍是旧版本，或 gridNumber 字段缺失"
 }
