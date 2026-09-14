@@ -295,6 +295,24 @@ public:
     void noteGridLanded(const QString& sku, const QString& gridKey, const QString& epc);
     // ★ 2026-09-14 落格即计时归零（只在主线程执行，见实现处说明）
     void noteEpcLanded(const QString& epc);
+
+    // ──── ★ 2026-09-14 同一 EPC「同波次同格口」只记 1 条落格明细 ────
+    //   现场根因（09-13 波次 PP202600000580）：同一件货被重扫重投后又落回原格口，
+    //   在同一次换箱前后各写了一条落格明细（同一物理件 = 2 条），H7 按容器聚合上报时
+    //   同一件在"旧箱"与"新箱"各计 1 件 → WMS 侧数量对不上并整条驳回
+    //   （[2107632]转移库存产品编码[115101001502703],库位[H-T0131],数量[1]无法分配）。
+    //   口径（客户确认）：**同一 EPC 在同一波次内落到同一格口，只保留一条落格明细**；
+    //     若该次落格晚于已记录的那条（即件被拿出后又被系统送回该格口），
+    //     则把那条记录更新为本次信息（保持 1 条，不虚增件数）。
+    //   不变的部分：已分拣计数仍按 PLC 实测逐次累加（原有口径），本集合只约束"落格明细"。
+    bool isLandingDetailRecorded(const QString& gridKey, const QString& epc) const;
+    void markLandingDetailRecorded(const QString& gridKey, const QString& epc);
+    // 记录最近一次落格明细的归属信息（"该 EPC 只应落本格口"用；换波次清空）
+    void noteBoxLandedEpcs(const QString& sku, const QString& gridKey, const QString& epc);
+    // 该 EPC 是否已在本波次记录过落格明细（任意格口）
+    bool hasLandingDetail(const QString& epc) const;
+    // 该 EPC 最近一次落格明细所属的格口号（无记录返回空串）
+    QString lastDetailGridOf(const QString& epc) const;
     // 清空按格口落格计数（H4 新波次重下发/波次清理时调用，与计划件数一同重置）
     void clearGridLandedCount();
 
@@ -535,6 +553,13 @@ private:
     //   选格时取「已落格数 < 计划件数」的首个计划格口；全部满额 → 超计划件按策略处置。
     QMap<QString, QMap<QString, QSet<QString>>> m_gridLandedNum;  // SKU → (格口号 → 已落格 EPC 集合)
     mutable std::mutex                           m_gridLandedMutex;
+
+    // ──── ★ 2026-09-14 落格明细去重（同一 EPC 同波次同格口只 1 条，见上方方法说明）────
+    //   key = 内部格口 key(3位) + "\n" + EPC；value = 该明细写入时刻(ms)，便于比较先后
+    QHash<QString, qint64> m_landingDetailKeys;
+    QHash<QString, QString> m_lastDetailGridByEpc;   // EPC → 最近一次落格明细的格口号
+    mutable std::mutex      m_landingDetailMutex;
+    void clearLandingDedup();                        // 波次切换/新波次/完结时清空
 
     // ──── RFID 推送吞吐/峰值统计（★ 2026-09-07 效率与峰值显示）────
     //   滑动 1 分钟窗口（实时"效率"）用 deque；分桶（每分钟）与当日峰值用于

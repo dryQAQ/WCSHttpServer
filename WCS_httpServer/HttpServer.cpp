@@ -583,71 +583,85 @@ HttpServer::HttpServer(QObject* parent)
                         }
 
                         // ──── EPC 任务内防重（orderCode+epc）────
-                        // ★ 2026-09-09 需求8：计数以 PLC 实时反馈为准——重复反馈也计 1 件（markSorted 累计+1），
-                        //   但跳过明细写入（m_gridSortRecords/DB 仍防重，H7 不重复行）
-                        // ★ 2026-09-11 重扫重投：若该 EPC 是被 WCS 重新下发的（操作员把已落格的件拿起重新上料），
-                        //   落格的是**同一实物件** → 不再重复计件（保持"箱内 1 件 = 账 1 件"），
-                        //   仅做日志留痕 + 落格号一致性告警（不改账）
-                        if (cfg.sortingEpcDedup)
+                        // ★ 2026-09-09 需求8：计数以 PLC 实时反馈为准——重复反馈也计 1 件（markSorted 累计+1）
+                        // ★ 2026-09-11 重扫重投：该 EPC 被 WCS 重新下发（操作员拿起重新上料）→ 落格的是
+                        //   **同一实物件** → 不重复计件，保持"箱内 1 件 = 账 1 件"
+                        // ★ 2026-09-14 落格明细去重（客户确认）：同一 EPC 同波次同格口只保留 1 条落格明细。
+                        //   改法：此处只负责"计数"，**不再 continue 跳过明细**，统一交给下方
+                        //   「按格口记录分拣明细」的 (格口,EPC) 去重把关 —— 换箱后重投回同一格口
+                        //   不再产生第二条明细（这正是 09-13 波次数量对不上的根因）。
+                        bool bDedupLanded = false;   // 重复类落格（重扫重投/重复反馈/DB防重）：计数已完成，明细交由下方去重把关
+                        if (cfg.sortingEpcDedup && m_pWaveMgr->isCodeSorted(e.code))
                         {
-                            if (m_pWaveMgr->isCodeSorted(e.code))
+                            if (rescanEpcs.contains(e.code))
                             {
-                                if (rescanEpcs.contains(e.code))
+                                const QString orderCodeNow = m_pWaveMgr->orderCode();
+                                // ★ 2026-09-13 异常及时清理：该 EPC 此前掉入异常口、本次被重新投递并落格
+                                //   → 无论落在首落格口还是别的格口，都算"落格操作成功"，异常数立即减去
+                                const bool wasExcRescan = m_pWaveMgr->removeExceptionOnSorted(e.code);
+                                if (wasExcRescan)
                                 {
-                                    const QString orderCodeNow = m_pWaveMgr->orderCode();
-                                    // ★ 2026-09-13 异常及时清理：该 EPC 此前掉入异常口、本次被重新投递并落格
-                                    //   → 无论落在首落格口还是别的格口，都算"落格操作成功"，异常数立即减去
-                                    const bool wasExcRescan = m_pWaveMgr->removeExceptionOnSorted(e.code);
-                                    if (wasExcRescan)
-                                    {
-                                        HTTP_LOG_INFO("[异常清理] code=%s 重投后已落格 → 处理/异常口 -1", e.code.toLocal8Bit().data());
-                                        emit logMessage(QString::fromUtf8("[异常清理] EPC %1 重投后已落格到格口%2 → 已从「处理/异常口」中减去")
-                                            .arg(e.code).arg(e.grid));
-                                        if (m_pSortingDb && m_pSortingDb->isOpen())
-                                            m_pSortingDb->markExceptionResolved(orderCodeNow, e.code);
-                                    }
-                                    const QString firstGrid = m_pSortingDb
-                                        ? m_pSortingDb->getFirstSortedGrid(orderCodeNow, e.code)
-                                        : QString();
-                                    HTTP_LOG_INFO("[重扫] 重扫落格（不重复计件）code=%s order=%s 本次落格=%s 首落=%s sorted=%d",
-                                        e.code.toLocal8Bit().data(), orderCodeNow.toLocal8Bit().data(),
-                                        e.grid.toLocal8Bit().data(),
-                                        firstGrid.isEmpty() ? "(无记录)" : firstGrid.toLocal8Bit().data(),
-                                        m_pWaveMgr->sorted());
-
-                                    if (!firstGrid.isEmpty() &&
-                                        parseWmsGridCodeToInt(firstGrid) != parseWmsGridCodeToInt(e.grid))
-                                    {
-                                        // 重扫后落到非首落格口（多格口映射/原格口不可用改选）→ 告警 + 异常留痕
-                                        HTTP_LOG_WARN("[重扫] 重扫落格号与首落不一致 code=%s order=%s 首落=%s 本次=%s"
-                                                      "（账仍记首落格口，请现场核查）",
-                                            e.code.toLocal8Bit().data(), orderCodeNow.toLocal8Bit().data(),
-                                            firstGrid.toLocal8Bit().data(), e.grid.toLocal8Bit().data());
-                                        emit logMessage(QString::fromUtf8("[重扫] EPC %1 重扫落格到格口%2，但首落为格口%3"
-                                                                          "——账仍记首落格口，请现场核查")
-                                            .arg(e.code).arg(e.grid).arg(firstGrid), true);
-                                        if (m_pSortingDb && m_pSortingDb->isOpen())
-                                        {
-                                            ExceptionRecord exRe;
-                                            exRe.type      = QString::fromUtf8("重扫格口不一致");
-                                            exRe.orderCode = orderCodeNow;
-                                            exRe.epc       = e.code;
-                                            exRe.sku       = sku;
-                                            exRe.reason    = QString::fromUtf8("重扫落格号=%1 与首落格号=%2 不一致（账仍记首落）")
-                                                                 .arg(e.grid).arg(firstGrid);
-                                            exRe.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-                                            m_pSortingDb->insertException(exRe);
-                                        }
-                                    }
-                                    else
-                                    {
-                                        emit logMessage(QString::fromUtf8("[重扫] EPC %1 已重新落格到原格口%2（件数不重复计）")
-                                            .arg(e.code).arg(e.grid));
-                                    }
-                                    continue;
+                                    HTTP_LOG_INFO("[异常清理] code=%s 重投后已落格 → 处理/异常口 -1", e.code.toLocal8Bit().data());
+                                    emit logMessage(QString::fromUtf8("[异常清理] EPC %1 重投后已落格到格口%2 → 已从「处理/异常口」中减去")
+                                        .arg(e.code).arg(e.grid));
+                                    if (m_pSortingDb && m_pSortingDb->isOpen())
+                                        m_pSortingDb->markExceptionResolved(orderCodeNow, e.code);
                                 }
+                                // 首落格口优先用内存去重集合（已写过明细的格口），DB 查询仅作兜底
+                                QString firstGrid = lastDetailGridOf(e.code);
+                                if (firstGrid.isEmpty() && m_pSortingDb)
+                                    firstGrid = m_pSortingDb->getFirstSortedGrid(orderCodeNow, e.code);
+                                HTTP_LOG_INFO("[重扫] 重扫落格（不重复计件）code=%s order=%s 本次落格=%s 首落=%s sorted=%d",
+                                    e.code.toLocal8Bit().data(), orderCodeNow.toLocal8Bit().data(),
+                                    e.grid.toLocal8Bit().data(),
+                                    firstGrid.isEmpty() ? "(无记录)" : firstGrid.toLocal8Bit().data(),
+                                    m_pWaveMgr->sorted());
 
-                                HTTP_LOG_WARN("EPC防重拦截 code=%s order=%s 重复反馈计件(不写明细)，跳过",
+                                const bool bSameGrid = !firstGrid.isEmpty() &&
+                                    parseWmsGridCodeToInt(firstGrid) == parseWmsGridCodeToInt(e.grid);
+                                if (bSameGrid)
+                                {
+                                    // 同一格口再次落格 = 同一物理件 → 明细已存在，本次不再新增（去重）
+                                    bDedupLanded = true;
+                                    HTTP_LOG_INFO("[重扫] 已重新落格到原格口%s（件数不重复计，明细不重复记）epc=%s",
+                                        normalizeGridKey(e.grid).toLocal8Bit().data(), e.code.toLocal8Bit().data());
+                                    emit logMessage(QString::fromUtf8("[重扫] EPC %1 已重新落格到原格口%2（件数不重复计、明细不重复记）")
+                                        .arg(e.code).arg(e.grid));
+                                }
+                                else if (!firstGrid.isEmpty())
+                                {
+                                    // 重扫后落到**不同格口** → 该格口此前没有本件明细，允许补记一条（口径调整）
+                                    HTTP_LOG_WARN("[重扫] 重扫落格号与首落不一致 code=%s order=%s 首落=%s 本次=%s"
+                                                  "—— 本次按实际落格格口补记明细（同一 EPC 在不同格口各 1 条）",
+                                        e.code.toLocal8Bit().data(), orderCodeNow.toLocal8Bit().data(),
+                                        firstGrid.toLocal8Bit().data(), e.grid.toLocal8Bit().data());
+                                    emit logMessage(QString::fromUtf8("[重扫] EPC %1 重扫落格到格口%2，与首落格口%3 不同"
+                                                                      "—— 将在格口%2 补记 1 条明细，请现场核查")
+                                        .arg(e.code).arg(e.grid).arg(firstGrid), true);
+                                    if (m_pSortingDb && m_pSortingDb->isOpen())
+                                    {
+                                        ExceptionRecord exRe;
+                                        exRe.type      = QString::fromUtf8("重扫格口不一致");
+                                        exRe.orderCode = orderCodeNow;
+                                        exRe.epc       = e.code;
+                                        exRe.sku       = sku;
+                                        exRe.reason    = QString::fromUtf8("重扫落格号=%1 与首落格号=%2 不一致（按实际格口补记明细）")
+                                                             .arg(e.grid).arg(firstGrid);
+                                        exRe.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                                        m_pSortingDb->insertException(exRe);
+                                    }
+                                }
+                                else
+                                {
+                                    // 无首落记录（如明细表缺失）→ 按正常落格处理并补记明细
+                                    bDedupLanded = true;
+                                    HTTP_LOG_WARN("[重扫] 无首落记录 epc=%s grid=%s —— 按本次实际落格补记明细",
+                                        e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data());
+                                }
+                            }
+                            else
+                            {
+                                HTTP_LOG_WARN("EPC防重拦截 code=%s order=%s 重复反馈计件（明细按 (格口,EPC) 去重）",
                                     e.code.toLocal8Bit().data(),
                                     m_pWaveMgr->orderCode().toLocal8Bit().data());
                                 // ★ 2026-09-13 异常及时清理（先判定再计件，理由同"正常落格"分支）
@@ -660,23 +674,28 @@ HttpServer::HttpServer(QObject* parent)
                                     if (m_pSortingDb && m_pSortingDb->isOpen())
                                         m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
                                 }
-                                continue;
-                            }
-                            // 数据库级防重：检查 sort_txn 表是否已有记录
-                            if (m_pSortingDb && m_pSortingDb->isEpcAlreadySorted(m_pWaveMgr->orderCode(), e.code))
-                            {
-                                HTTP_LOG_WARN("EPC防重拦截(DB) code=%s order=%s 数据库已有记录，跳过",
-                                    e.code.toLocal8Bit().data(),
-                                    m_pWaveMgr->orderCode().toLocal8Bit().data());
-                                // ★ 2026-09-13 异常及时清理（同上）
-                                const bool wasExcDb = m_pWaveMgr->removeExceptionOnSorted(e.code);
-                                m_pWaveMgr->markSorted(e.code); // 同步内存状态（该反馈计 1 件）
-                                landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
-                                if (wasExcDb && m_pSortingDb->isOpen())
-                                    m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
-                                continue;
+                                bDedupLanded = true;
                             }
                         }
+                        // 数据库级防重（sort_txn 是否有记录）：同上——只判计数，明细统一由 (格口,EPC) 去重把关
+                        if (cfg.sortingEpcDedup && bDedupLanded == false &&
+                            m_pSortingDb && m_pSortingDb->isEpcAlreadySorted(m_pWaveMgr->orderCode(), e.code))
+                        {
+                            HTTP_LOG_WARN("EPC防重拦截(DB) code=%s order=%s 数据库已有记录（明细按 (格口,EPC) 去重）",
+                                e.code.toLocal8Bit().data(),
+                                m_pWaveMgr->orderCode().toLocal8Bit().data());
+                            // ★ 2026-09-13 异常及时清理（同上）
+                            const bool wasExcDb = m_pWaveMgr->removeExceptionOnSorted(e.code);
+                            m_pWaveMgr->markSorted(e.code); // 同步内存状态（该反馈计 1 件）
+                            landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
+                            if (wasExcDb && m_pSortingDb->isOpen())
+                                m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
+                            bDedupLanded = true;
+                        }
+                        // 重复类落格（重扫/重复反馈/DB防重）已在此处完成计数与异常清理
+                        // → 跳过"正常落格"的计件与超计划预警，直达下方"按格口记录分拣明细"（由 (格口,EPC) 去重把关）
+                        if (!bDedupLanded)
+                        {
 
                         // ──── 正常落格处理 ────
                         // ★ 2026-09-07 客户确认：不做格口计划上限限制，只如实记录落格已分拣数量。
@@ -781,9 +800,24 @@ HttpServer::HttpServer(QObject* parent)
                             std::lock_guard<std::mutex> lock(m_gridCountMutex);
                             m_gridSortedCount[gridKey]++;
                         }
+                        }   // ← if (!bDedupLanded) 结束：以上为"正常落格"的计件与超计划预警
 
-                        // 按格口记录分拣明细（锁格/满箱时回传 WMS 用）
+                        // ──── 按格口记录分拣明细（锁格/满箱时回传 WMS 用）────
+                        // ★ 2026-09-14 去重把关（客户确认：同一 EPC 同波次同格口只记 1 条）：
+                        //   重复类落格（重扫重投 / 重复反馈 / DB防重）只要该 (格口,EPC) 已有明细，
+                        //   就不再新增第二条 —— 否则同一物理件会在换箱前后各写一条，
+                        //   H7 按容器聚合上报时"旧箱+新箱各 1 件"，WMS 侧数量对不上并整条驳回。
+                        if (isLandingDetailRecorded(normalizeGridKey(e.grid), e.code))
                         {
+                            HTTP_LOG_WARN("[落格明细去重] 同一 EPC 在本波次该格口已有明细，本次不重复记录 "
+                                          "epc=%s grid=%s sku=%s（件仍只有 1 件，账实保持 1:1；已分拣计数照计）",
+                                e.code.toLocal8Bit().data(), normalizeGridKey(e.grid).toLocal8Bit().data(),
+                                sku.toLocal8Bit().data());
+                        }
+                        else
+                        {
+                            markLandingDetailRecorded(normalizeGridKey(e.grid), e.code);
+                            {
                             std::lock_guard<std::mutex> lock(m_gridRecordMutex);
                             GridSortRecord rec;
                             rec.inco   = e.code;                                  // EPC（链路主键）
@@ -816,16 +850,17 @@ HttpServer::HttpServer(QObject* parent)
                             if (m_pSortingDb)
                             {
                                 // ★ 从 EpcCache 获取 SKU 编码
-                                QString sku = m_pEpcCache ? m_pEpcCache->get(e.code) : "";
+                                QString skuRec = m_pEpcCache ? m_pEpcCache->get(e.code) : "";
                                 m_pSortingDb->insertRecord(
                                     m_pWaveMgr->orderCode(),
-                                    e.code, sku, e.grid, e.car,
+                                    e.code, skuRec, e.grid, e.car,
                                     e.firstCar, e.lastCar,
                                     1 /* ★ 2026-09-07 每条落格记录=1件（与 rec.gridCount 口径一致，不再写 SKU 计划数）*/,
                                     entry.volu,
                                     rec.boxcode /* ★ 2026-09-09 需求6：落格容器号 */);
                             }
-                        }
+                            }   // ← 记录明细（去重后仅首次写入）
+                        }       // ← else：本 (格口,EPC) 尚未记录过
                     }
 
                     if (entries.size() == 1)
@@ -2094,6 +2129,68 @@ void HttpServer::clearGridLandedCount()
 }
 
 // ============================================================================
+// ★ 2026-09-14 落格明细去重：同一 EPC「同波次同格口」只记 1 条落格明细
+//   现场根因（09-13 波次 PP202600000580）：同一件货被重扫重投后又落回原格口，
+//   在同一次换箱前后各写了一条落格明细（同一物理件 = 2 条）；H7 按容器聚合上报时
+//   同一件在"旧箱"与"新箱"各计 1 件 → WMS 侧数量对不上并整条驳回
+//   （[2107632]转移库存产品编码[115101001502703],库位[H-T0131],数量[1]无法分配）。
+//   口径（客户确认）：同一 EPC 在同一波次内落到同一格口只保留一条落格明细；
+//   若本次落格晚于已记录的那条（件被拿出后又被系统送回该格口），
+//   仅打日志、不重复记账（箱内该件仍只有 1 件，账实保持 1:1）。
+//   不变的部分：已分拣计数仍按 PLC 实测逐次累加（原有口径），本机制只约束"落格明细"。
+//   线程安全：反馈处理运行在 PLC 接收线程池内，故用独立互斥量保护。
+// ============================================================================
+bool HttpServer::isLandingDetailRecorded(const QString& gridKey, const QString& epc) const
+{
+    if (gridKey.isEmpty() || epc.isEmpty())
+        return false;
+    std::lock_guard<std::mutex> lock(m_landingDetailMutex);
+    return m_landingDetailKeys.contains(gridKey + "\n" + epc);
+}
+
+void HttpServer::markLandingDetailRecorded(const QString& gridKey, const QString& epc)
+{
+    if (gridKey.isEmpty() || epc.isEmpty())
+        return;
+    std::lock_guard<std::mutex> lock(m_landingDetailMutex);
+    m_landingDetailKeys.insert(gridKey + "\n" + epc,
+        QDateTime::currentMSecsSinceEpoch());
+    m_lastDetailGridByEpc[epc] = gridKey;
+}
+
+void HttpServer::noteBoxLandedEpcs(const QString& sku, const QString& gridKey, const QString& epc)
+{
+    // 与"每格口已落格计数"同源：同一 EPC 只计一次，供计划额度判定（allowIntoPlanGrid）使用
+    noteGridLanded(sku, gridKey, epc);
+}
+
+bool HttpServer::hasLandingDetail(const QString& epc) const
+{
+    if (epc.isEmpty())
+        return false;
+    std::lock_guard<std::mutex> lock(m_landingDetailMutex);
+    return m_lastDetailGridByEpc.contains(epc);
+}
+
+QString HttpServer::lastDetailGridOf(const QString& epc) const
+{
+    if (epc.isEmpty())
+        return QString();
+    std::lock_guard<std::mutex> lock(m_landingDetailMutex);
+    return m_lastDetailGridByEpc.value(epc);
+}
+
+void HttpServer::clearLandingDedup()
+{
+    std::lock_guard<std::mutex> lock(m_landingDetailMutex);
+    const int n = m_landingDetailKeys.size();
+    m_landingDetailKeys.clear();
+    m_lastDetailGridByEpc.clear();
+    if (n > 0)
+        HTTP_LOG_INFO("落格明细去重集合已清空 keys=%d（波次切换/新波次/完结清理）", n);
+}
+
+// ============================================================================
 // ★ 乙方案：H7 报文裁剪 —— 把某格口各 SKU 行的 qty 裁剪到"该格口计划件数"
 //   为什么需要：正常路径下超计划件已改投异常口、不会进箱；但"同时两件在线"等情形
 //   仍可能让箱内实落数超过计划，此时若按实落数上报，WMS 会回
@@ -2277,6 +2374,7 @@ void HttpServer::switchAwayCurrentWave()
     }
     clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随波次切出清空
     clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随波次切出清空
+    clearLandingDedup();     // ★ 2026-09-14 落格明细去重集合随波次切出清空
     m_pendingSkuQuery.clear();
     m_skuQueryRetryCount.clear();
     m_notReadyRetryCount.clear();
@@ -2624,6 +2722,7 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
     }
     clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随新波次清空
     clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随新波次清空
+    clearLandingDedup();     // ★ 2026-09-14 落格明细去重集合随新波次清空
     // ★ 新波次到来，清空旧波次相关数据（EpcCache 保留，RFID 推送独立于波次生命周期）
     // ★ 纠正5: 新波次开始时恢复所有禁用格口
     if (m_pPlcMgr)
@@ -3945,11 +4044,26 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
     // ── detailList 构建 ──
     // ★ 2026-09-06 客户确认口径：qty = 该容器(格口)落入该 SKU 的实际件数
     //   → 同一格口内按 SKU 聚合（每条落格记录=1件），不再逐 EPC 行塞计划数
+    // ★ 2026-09-14 报文层兜底去重：同一 EPC 在本格口只计 1 件
+    //   （落格侧已按 (格口,EPC) 去重，此处再兜一道：即使上游出现重复记录，
+    //     也不会把同一物理件在 H7 里算成 2 件 → WMS 侧数量对不上而整条驳回）
     QJsonArray detailList;
     QMap<QString, int> skuQtyMap;      // sku → 该格实分件数
     QStringList skuOrder;              // 保持出现顺序
+    QSet<QString> seenEpcsInGrid;      // 本格口已计数的 EPC（去重兜底）
+    int dupSkipped = 0;
     for (const GridSortRecord& rec : records)
     {
+        const QString epcKey = rec.inco.trimmed();
+        if (!epcKey.isEmpty())
+        {
+            if (seenEpcsInGrid.contains(epcKey))
+            {
+                ++dupSkipped;
+                continue;   // 同一 EPC 重复记录 → 本格口该件只算 1 件
+            }
+            seenEpcsInGrid.insert(epcKey);
+        }
         // ★ 2026-09-06 客户确认：sku 字段必须是 SKU 编码（EPC→SKU 绑定查询结果，落格时已固化 rec.sku），
         //   不能是 EPC 码、也不能发"未找到sku"占位串；缺 SKU 的情形已在 sendFullbox 前置整单拦截
         QString sku = rec.sku.isEmpty() ? getSkuByEpc(rec.inco) : rec.sku;
@@ -3959,6 +4073,9 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
             skuOrder.append(sku);
         skuQtyMap[sku] += rec.gridCount;   // 每条落格记录=1件
     }
+    if (dupSkipped > 0)
+        HTTP_LOG_WARN("满箱回传报文（H7） 报文层去重 grid=%s box=%s 跳过同一EPC重复记录=%d 条（本格口每件只计一次）",
+            grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data(), dupSkipped);
     for (const QString& sku : skuOrder)
     {
         QJsonObject item;
@@ -5376,6 +5493,7 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
         }
         clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随波次清理
         clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随波次清理
+        clearLandingDedup();     // ★ 2026-09-14 落格明细去重集合随波次清理
         if (m_pPlcMgr)
             m_pPlcMgr->enableAllGrids();
         m_pendingSkuQuery.clear();
