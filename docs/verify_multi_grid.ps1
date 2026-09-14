@@ -43,6 +43,9 @@ if (-not $files -or $files.Count -eq 0) {
     Write-Bad "日志目录下没有 *.log 文件：$LogDir"
     exit 1
 }
+
+# 日志统一按 UTF-8 解码（hlog 输出为 UTF-8）；改用容错解码，避免个别非 UTF-8 字节导致脚本中断
+$Utf8Relaxed = New-Object System.Text.UTF8Encoding($false, $false)
 Write-Host ("日志目录：{0}（{1} 个日志文件，共 {2:N1} MB，最后写入 {3}）" -f `
     $LogDir, $files.Count, (($files | Measure-Object Length -Sum).Sum / 1MB), `
     (($files | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime))
@@ -63,13 +66,18 @@ $reWarn  = [regex]'\[超计划-预警\]\s*格口(\S+)\s+容器(\S+)\s+SKU=(\S+)\
 $reNum   = [regex]'"num"\s*:\s*"(\d+)"'
 
 foreach ($f in $files) {
-    foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
-        if ($line -like '*同品多格口分配*') { if ($rePlan.IsMatch($line))  { $planLines.Add($line) } ; continue }
-        if ($line -like '*选格-按计划分配*') { if ($reAlloc.IsMatch($line)) { $allocLines.Add($line) } ; continue }
-        if ($line -like '*选格-超计划*')    { if ($reOver.IsMatch($line))  { $overLines.Add($line) } ; continue }
-        if ($line -like '*已真实落入异常口*'){ if ($reExcL.IsMatch($line)) { $excLandLines.Add($line) } ; continue }
-        if ($line -like '*超计划-预警*')    { if ($reWarn.IsMatch($line))  { $warnLines.Add($line) } ; continue }
-        if ($line -like '*"num"*')          { foreach ($m in $reNum.Matches($line)) { [void]$h7NumGrids.Add($m.Groups[1].Value) } }
+    $reader = New-Object System.IO.StreamReader($f.FullName, $Utf8Relaxed)
+    try {
+        while ($null -ne ($line = $reader.ReadLine())) {
+            if ($line -like '*同品多格口分配*') { if ($rePlan.IsMatch($line))  { $planLines.Add($line) } ; continue }
+            if ($line -like '*选格-按计划分配*') { if ($reAlloc.IsMatch($line)) { $allocLines.Add($line) } ; continue }
+            if ($line -like '*选格-超计划*')    { if ($reOver.IsMatch($line))  { $overLines.Add($line) } ; continue }
+            if ($line -like '*已真实落入异常口*'){ if ($reExcL.IsMatch($line)) { $excLandLines.Add($line) } ; continue }
+            if ($line -like '*超计划-预警*')    { if ($reWarn.IsMatch($line))  { $warnLines.Add($line) } ; continue }
+            if ($line -like '*"num"*')          { foreach ($m in $reNum.Matches($line)) { [void]$h7NumGrids.Add($m.Groups[1].Value) } }
+        }
+    } finally {
+        $reader.Close()
     }
 }
 
