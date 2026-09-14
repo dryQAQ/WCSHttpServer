@@ -293,6 +293,8 @@ public:
     PlcPlanAllocInfo planAllocOf(const QString& sku);
     // 落格成功登记：PLC 反馈确认落入某格口某 SKU 后调用（供选格计数使用，同一 EPC 只计一次）
     void noteGridLanded(const QString& sku, const QString& gridKey, const QString& epc);
+    // ★ 2026-09-14 落格即计时归零（只在主线程执行，见实现处说明）
+    void noteEpcLanded(const QString& epc);
     // 清空按格口落格计数（H4 新波次重下发/波次清理时调用，与计划件数一同重置）
     void clearGridLandedCount();
 
@@ -315,6 +317,9 @@ signals:
     // ★ 2026-09-04 P0修复：波次明细异步落库完成（业务线程池执行完发回主线程，推进 BOUND）
     //   ok=true 推进 BOUND；ok=false 保持 CREATED（落库重试已耗尽，写异常表+UI告警）
     void wavePersistenceFinished(const QString& orderCode, bool ok, int skuCount);
+    // ★ 2026-09-14 落格即计时归零：PLC 反馈线程池内判定"已落格"的 EPC 集合，
+    //   经本信号回主线程执行（在途语义容器仅主线程可访问）
+    void epcsLanded(const QStringList& epcs);
 
     // ──── 未完成波次手动重传面板信号 ────
     // outboxResendReady: 请求发送一条历史出站报文（kind: "fullbox"|"end"），由 MainWindow 中继到 HttpClient

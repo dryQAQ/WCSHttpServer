@@ -108,6 +108,14 @@ HttpServer::HttpServer(QObject* parent)
     connect(this, &HttpServer::wavePersistenceFinished, this,
         &HttpServer::onWavePersistenceFinished);
 
+    // ★ 2026-09-14 落格即计时归零：PLC 反馈线程池内判定"已落格"的 EPC → 回主线程执行归零
+    //   （在途语义容器 m_sentEpcs/m_rescanResendTimes 仅主线程访问，不能在线程池里直接改）
+    connect(this, &HttpServer::epcsLanded, this,
+        [this](const QStringList& epcs) {
+            for (const QString& epc : epcs)
+                noteEpcLanded(epc);
+        }, Qt::QueuedConnection);
+
     // ★ 波次状态变化 → 同步 return_wave.status 到数据库（异步）
     //   未完成波次面板/重启检测/恢复 依赖 DB 状态准确；此前仅取消时落库，其余状态变更未持久化
     connect(m_pWaveMgr, &WaveManager::waveStatusChanged, this,
@@ -328,7 +336,11 @@ HttpServer::HttpServer(QObject* parent)
             // ★ 提交到 PLC 反馈接收专用线程池（不阻塞主线程）
             if (m_pPlcRecvPool)
             {
-                m_pPlcRecvPool->commitNoWait([this, entries, rescanEpcs]() {
+                // ★ 2026-09-14 本批"投递已结束"的 EPC（正常落格 / 防重分支 / 超计划落异常口）
+                //   → 批处理结束后回主线程计时归零。用引用捕获：lambda 无 detach，
+                //   commitNoWait 保证本帧内执行完（与已有 entries/rescanEpcs 同源用法）。
+                QSet<QString> landedEpcs;
+                m_pPlcRecvPool->commitNoWait([this, entries, rescanEpcs, &landedEpcs]() {
                     AppConfig& cfg = ConfigManager::instance()->config();
                     int waveStatus = m_pWaveMgr->status();
 
@@ -392,6 +404,7 @@ HttpServer::HttpServer(QObject* parent)
                                 }
                                 // 计时/在途复位（与其它异常分支一致，便于现场重新投放）
                                 if (m_pEpcCache) m_pEpcCache->resetTiming(e.code);
+                                landedEpcs.insert(e.code);   // ★ 超计划件也已落格（异常口）→ 一并归零在途/重发计数
                                 continue;   // ★ 不再进入正常落格处理
                             }
                         }
@@ -449,6 +462,7 @@ HttpServer::HttpServer(QObject* parent)
                                 //   （markSorted 内部也会移除异常集合，顺序颠倒会导致判定恒为 false）
                                 const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                 m_pWaveMgr->markSorted(e.code);
+                                landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
                                 if (wasExc)
                                 {
                                     HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(无匹配留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
@@ -488,6 +502,7 @@ HttpServer::HttpServer(QObject* parent)
                                     // ★ 2026-09-13 异常及时清理（同"无匹配"分支：先判定再计件）
                                     const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                     m_pWaveMgr->markSorted(e.code);
+                                    landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
                                     if (wasExc)
                                     {
                                         HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(无绑定留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
@@ -541,6 +556,7 @@ HttpServer::HttpServer(QObject* parent)
                                     // ★ 2026-09-13 异常及时清理（同"无匹配/无绑定"分支：先判定再计件）
                                     const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                     m_pWaveMgr->markSorted(e.code);
+                                    landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
                                     if (wasExc)
                                     {
                                         HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(落错格留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
@@ -637,6 +653,7 @@ HttpServer::HttpServer(QObject* parent)
                                 // ★ 2026-09-13 异常及时清理（先判定再计件，理由同"正常落格"分支）
                                 const bool wasExcDup = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                 m_pWaveMgr->markSorted(e.code); // 重复反馈也计 1 件（以PLC实时记录为准）
+                                landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
                                 if (wasExcDup)
                                 {
                                     HTTP_LOG_WARN("[异常清理] code=%s 重复反馈落格 → 处理/异常口 -1", e.code.toLocal8Bit().data());
@@ -654,6 +671,7 @@ HttpServer::HttpServer(QObject* parent)
                                 // ★ 2026-09-13 异常及时清理（同上）
                                 const bool wasExcDb = m_pWaveMgr->removeExceptionOnSorted(e.code);
                                 m_pWaveMgr->markSorted(e.code); // 同步内存状态（该反馈计 1 件）
+                                landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
                                 if (wasExcDb && m_pSortingDb->isOpen())
                                     m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
                                 continue;
@@ -742,6 +760,7 @@ HttpServer::HttpServer(QObject* parent)
                         //   若先 markSorted，这里的判定就永远为 false，异常留痕无法闭环。
                         const bool wasExcNormal = m_pWaveMgr->removeExceptionOnSorted(e.code);
                         m_pWaveMgr->markSorted(e.code);
+                        landedEpcs.insert(e.code);   // ★ 2026-09-14 已落格 → 批处理后归零超时计时/在途
                         if (wasExcNormal)
                         {
                             // 处理/异常口数量已 −1（二者同源）；把该 EPC 的异常留痕归档为"已处理"
@@ -815,6 +834,10 @@ HttpServer::HttpServer(QObject* parent)
                             entries[0].code.toLocal8Bit().data(),
                             entries[0].grid.toLocal8Bit().data());
                     }
+
+                    // ★ 2026-09-14 本批已落格的 EPC → 回主线程做"计时归零/在途清零"（见 noteEpcLanded 说明）
+                    if (!landedEpcs.isEmpty())
+                        emit epcsLanded(QStringList(landedEpcs.constBegin(), landedEpcs.constEnd()));
                 });
             }
         });
@@ -4610,6 +4633,37 @@ bool HttpServer::isPlcSendInFlight(const QString& epc) const
 int HttpServer::rescanResendTimes(const QString& epc) const
 {
     return m_rescanResendTimes.value(epc, 0);
+}
+
+// ============================================================================
+// ★ 2026-09-14 落格即计时归零（统一入口，覆盖全部落格分支）
+//   为什么需要：EpcCache 的「RFID推送→PLC发送」超时窗口（PLC_SEND_TIMEOUT_MS=1s）以
+//   receivedAt 为起点。件已真实落格后，这一轮计时就没有意义了；若不清零，
+//   该 EPC 之后被重新推送（二次上传/重扫重投）时会沿用旧的 receivedAt，
+//   在重投链路里被立刻判"发送超时"→ 本该重新下发的件反而进不了格口。
+//   （重扫重投在 RFID 推送入口已有一次归零，但落格本身此前没有归零。）
+//   线程安全（重要）：本方法**只在主线程执行**（由 epcsLanded 信号驱动）——
+//     m_sentEpcs / m_rescanResendTimes / m_lastPlcSendMs 等"在途语义"容器仅在主线程访问，
+//     落格分支运行在 PLC 反馈接收线程池内，不能直接读写它们。
+//   影响面（客户关注"会不会影响下一波次"）：**不会**。
+//     · 只改这一个 EPC 的条目，不触碰其它 EPC、不改波次状态、不改绑定、不改计数；
+//     · EpcCache 条目本就有 TTL，跨波次会自然过期；H4 新波次还会清空在途/冷却/重发计数；
+//     · 同一 EPC 在下一波次再次出现时按新条目重新起算，行为与首次一致。
+// ============================================================================
+void HttpServer::noteEpcLanded(const QString& epc)
+{
+    if (epc.isEmpty())
+        return;
+
+    const bool wasInFlight = m_sentEpcs.contains(epc);
+    if (m_pEpcCache)
+        m_pEpcCache->resetTiming(epc);     // receivedAt=now、sentAt 清空 → 超时窗口重新起算
+    m_rescanResendTimes.remove(epc);       // 该件本轮投递已结束，重发次数清零
+    clearEpcInFlight(epc);
+
+    HTTP_LOG_INFO("[落格归零] epc=%s 已落格 → 超时计时归0、在途/重发计数清零（%s）",
+        epc.toLocal8Bit().data(),
+        wasInFlight ? "本次确为在途件" : "本次未记为在途(可能已由批处理入口清理)");
 }
 
 bool HttpServer::isEpcInFlightReadOnly(const QString& epc) const
