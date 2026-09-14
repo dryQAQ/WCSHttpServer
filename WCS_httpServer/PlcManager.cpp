@@ -449,13 +449,46 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
         //   ② 在可用格口内按需求5选格：无锁格→首个匹配；部分锁格→首个未锁格；全部锁格→首个匹配
         QString selReason;
         const int mapCount = (int)vecGrid.size();
+        // ★ 2026-09-14 计划分配表：本次下发的认领信息（发送失败时按 EPC 释放）
+        QString allocClaimEpc;     // 已认领的 EPC（= code）
+        bool    allocClaimHeld = false;
         {
-            std::vector<int> avail;   // 可用 = 未被 WCS 禁用（满箱未重绑）
-            for (int g : vecGrid)
+            // ── 候选集 = 映射串 ∪ 分配表内该 SKU 的计划格口 ──
+            //   ★ 为什么取并集：改造前"候选"来自映射串、而"计划"来自计划表，两套真相；
+            //     当 H4 计划了某格口但映射串没有（或反之）时，会静默退回"取首个格口"老逻辑。
+            //     并集后候选集由两者共同决定，且**结果只取决于计划**（顺序在编译期已固化）。
+            std::vector<int> cand = vecGrid;
+            std::vector<int> avail;
+
+            // ── ① 只读预查计划（bClaim=false：**不扣额度**，仅用于判断是否需要缺口搬迁）──
+            //   为什么先只读：若这一步就认领额度，搬迁后还要再认领一次，前一次会泄漏为
+            //   "在途"直到超时才归还（白占额度 → 计划件反而落不进）。
+            PlcPlanAllocInfo pinfo;
+            bool bHasPlan = false;
+            if (m_planAllocCb)
             {
-                if (!isGridDisabled(g))
-                    avail.push_back(g);
+                pinfo = m_planAllocCb(code, code, false);
+                bHasPlan = pinfo.valid;
             }
+
+            // 合并计划格口进候选集（去重）
+            if (bHasPlan)
+            {
+                for (auto pit = pinfo.planQtyPerGrid.constBegin(); pit != pinfo.planQtyPerGrid.constEnd(); ++pit)
+                {
+                    bool okG = false;
+                    const int g = pit.key().toInt(&okG);
+                    if (!okG || g <= 0) continue;
+                    bool dup = false;
+                    for (int x : cand) if (x == g) { dup = true; break; }
+                    if (!dup) cand.push_back(g);
+                }
+                // ★ 确定性：候选按格口号升序（消除 items 到达顺序对决策的影响 → 可重现）
+                std::sort(cand.begin(), cand.end());
+            }
+
+            for (int g : cand)
+                if (!isGridDisabled(g)) avail.push_back(g);
 
             if (avail.empty())
             {
@@ -465,105 +498,142 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                 continue;   // ★ 决策③：禁用格口不发（单格口映射同样跳过）
             }
 
-            // ★ 2026-09-14 优先：同品多格口「按计划件数分配」（客户口径：以PLC反馈落格成功为准计数）
-            //   例：H4 下发 SKU=106101134113101 → 22034 计划 1 件 + 22048 计划 3 件，
+            // ════════════════════════════════════════════════════════════════════
+            // ★ 2026-09-14 同品多格口「按计划件数分配」（客户口径：以PLC反馈落格成功为准计数）
+            //   例：H4 下发 SKU=106101134113101 → 22034(正常分拣) 计划 1 件
+            //                                  + 22048(发货)     计划 3 件，
             //       则前 1 件去 34、后 3 件去 48，而不是全部取首个格口。
-            //   满额后：若配置了异常口（exceptionGrid）→ 多余件发往异常口；否则退回旧「取首个」逻辑发计划格口。
+            //   额度口径 = 计划 − 已落 − **在途认领**：已落/在途都算占用 →
+            //       同时两件在线 / 人工多投时，第 2 件在**下发时刻**就被拦住并改投异常口
+            //       （这是修复"箱内实落 > 计划"的关键，改造前只查已落数会漏判）。
+            //   满额后：配置了异常口(66) → 多余件发往异常口；未配置 → 退回旧「取首个」逻辑。
+            // ════════════════════════════════════════════════════════════════════
             bool bPlanDecided = false;
-            // ★ 2026-09-14 计划分配：多格口按各格口计划件数分流；单格口则只判"是否已满额"
-            //   （单格口时 avail.size()==1 也要走这里 —— 否则超计划件仍被发往计划格口，
-            //     既与"多余件一律去异常口"的规则不符，又会被 H7 裁剪掉、WMS 侧反而少账）
-            if (m_planAllocCb && avail.size() >= 1)
+            // ★ 是否已正式认领额度（bClaim=true 只允许发生一次；见上方"只读预查"说明）
+            bool bClaimed = false;
+            if (bHasPlan)
             {
-                PlcPlanAllocInfo info = m_planAllocCb(code);
-                // ★ 计划表 key 为 3 位内部 key（如 "034"），此处逐格口归一后再查
-                auto planKeyOf = [](int g) {
-                    return QString("%1").arg(g, GRID_KEY_PADDING, 10, QChar('0'));
+                // 类型显示名（每格口类型：0=正常分拣, 1=异常, 2=发货）
+                auto typeNameOf = [](const QString& t) -> QString {
+                    if (t == "1") return QString::fromUtf8("异常");
+                    if (t == "2") return QString::fromUtf8("发货");
+                    return QString::fromUtf8("正常分拣");
                 };
-                bool bHasPlan = false;
-                if (info.valid)
+                auto keyOf = [](int g) { return QString("%1").arg(g, GRID_KEY_PADDING, 10, QChar('0')); };
+                // 分配表摘要（日志用）：「格口(类型):计划N件/已落M/在途K」
+                auto planDescOf = [&]() -> QString {
+                    QStringList sl;
+                    for (auto pit = pinfo.planQtyPerGrid.constBegin(); pit != pinfo.planQtyPerGrid.constEnd(); ++pit)
+                        sl << QString("%1(%2):%3件/已落%4/在途%5").arg(pit.key())
+                                  .arg(typeNameOf(pinfo.gridTypePerGrid.value(pit.key())))
+                                  .arg(pit.value())
+                                  .arg(pinfo.landedNum.value(pit.key(), 0))
+                                  .arg(pinfo.reservNum.value(pit.key(), 0));
+                    return sl.join(" ");
+                };
+
+                // ── ① 计划格口不可用（禁用/锁格）→ 未完成件搬迁到同 SKU 其它可用计划格口 ──
+                //   为什么：计划格口换箱期间其计划件数不应被静默丢弃（客户口径：按各格口数量分）。
+                //   只搬"未完成额度"，已落格件数不动。
                 {
-                    for (int g : avail)
+                    AppConfig& acfg = ConfigManager::instance()->config();
+                    if (acfg.allocGapMoveOnDisabled || acfg.allocGapMoveOnLocked)
                     {
-                        if (info.planQtyPerGrid.contains(planKeyOf(g))) { bHasPlan = true; break; }
+                        for (auto pit = pinfo.planQtyPerGrid.constBegin(); pit != pinfo.planQtyPerGrid.constEnd(); ++pit)
+                        {
+                            bool okG = false;
+                            const int g = pit.key().toInt(&okG);
+                            if (!okG || g <= 0) continue;
+                            const int done = pinfo.landedNum.value(pit.key(), 0) + pinfo.reservNum.value(pit.key(), 0);
+                            const int gap  = pit.value() - done;
+                            if (gap <= 0) continue;
+
+                            const bool bDisabled = isGridDisabled(g);
+                            const bool bLocked   = isGridLocked(g);
+                            const bool bMove     = (bDisabled && acfg.allocGapMoveOnDisabled) ||
+                                                   (bLocked && acfg.allocGapMoveOnLocked);
+                            if (!bMove) continue;
+
+                            // 找一个可用的计划格口承接（按格口号升序，确定）
+                            for (auto qit = pinfo.planQtyPerGrid.constBegin(); qit != pinfo.planQtyPerGrid.constEnd(); ++qit)
+                            {
+                                bool okT = false;
+                                const int t = qit.key().toInt(&okT);
+                                if (!okT || t <= 0 || t == g) continue;
+                                if (isGridDisabled(t) || isGridLocked(t)) continue;
+
+                                if (m_moveGapCb && m_moveGapCb(code, (qint16)g, (qint16)t) > 0)
+                                {
+                                    PLC_LOG_WARN("计划搬迁 code=%s 格口%d%s → 未完成%d件转入格口%d（同SKU计划格口） 分配表=%s",
+                                        code.toLocal8Bit().data(), g,
+                                        bDisabled ? "满箱未重绑(禁用)" : "物理锁格",
+                                        gap, t, planDescOf().toLocal8Bit().data());
+                                    break;
+                                }
+                            }
+                        }
+                        // 搬迁后计划已变化 → **正式认领**（bClaim=true，锁内完成判定+扣额度）
+                        pinfo = m_planAllocCb(code, code, true);
+                        bHasPlan = pinfo.valid;
+                        bClaimed = true;
                     }
                 }
-                if (bHasPlan)
-                {
-                    // 类型显示名（每格口类型：0=分类/正常分拣, 1=异常, 2=发货）
-                    auto typeNameOf = [](const QString& t) -> QString {
-                        if (t == "1") return QString::fromUtf8("异常");
-                        if (t == "2") return QString::fromUtf8("发货");
-                        return QString::fromUtf8("分类");
-                    };
-                    // 分配表摘要（日志用）：「格口(类型):计划N件/已落M」
-                    QString planDesc;
-                    {
-                        QStringList sl;
-                        for (auto pit = info.planQtyPerGrid.constBegin(); pit != info.planQtyPerGrid.constEnd(); ++pit)
-                            sl << QString("%1(%2):%3件/已落%4").arg(pit.key())
-                                      .arg(typeNameOf(info.gridTypePerGrid.value(pit.key())))
-                                      .arg(pit.value())
-                                      .arg(info.landedNum.value(pit.key(), 0));
-                        planDesc = sl.join(" ");
-                    }
-                    int chosen = -1;
-                    int planQty = 0, landed = 0;
-                    for (int g : avail)
-                    {
-                        const QString key = planKeyOf(g);
-                        auto pit = info.planQtyPerGrid.constFind(key);
-                        if (pit == info.planQtyPerGrid.constEnd())
-                            continue;                     // 该格口不在本 SKU 计划内
-                        int done = info.landedNum.value(key, 0);
-                        if (done < pit.value())
-                        {
-                            chosen  = g;
-                            planQty = pit.value();
-                            landed  = done;
-                            break;                        // 取首个「未满额」的计划格口（按映射顺序）
-                        }
-                    }
 
-                    if (chosen > 0)
+                // 未走搬迁路径时，此处补一次正式认领（bClaim=false 的预查不扣额度）
+                if (bHasPlan && !bClaimed)
+                {
+                    pinfo = m_planAllocCb(code, code, true);
+                    bHasPlan = pinfo.valid;
+                    bClaimed = true;
+                }
+
+                if (bHasPlan && pinfo.claimOk)
+                {
+                    // ── ② 已认领到额度（回调已在锁内扣减）：直接下发该格口 ──
+                    //  pinfo.claimPlanIdx < 0 表示"该件此前已落入过原格口（重投）→ 放行且未新增认领"
+                    vecGrid = { pinfo.claimGrid };
+                    bPlanDecided = true;
+                    allocClaimEpc  = code;
+                    allocClaimHeld = (pinfo.claimPlanIdx >= 0);   // 未新增认领则无需释放
+                    const QString ck = keyOf(pinfo.claimGrid);
+                    const QString cType = typeNameOf(pinfo.gridTypePerGrid.value(ck));
+                    selReason = QString::fromUtf8("按计划分配[%1]→格口%2(%3,计划%4件,已落%5,在途%6)%7")
+                                    .arg(gridStr).arg(pinfo.claimGrid).arg(cType)
+                                    .arg(pinfo.planQtyPerGrid.value(ck))
+                                    .arg(pinfo.landedNum.value(ck, 0))
+                                    .arg(pinfo.reservNum.value(ck, 0) + (pinfo.claimPlanIdx >= 0 ? 1 : 0))
+                                    .arg(pinfo.allEpcsLanded ? QString::fromUtf8("(重投回原格口,不新增额度)") : QString());
+                    if (m_selectLogCb ? m_selectLogCb() : true)
                     {
-                        vecGrid   = { chosen };
-                        bPlanDecided = true;
-                        const QString chosenType = typeNameOf(info.gridTypePerGrid.value(planKeyOf(chosen)));
-                        selReason = QString::fromUtf8("按计划分配[%1]→格口%2(%3,计划%4件,已落%5件)")
-                                        .arg(gridStr).arg(chosen).arg(chosenType).arg(planQty).arg(landed);
-                        PLC_LOG_INFO("选格-按计划分配 code=%s 映射=[%s] 选中格=%d(%s) 计划=%d件 已落=%d件 分配表=%s",
+                        PLC_LOG_INFO("选格-按计划分配 code=%s 映射=[%s] 选中格=%d(%s) 计划=%d件 已落=%d件 在途=%d件 分配表=%s",
                             code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
-                            chosen, chosenType.toLocal8Bit().data(),
-                            planQty, landed, planDesc.toLocal8Bit().data());
+                            pinfo.claimGrid, cType.toLocal8Bit().data(),
+                            pinfo.planQtyPerGrid.value(ck), pinfo.landedNum.value(ck, 0),
+                            pinfo.reservNum.value(ck, 0), planDescOf().toLocal8Bit().data());
+                    }
+                }
+                else if (bHasPlan)
+                {
+                    // ── ③ 各计划格口均已满额（已落+在途 = 计划）→ 超计划件 ──
+                    if (pinfo.excGrid > 0)
+                    {
+                        if (isGridDisabled(pinfo.excGrid) || isGridLocked(pinfo.excGrid))
+                            PLC_LOG_WARN("选格-超计划 code=%s 异常口%d 当前%s，仍按超计划发往该口（若PLC回报无格口/失败，请先给异常口绑定容器）",
+                                code.toLocal8Bit().data(), pinfo.excGrid,
+                                isGridDisabled(pinfo.excGrid) ? "满箱未重绑(禁用)" : "物理锁格");
+                        vecGrid      = { pinfo.excGrid };
+                        bPlanDecided = true;
+                        selReason = QString::fromUtf8("超计划[%1]计划格口已满(%2)→发往异常口%3")
+                                        .arg(gridStr).arg(planDescOf()).arg(pinfo.excGrid);
+                        PLC_LOG_WARN("选格-超计划 code=%s 映射=[%s] 分配表=%s → 发往异常口%d（不再占用计划格口）",
+                            code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                            planDescOf().toLocal8Bit().data(), pinfo.excGrid);
                     }
                     else
                     {
-                        // 各计划格口均已落满 → 超计划件
-                        if (info.excGrid > 0)
-                        {
-                            if (isGridDisabled(info.excGrid) || isGridLocked(info.excGrid))
-                                PLC_LOG_WARN("选格-超计划 code=%s 异常口%d 当前%s，仍按超计划发往该口（若PLC回报无格口/失败，请先给异常口绑定容器）",
-                                    code.toLocal8Bit().data(), info.excGrid,
-                                    isGridDisabled(info.excGrid) ? "满箱未重绑(禁用)" : "物理锁格");
-                            vecGrid      = { info.excGrid };
-                            bPlanDecided = true;
-                            if (gridStr.split(',', Qt::SkipEmptyParts).contains(QString::number(info.excGrid)))
-                                selReason = QString::fromUtf8("超计划[%1]计划格口已满(%2)→异常口%3（映射内已含）")
-                                                .arg(gridStr).arg(planDesc).arg(info.excGrid);
-                            else
-                                selReason = QString::fromUtf8("超计划[%1]计划格口已满(%2)→发往异常口%3")
-                                                .arg(gridStr).arg(planDesc).arg(info.excGrid);
-                            PLC_LOG_WARN("选格-超计划 code=%s 映射=[%s] 分配表=%s → 发往异常口%d（不再占用计划格口）",
-                                code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
-                                planDesc.toLocal8Bit().data(), info.excGrid);
-                        }
-                        else
-                        {
-                            PLC_LOG_WARN("选格-超计划 code=%s 映射=[%s] 分配表=%s → 未配置异常口，按旧逻辑取首个格口%d（请人工确认多余件）",
-                                code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
-                                planDesc.toLocal8Bit().data(), avail[0]);
-                        }
+                        PLC_LOG_WARN("选格-超计划 code=%s 映射=[%s] 分配表=%s → 未配置异常口，按旧逻辑取首个格口%d（请人工确认多余件）",
+                            code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                            planDescOf().toLocal8Bit().data(), avail[0]);
                     }
                 }
             }
@@ -589,8 +659,10 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                         selReason = QString::fromUtf8("多格口[%1]部分物理锁格→首个未锁格%2").arg(gridStr).arg(unlocked[0]);
                     else if ((int)avail.size() < mapCount)
                         selReason = QString::fromUtf8("多格口[%1]部分格口满箱未重绑→可用中取首个%2").arg(gridStr).arg(unlocked[0]);
+                    else if (!bHasPlan)
+                        selReason = QString::fromUtf8("无计划信息[%1]→按原逻辑取首个%2").arg(gridStr).arg(unlocked[0]);
                     else
-                        selReason = QString::fromUtf8("多格口[%1]无锁格→取首个匹配").arg(gridStr);
+                        selReason = QString::fromUtf8("多格口[%1]无锁格→取首个匹配").arg(unlocked[0]);
                     vecGrid = { unlocked[0] };
                 }
             }
@@ -628,12 +700,14 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
         if (m_pSendPool)
         {
             m_pSendPool->commitNoWait([this, code, vecGrid, car]() {
-                sendCodeInfo(code, vecGrid, car);
+                const bool ok = sendCodeInfo(code, vecGrid, car);
+                if (m_sendResultCb) m_sendResultCb(code, ok);
             });
         }
         else
         {
-            sendCodeInfo(code, vecGrid, car);
+            const bool ok = sendCodeInfo(code, vecGrid, car);
+            if (m_sendResultCb) m_sendResultCb(code, ok);
         }
 
         successCount++;

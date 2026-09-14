@@ -213,6 +213,10 @@ public:
     // ──── S8 新增：对账 + H5互斥（T-S8-01/02/06）────
     WaveReconciliation reconcile() const;            // 波次对账：计划/实分/异常/完结状态
     bool tryCancelWave();                            // ★ H5取消：加锁后判定isSortingStarted+原子迁移（T-S8-06）
+    // ★ 2026-09-14 仅供无人值守 E2E 的强制取消：跳过"已开始分拣不允许取消"判定，
+    //   直接原子迁移到 CANCELLED（于是后续清理/接替下一波次/挂起件补发链路照常执行）。
+    //   调用方必须自行确认环境变量 WCS_E2E_ALLOW_CANCEL_SORTING=1，生产不得调用。
+    bool forceCancelForE2E();
 
     // ──── 管理 ────
     void clearWave();                           // 清理当前波次数据，状态→IDLE

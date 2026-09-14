@@ -1,6 +1,7 @@
 #include "ParseWorker.h"
 #include "LogService.h"
 #include "WmsGridCode.h"     // ★ 2026-09-07 WMS 格口编码(22+3位) 入参归一
+#include "PlanAllocTable.h"  // ★ 2026-09-14 计划分配表（编译入参 PlanGridInput）
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -14,6 +15,17 @@
 ParseWorker::ParseWorker(TaskQueue* pQueue, GridBuffer* pBuffer, QObject* parent)
     : QThread(parent), m_pQueue(pQueue), m_pBuffer(pBuffer)
 {
+    // ★ 2026-09-14 跨线程信号 waveParsed 的参数元类型注册（必须在 connect 之前完成）
+    //   为什么必须：waveParsed 走 Qt::QueuedConnection，Qt 需按**类型名字面量**构造参数副本；
+    //   任一参数类型未注册 → **整条排队调用被丢弃**（只打一条 QObject::connect 警告），
+    //   现场表现为"解析完成但主线程毫无反应"（波次不注册/不建分配表/明细不落库）。
+    //   ★ 注册名必须与 moc 生成的类型名字面量**逐字符一致**（含模板嵌套里的空格），
+    //     否则名字不同 = 依然查不到。以下字符串取自 moc_ParseWorker.cpp 的元数据段：
+    //       QSet<QString>
+    //       QVector<QPair<QString,QVector<PlanGridInput> > >
+    qRegisterMetaType<QSet<QString>>("QSet<QString>");
+    qRegisterMetaType<QVector<QPair<QString, QVector<PlanGridInput>>>>(
+        "QVector<QPair<QString,QVector<PlanGridInput> > >");
 }
 
 void ParseWorker::stop()
@@ -166,13 +178,15 @@ void ParseWorker::run()
                             inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), exist.toLocal8Bit().data());
                     }
                 }
-                // ★ 2026-09-14 保留「格口→计划件数」：同品同格口的重复行累加、新格口另计，
+                // ★ 2026-09-14 保留「格口→计划件数」：同品同格口的重复行**累加**、新格口另计，
                 //   并据此重算 gridCount（=各格口计划件数之和，与原「总计划件数」口径一致）。
+                //   ★ 为什么由"取大者"改为"累加"：H4 同一 (SKU,格口) 出现多行时，语义是
+                //     "这个产品在这个格口一共计划几件"，取大者会让计划数偏小、且与落库
+                //     恢复（累加）口径不一致 → 同一波次恢复前后结果不同（不可追溯）。
                 //   ★ key 统一用 normalizeGridKey（3 位内部 key，如 "034"）：选格侧按 3 位 key 查表，
                 //     早期写成裸数字 "34" 会查不到、分配失效。
                 const QString gKey = normalizeGridKey(gridNum);
-                int& q = ent.planQtyPerGrid[gKey];      // 不存在则插入
-                q = gridNumber > q ? gridNumber : q;    // 同格口重复行取下发值（一般相等，取大者更安全）
+                ent.planQtyPerGrid[gKey] += gridNumber;   // 同格口多行累加
                 // ★ 每格口类型一并保存（同品可同时计划到"正常分拣(分类)"与"发货"格口，各格口数量不同）
                 if (!gridType.isEmpty())
                     ent.gridTypePerGrid.insert(gKey, gridType);
@@ -269,12 +283,52 @@ void ParseWorker::run()
         }
         WCS_INFO("[SKU映射] ==== 映射表结束(共%d条) ====", newMap->size());
 
+        // ════════════════════════════════════════════════════════════════════
+        // ★ 2026-09-14 计划分配表：编译入参（**在解析线程构建，主线程只做编译**）
+        //   口径（客户确认）：
+        //     · 每个格口有"对应这个产品的数量"——一个 SKU 可同时计划到
+        //       「正常分拣格口」与「发货格口」，各格口各一份数量；
+        //     · 同格口多行 = 该格口计划数累加（已在上面按 += 处理）。
+        //   本处只把「SKU → [(格口,类型,件数)]」整理出来，顺序无关——
+        //   真正的分配表由 HttpServer 在主线程一次性编译（保证单一写线程）。
+        // ════════════════════════════════════════════════════════════════════
+        QVector<QPair<QString, QVector<PlanGridInput>>> skuPlans;
+        skuPlans.reserve(newMap->size());
+        for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it)
+        {
+            const GridEntry& e = it.value();
+            if (e.planQtyPerGrid.isEmpty()) continue;
+
+            QVector<PlanGridInput> gs;
+            gs.reserve(e.planQtyPerGrid.size());
+            for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+            {
+                PlanGridInput gi;
+                const QString gk = pit.key();
+                bool okG = false;
+                gi.grid = (qint16)gk.toInt(&okG);
+                if (!okG) continue;
+                gi.qty = (qint32)pit.value();
+                const QString t = e.gridTypePerGrid.value(gk, e.gridType);
+                gi.type = (quint8)t.toInt();      // 0=正常分拣(分类) 1=异常 2=发货
+                if (gi.type > 2) gi.type = 0;     // 脏数据兜底为"正常分拣"
+                gs.append(gi);
+            }
+            if (!gs.isEmpty())
+                skuPlans.append(qMakePair(it.key(), gs));
+        }
+        // 计划件数合计（与 H4 orderQty 对照，供主线程编译日志与开工预检使用）
+        qint64 planSum = 0;
+        for (const auto& kv : skuPlans)
+            for (const PlanGridInput& g : kv.second) planSum += g.qty;
+
         LogCenter::Instance()->wcs_run_log_warn(true,
             QString("[Parse] orderCode=%1 items=%2 SKU=%3 elapsed=%4ms")
                 .arg(orderCode).arg(items.size()).arg(newMap->size()).arg(elapsed));
 
         // ★ 2026-09-07 透传 H4 原文（供当前波次执行中排队/延迟执行；先拷贝防复用）
         QByteArray rawCopy = task.rawBody;
-        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed, recvSet, rawCopy);
+        emit waveParsed(orderCode, newMap->size(), orderQty, elapsed, recvSet, rawCopy,
+                        skuPlans, (int)planSum);
     }
 }

@@ -40,12 +40,16 @@
 #include <functional>      // ★ 2026-09-13 弹窗上下文注入（std::function 回调）
 #include "qcustomplot.h"   // ★ 2026-09-07 效率统计图（QCustomPlot）
 #include "VerticalTabBar.h" // ★ 2026-09-13 左侧标签页：中文逐字竖排自绘标签栏
+#include <QSpinBox>        // ★ 2026-09-14 计划分配表：翻页控件
+#include <QLineEdit>       // ★ 2026-09-14 计划分配表：过滤输入
+#include <QClipboard>      // ★ 2026-09-14 计划分配表：复制为文本
 
 // ============================================================================
 // ★ 2026-09-13 UI改版说明（第二行 = 左侧标签页多页窗口）：
 //   第一行（任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息）保持不变；
-//   其下为一个 QTabWidget，标签置于**左侧**，共 5 页：
-//     ① 容器绑定状态  ② 分拣记录查询  ③ 波次数据历史记录  ④ 实时面板  ⑤ 运行日志
+//   其下为一个 QTabWidget，标签置于**左侧**，共 6 页：
+//     ① 容器绑定状态  ② 分拣记录查询  ③ 波次数据历史记录
+//     ④ ★计划分配表  ⑤ 实时面板       ⑥ 运行日志
 //   实时面板 = 合并后的「落格反馈数据（实时）」：
 //     RFID 推送先占一行"待落格"，PLC 落格反馈到达后就地补全同一行（8 列）。
 // ============================================================================
@@ -1748,13 +1752,130 @@ void MainWindow::setupUI()
         "               margin: 2px 0px; padding: 10px 6px; min-width: 26px; }"
         "QTabBar::tab:selected { background: #1565C0; color: #FFFFFF;"
         "                        border: 1px solid #0D47A1; }");
+    // ═══════════════════════════════════════════
+    // ★ 2026-09-14 新增独立窗口页「计划分配表」
+    //   客户要求：不往波次面板里加东西，单独一页展示该波次的计划分配情况。
+    //   口径：**一行 = 一个产品（SKU）**，横向按格口展开成若干组；
+    //     每组标题 = `034(正常分拣)` / `048(发货)`，组内 4 列：计划/已落/在途/余量；
+    //     该产品不在某格口计划内 → 四列显示 `—`（而不是 0，避免误读为"计划 0 件"）。
+    //   ★ 只读：唯一操作是「复制为文本」，不做任何写操作，避免误触改账。
+    // ═══════════════════════════════════════════
+    QGroupBox* grpPlanAlloc = new QGroupBox(QString::fromUtf8("计划分配表（每个产品 → 各格口计划/实际）"));
+    m_pagePlanAlloc = grpPlanAlloc;   // ★ 本页根容器（前台判断用，见 MainWindow.h 说明）
+    QVBoxLayout* paLayout = new QVBoxLayout(grpPlanAlloc);
+    paLayout->setContentsMargins(6, 4, 6, 4);
+    paLayout->setSpacing(4);
+
+    // ── 汇总条 + 过滤/翻页 + 复制 ──
+    {
+        QHBoxLayout* bar = new QHBoxLayout();
+        bar->setSpacing(8);
+        m_lblPlanAllocSum = new QLabel(QString::fromUtf8("当前无运行波次"));
+        m_lblPlanAllocSum->setStyleSheet("font-size: 13px; font-weight: bold; color: #37474F;");
+        m_lblPlanAllocSum->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        bar->addWidget(m_lblPlanAllocSum, 1);
+
+        QLabel* lbFilter = new QLabel(QString::fromUtf8("产品/SKU："));
+        lbFilter->setStyleSheet("font-size: 12px;");
+        bar->addWidget(lbFilter);
+        m_editPlanAllocSku = new QLineEdit();
+        m_editPlanAllocSku->setPlaceholderText(QString::fromUtf8("过滤（回车生效，留空=全部）"));
+        m_editPlanAllocSku->setFixedWidth(200);
+        m_editPlanAllocSku->setStyleSheet("font-size: 12px;");
+        bar->addWidget(m_editPlanAllocSku);
+
+        QLabel* lbPage = new QLabel(QString::fromUtf8("页："));
+        lbPage->setStyleSheet("font-size: 12px;");
+        bar->addWidget(lbPage);
+        m_spinPlanAllocPage = new QSpinBox();
+        m_spinPlanAllocPage->setRange(1, 1);
+        m_spinPlanAllocPage->setFixedWidth(70);
+        m_spinPlanAllocPage->setStyleSheet("font-size: 12px;");
+        bar->addWidget(m_spinPlanAllocPage);
+
+        QPushButton* btnCopy = new QPushButton(QString::fromUtf8("复制为文本"));
+        btnCopy->setMinimumHeight(24);
+        btnCopy->setStyleSheet("font-size: 12px; padding: 2px 10px;");
+        btnCopy->setToolTip(QString::fromUtf8("把当前页（含格口明细列）导出到剪贴板，便于现场抄清单/核对"));
+        bar->addWidget(btnCopy);
+
+        // 过滤生效：重填表格（不重新取快照，避免无谓开销）
+        connect(m_editPlanAllocSku, &QLineEdit::returnPressed, this, [this]() {
+            m_planAllocFilter = m_editPlanAllocSku ? m_editPlanAllocSku->text().trimmed() : QString();
+            m_planAllocPage = 1;
+            if (m_spinPlanAllocPage) m_spinPlanAllocPage->setValue(1);
+            renderPlanAllocRows();
+        });
+        connect(m_spinPlanAllocPage, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+            m_planAllocPage = v;
+            renderPlanAllocRows();
+        });
+        connect(btnCopy, &QPushButton::clicked, this, [this]() {
+            if (!m_tblPlanAlloc) return;
+            QStringList lines;
+            QStringList heads;
+            for (int c = 0; c < m_tblPlanAlloc->columnCount(); ++c)
+                if (m_tblPlanAlloc->horizontalHeaderItem(c))
+                    heads << m_tblPlanAlloc->horizontalHeaderItem(c)->text();
+            lines << heads.join("\t");
+            for (int r = 0; r < m_tblPlanAlloc->rowCount(); ++r)
+            {
+                QStringList cells;
+                for (int c = 0; c < m_tblPlanAlloc->columnCount(); ++c)
+                    cells << (m_tblPlanAlloc->item(r, c) ? m_tblPlanAlloc->item(r, c)->text() : QString());
+                lines << cells.join("\t");
+            }
+            QApplication::clipboard()->setText(lines.join("\n"));
+            appendLog(QString::fromUtf8("[计划分配表] 已复制 %1 行到剪贴板").arg(m_tblPlanAlloc->rowCount()));
+        });
+        paLayout->addLayout(bar);
+    }
+
+    // ── 主表 ──
+    m_tblPlanAlloc = new QTableWidget();
+    m_tblPlanAlloc->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_tblPlanAlloc->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_tblPlanAlloc->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_tblPlanAlloc->setAlternatingRowColors(true);
+    m_tblPlanAlloc->verticalHeader()->setVisible(false);
+    m_tblPlanAlloc->verticalHeader()->setDefaultSectionSize(26);
+    m_tblPlanAlloc->horizontalHeader()->setHighlightSections(false);
+    m_tblPlanAlloc->setStyleSheet(
+        "QTableWidget { font-size: 12px; }"
+        "QTableWidget::item { padding: 1px 4px; }"
+        "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 3px; }");
+    m_tblPlanAlloc->setToolTip(QString::fromUtf8(
+        "一行 = 一个产品（SKU）；每个格口一组「计划/已落/在途/余量」。\n"
+        "· 计划 = H4 对该产品在该格口下发的件数（同格口多行累加）\n"
+        "· 已落 = PLC 确认落入该格口的去重件数（唯一权威）\n"
+        "· 在途 = 已下发 PLC、落格反馈未到的件数（占用额度，防同时两件在线超计划）\n"
+        "· 余量 = 计划 − 已落 − 在途；余量 0 → 后续件改投异常口\n"
+        "· 类型：正常分拣 / 发货（异常口为特殊口，不参与产品计划）\n"
+        "· 格口标题颜色：黄=未绑定容器  红=满箱未重绑(禁用)  橙=物理锁格"));
+    paLayout->addWidget(m_tblPlanAlloc, 1);
+
+    m_lblPlanAllocHint = new QLabel(QString::fromUtf8(
+        "提示：默认按计划件数降序、每页 100 行；格口超过 12 个时表格只展开前 12 个（「格口明细」列始终完整）。"));
+    m_lblPlanAllocHint->setStyleSheet("font-size: 11px; color: #78909C;");
+    m_lblPlanAllocHint->setWordWrap(true);
+    paLayout->addWidget(m_lblPlanAllocHint);
+
     m_tabMain->addTab(grpBinding,   QString::fromUtf8("容器绑定状态"));
     m_tabMain->addTab(grpQuery,     QString::fromUtf8("分拣记录查询"));
     m_tabMain->addTab(grpUnfinished,QString::fromUtf8("波次数据历史记录"));
+    m_tabMain->addTab(grpPlanAlloc, QString::fromUtf8("计划分配表"));
     m_tabMain->addTab(grpLive,      QString::fromUtf8("实时面板"));
     m_tabMain->addTab(grpLog,       QString::fromUtf8("运行日志"));
-    // 实时面板放在倒数第二页：默认选中「容器绑定状态」（第 0 页）——现场首先看绑定
+    // 默认选中「容器绑定状态」（第 0 页）——现场首先看绑定
     m_tabMain->setCurrentIndex(0);
+    // ★ 2026-09-14 切到「计划分配表」页时立即取一次快照（不等 2 秒节流），现场点开即见最新数据
+    connect(m_tabMain, &QTabWidget::currentChanged, this, [this](int) {
+        if (m_tabMain && m_pagePlanAlloc && m_tabMain->currentWidget() == m_pagePlanAlloc)
+        {
+            m_planAllocVersion = -1;      // 强制重建
+            refreshPlanAllocPage(true);
+        }
+    });
     vsplit->addWidget(m_tabMain);
 
     // 垂直分配：第一行按内容（stretch 0），第二行（标签页）吃满剩余高度
@@ -2981,6 +3102,10 @@ void MainWindow::updateWavePanel()
     // ★ 2026-09-13 超计划预警：数字 = 超计划条目数（格口+SKU 粒度），有值时红色加粗并激活「查看」
     refreshOverplanWarning();
 
+    // ★ 2026-09-14 计划分配表页：内部自带"本页不在前台直接返回 + 2 秒节流 + 版本未变不重建"，
+    //   因此这里每秒调用是安全的（空闲时只读一个原子版本号）
+    refreshPlanAllocPage(false);
+
     // 查看处理按钮：无待处理件时置灰但保留可见（避免布局跳动）
     if (m_btnViewException)
     {
@@ -4169,6 +4294,261 @@ void MainWindow::onViewExceptions()
 }
 
 // ============================================================================
+// ★ 2026-09-14 独立窗口页「计划分配表」
+//   客户要求：**不在波次信息面板里加内容**，单独一页展示该波次的计划分配。
+//   口径：一行 = 一个产品（SKU），横向按格口展开；每个格口一组
+//         「计划 / 已落 / 在途 / 余量」；类型只区分「正常分拣 / 发货」。
+//
+//   性能与主线程安全（日万级件、单波次可达 5 万件）：
+//     · 每 2 秒只读一个版本号（HttpServer 内的原子 int）；版本未变、
+//       或本页不在前台 → 直接返回，**不取快照、不碰表格**（空闲开销 ≈ 0）；
+//     · 版本变化才做一次快照（锁内拷内存，不查 DB），且只重填**当前可见页**；
+//     · 每页固定 100 行（复用 SORTING_QUERY_PAGE_SIZE），格口组最多 12 组
+//       → 重建成本恒定，与波次件数无关；
+//     · 全程只读，不调用任何写接口，避免误触改账。
+// ============================================================================
+void MainWindow::refreshPlanAllocPage(bool force)
+{
+    if (!m_tblPlanAlloc || !m_pServer) return;
+
+    // ① 本页不在前台 → 不刷新（用户看不到，重建纯属浪费主线程时间）
+    if (!force && m_tabMain && m_pagePlanAlloc && m_tabMain->currentWidget() != m_pagePlanAlloc)
+        return;
+
+    // ② 2 秒节流（仅对"非强制"的周期刷新生效；切页 force=true 时立即刷新）
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!force && nowMs - m_planAllocLastRefreshMs < 2000) return;
+    m_planAllocLastRefreshMs = nowMs;
+
+    PlanAllocSnapshot snap = m_pServer->planAllocSnapshot();
+
+    // ③ 波次/表版本都没变 → 无需重建（数量变化会 bump version）
+    //    force=true 时同时比较版本：只有确实变化才重建，避免切页空跑一遍重绘
+    if (snap.version == m_planAllocVersion && m_planAllocSnap.orderCode == snap.orderCode)
+        return;
+    m_planAllocVersion  = snap.version;
+    m_planAllocSnap     = snap;
+    m_planAllocPage     = 1;
+    if (m_spinPlanAllocPage) m_spinPlanAllocPage->setValue(1);
+
+    // ④ 汇总条
+    if (m_lblPlanAllocSum)
+    {
+        if (snap.orderCode.isEmpty())
+        {
+            m_lblPlanAllocSum->setText(QString::fromUtf8("当前无运行波次"));
+            m_lblPlanAllocSum->setStyleSheet("font-size: 13px; font-weight: bold; color: #78909C;");
+        }
+        else
+        {
+            const QString txt = QString::fromUtf8(
+                "波次 %1 ｜ 产品 %2 个（多格口 %3）｜ 计划件数 %4 ｜ 已落 %5 ｜ 在途 %6 ｜ 余量 %7 ｜ 预警 %8%9")
+                .arg(snap.orderCode).arg(snap.skuCount).arg(snap.multiSkuCnt)
+                .arg(snap.planTotal).arg(snap.landedTotal).arg(snap.reservTotal).arg(snap.remainTotal)
+                .arg(snap.warnCount)
+                .arg(!snap.valid ? QString::fromUtf8(" ｜ ⚠分配表未生效(按原逻辑选格)")
+                                 : (snap.auditBad > 0 ? QString::fromUtf8(" ｜ ⚠不变量违规 %1 处").arg(snap.auditBad)
+                                                      : QString()));
+            m_lblPlanAllocSum->setText(txt);
+            m_lblPlanAllocSum->setStyleSheet(snap.auditBad > 0 || snap.warnCount > 0
+                ? "font-size: 13px; font-weight: bold; color: #D32F2F;"
+                : "font-size: 13px; font-weight: bold; color: #37474F;");
+        }
+    }
+
+    renderPlanAllocRows();
+}
+
+// 按当前页/过滤重填表格（不重新取快照）
+void MainWindow::renderPlanAllocRows()
+{
+    if (!m_tblPlanAlloc) return;
+
+    const PlanAllocSnapshot& snap = m_planAllocSnap;
+
+    // ── 过滤（产品/SKU）──
+    QVector<const PlanAllocRow*> rows;
+    rows.reserve(snap.rows.size());
+    for (const PlanAllocRow& r : snap.rows)
+    {
+        if (!m_planAllocFilter.isEmpty() &&
+            !r.sku.contains(m_planAllocFilter, Qt::CaseInsensitive))
+            continue;
+        rows.append(&r);
+    }
+
+    // ── 格口列（组）── 上限 12 组，避免横向无限拉宽
+    const int kMaxGridGroups = 12;
+    QStringList gridCols = snap.gridColumns;
+    const bool truncated = gridCols.size() > kMaxGridGroups;
+    if (truncated) gridCols = gridCols.mid(0, kMaxGridGroups);
+
+    const int kFixedCols = 8;                     // 序号/产品/合计4/格口数/格口明细
+    const int pageSize   = SORTING_QUERY_PAGE_SIZE;  // 100 行/页（与查询页一致）
+    const int totalRows  = rows.size();
+    const int totalPages = qMax(1, (totalRows + pageSize - 1) / pageSize);
+    if (m_planAllocPage < 1) m_planAllocPage = 1;
+    if (m_planAllocPage > totalPages) m_planAllocPage = totalPages;
+    if (m_spinPlanAllocPage)
+    {
+        const QSignalBlocker blk(m_spinPlanAllocPage);
+        m_spinPlanAllocPage->setRange(1, totalPages);
+        m_spinPlanAllocPage->setValue(m_planAllocPage);
+    }
+
+    const int from = (m_planAllocPage - 1) * pageSize;
+    const int to   = qMin(totalRows, from + pageSize);
+
+    // ── 复用列：列数变化时才 setColumnCount（避免每次重建整个表头）──
+    const int needCols = kFixedCols + gridCols.size() * 4;
+    {
+        QSignalBlocker blk(m_tblPlanAlloc);
+        m_tblPlanAlloc->setUpdatesEnabled(false);
+        if (m_tblPlanAlloc->columnCount() != needCols)
+        {
+            m_tblPlanAlloc->clear();
+            m_tblPlanAlloc->setColumnCount(needCols);
+        }
+        m_tblPlanAlloc->setRowCount(0);
+
+        QStringList heads;
+        heads << QString::fromUtf8("序号") << QString::fromUtf8("产品编码(SKU)")
+              << QString::fromUtf8("计划总件数") << QString::fromUtf8("已落格")
+              << QString::fromUtf8("在途") << QString::fromUtf8("余量")
+              << QString::fromUtf8("格口数") << QString::fromUtf8("格口明细（格口:类型=计划/已落/余量）");
+        for (const QString& gk : gridCols)
+        {
+            // 组标题：034(正常分拣) → 组内 4 列 计划/已落/在途/余量
+            QString typeName = QString::fromUtf8("格口");
+            for (const PlanAllocRow& r : snap.rows)
+                for (const PlanAllocCell& c : r.cells)
+                    if (c.gridKey == gk)
+                    {
+                        typeName = (c.gridType == "2") ? QString::fromUtf8("发货")
+                                 : (c.gridType == "1") ? QString::fromUtf8("异常")
+                                                       : QString::fromUtf8("正常分拣");
+                        break;
+                    }
+            heads << QString("%1(%2)").arg(gk).arg(typeName)
+                  << QString::fromUtf8("计划") << QString::fromUtf8("已落")
+                  << QString::fromUtf8("在途") << QString::fromUtf8("余量");
+        }
+        m_tblPlanAlloc->setHorizontalHeaderLabels(heads);
+
+        // 列宽：固定列窄、格口组内 4 列紧凑
+        m_tblPlanAlloc->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        m_tblPlanAlloc->setColumnWidth(0, 48);
+        m_tblPlanAlloc->setColumnWidth(1, 170);
+        for (int c = 2; c < kFixedCols; ++c) m_tblPlanAlloc->setColumnWidth(c, 72);
+        m_tblPlanAlloc->setColumnWidth(7, 300);   // 格口明细列宽一些（可复制核对）
+        for (int g = 0; g < gridCols.size(); ++g)
+        {
+            const int base = kFixedCols + g * 4;
+            m_tblPlanAlloc->setColumnWidth(base, 92);      // 只有标题的列占位（组标题在左格）
+            for (int k = 1; k < 4; ++k) m_tblPlanAlloc->setColumnWidth(base + k, 52);
+        }
+
+        m_tblPlanAlloc->setRowCount(to - from);
+        for (int i = from; i < to; ++i)
+        {
+            const PlanAllocRow& r = *rows[i];
+            const int row = i - from;
+            auto setCell = [&](int col, const QString& txt, const QColor& fg = QColor("#333333"),
+                               const QColor& bg = QColor()) {
+                QTableWidgetItem* it = new QTableWidgetItem(txt);
+                it->setTextAlignment(Qt::AlignCenter);
+                it->setForeground(fg);
+                if (bg.isValid()) it->setBackground(bg);
+                m_tblPlanAlloc->setItem(row, col, it);
+            };
+
+            setCell(0, QString::number(i + 1));
+            setCell(1, r.sku);
+            setCell(2, QString::number(r.planTotal));
+            setCell(3, QString::number(r.landedTotal),
+                    r.landedTotal >= r.planTotal && r.planTotal > 0 ? QColor("#D32F2F") : QColor("#333333"));
+            setCell(4, QString::number(r.reservTotal),
+                    r.reservTotal > 0 ? QColor("#0277BD") : QColor("#333333"));
+            setCell(5, QString::number(r.remainTotal),
+                    r.remainTotal > 0 ? QColor("#2E7D32") : QColor("#D32F2F"));
+            setCell(6, QString::number(r.cells.size()),
+                    r.cells.size() > 1 ? QColor("#6A1B9A") : QColor("#333333"));
+
+            // 格口明细：始终列**全部**格口（不受 12 组上限影响），便于复制/grep 核对
+            QStringList detail;
+            for (const PlanAllocCell& c : r.cells)
+            {
+                const QString tn = (c.gridType == "2") ? QString::fromUtf8("发货")
+                                 : (c.gridType == "1") ? QString::fromUtf8("异常")
+                                                       : QString::fromUtf8("正常分拣");
+                detail << QString("%1:%2=%3/%4/%5").arg(c.gridKey).arg(tn)
+                              .arg(c.planQty).arg(c.landedQty).arg(c.remainQty);
+            }
+            setCell(7, detail.join(QString::fromUtf8("  ")));
+
+            // 每个格口组 4 列：计划/已落/在途/余量（不在计划内 → "—"）
+            for (int g = 0; g < gridCols.size(); ++g)
+            {
+                const int base = kFixedCols + g * 4;
+                const PlanAllocCell* cell = nullptr;
+                for (const PlanAllocCell& c : r.cells)
+                    if (c.gridKey == gridCols[g]) { cell = &c; break; }
+
+                if (!cell)
+                {
+                    for (int k = 0; k < 4; ++k) setCell(base + k, QString::fromUtf8("—"), QColor("#BDBDBD"));
+                    continue;
+                }
+                // 组标题列显示格口状态（容器/禁用/锁格），一眼判断"能不能落"
+                QString stateTxt;
+                QColor  stateBg, stateFg;
+                if (cell->disabled)      { stateTxt = QString::fromUtf8("满箱未重绑"); stateBg = QColor("#FFCDD2"); stateFg = QColor("#B71C1C"); }
+                else if (cell->locked)   { stateTxt = QString::fromUtf8("锁格");       stateBg = QColor("#FFE0B2"); stateFg = QColor("#E65100"); }
+                else if (!cell->bound)   { stateTxt = QString::fromUtf8("未绑定容器"); stateBg = QColor("#FFF9C4"); stateFg = QColor("#F57F17"); }
+                else                     { stateTxt = cell->boxcode;                  stateFg = QColor("#455A64"); }
+                QTableWidgetItem* gItem = new QTableWidgetItem(stateTxt);
+                gItem->setTextAlignment(Qt::AlignCenter);
+                gItem->setForeground(stateFg);
+                if (stateBg.isValid()) gItem->setBackground(stateBg);
+                gItem->setToolTip(QString("%1(%2) 容器%3%4%5")
+                    .arg(cell->gridKey)
+                    .arg((cell->gridType == "2") ? QString::fromUtf8("发货")
+                         : (cell->gridType == "1") ? QString::fromUtf8("异常") : QString::fromUtf8("正常分拣"))
+                    .arg(cell->boxcode.isEmpty() ? QString::fromUtf8("(无)") : cell->boxcode)
+                    .arg(cell->disabled ? QString::fromUtf8(" ｜ 满箱未重绑(禁用)") : QString())
+                    .arg(cell->locked ? QString::fromUtf8(" ｜ 物理锁格") : QString()));
+                m_tblPlanAlloc->setItem(row, base, gItem);
+
+                setCell(base + 1, QString::number(cell->planQty));
+                setCell(base + 2, QString::number(cell->landedQty),
+                        cell->planQty > 0 && cell->landedQty >= cell->planQty ? QColor("#D32F2F") : QColor("#333333"));
+                setCell(base + 3, QString::number(cell->reservQty),
+                        cell->reservQty > 0 ? QColor("#0277BD") : QColor("#333333"));
+                setCell(base + 4, QString::number(cell->remainQty),
+                        cell->remainQty > 0 ? QColor("#2E7D32") : QColor("#D32F2F"));
+            }
+        }
+        m_tblPlanAlloc->setUpdatesEnabled(true);
+    }
+
+    // ⑤ 页脚提示（分页/截断说明）
+    if (m_lblPlanAllocHint)
+    {
+        QStringList h;
+        h << QString::fromUtf8("共 %1 个产品%2，第 %3/%4 页（每页 %5 行）")
+                 .arg(totalRows)
+                 .arg(m_planAllocFilter.isEmpty() ? QString()
+                                                  : QString::fromUtf8("（过滤：%1）").arg(m_planAllocFilter))
+                 .arg(m_planAllocPage).arg(totalPages).arg(pageSize);
+        h << QString::fromUtf8("格口列显示 %1 个").arg(gridCols.size());
+        if (truncated)
+            h << QString::fromUtf8("格口超过 12 个，其余请在「格口明细」列查看（该列不截断）");
+        h << QString::fromUtf8("列头颜色：黄=未绑定容器 红=满箱未重绑 橙=锁格；" 
+                               "「已落」红色=已达计划，「余量」绿色=仍可落");
+        m_lblPlanAllocHint->setText(h.join(QString::fromUtf8(" ｜ ")));
+    }
+}
+
 // ============================================================================
 // ★ 2026-09-13 超计划预警（波次面板「预警」数字 + 「查看」明细弹窗）
 //   数据源：HttpServer 的 格口+SKU 真实落格计数（PLC 确认落格的去重 EPC）与计划件数对照

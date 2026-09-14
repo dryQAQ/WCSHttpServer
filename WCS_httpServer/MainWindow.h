@@ -2,10 +2,13 @@
 // ============================================================================
 // MainWindow.h — WMS退货HTTP服务主窗口
 //
-// 界面布局（★ 2026-09-13 UI改版：第二行改为"左侧标签页"多页窗口）：
+// 界面布局（★ 2026-09-13 UI改版：第二行改为"左侧标签页"多页窗口）
 //   第一行（保持不变）：任务接收控制 ｜ 设备状态(PLC/RFID) ｜ 波次信息
-//   第二行：QTabWidget（标签在左侧），5 页——
-//     ① 容器绑定状态  ② 分拣记录查询  ③ 波次数据历史记录  ④ 实时面板  ⑤ 运行日志
+//   第二行：QTabWidget（标签在左侧），6 页——
+//     ① 容器绑定状态  ② 分拣记录查询  ③ 波次数据历史记录
+//     ④ ★计划分配表  ⑤ 实时面板       ⑥ 运行日志
+//     （★ 2026-09-14 新增第④页：该波次"每个产品在各格口的计划/已落/在途/余量"，
+//       客户要求放在独立窗口页，**不在波次信息面板里增加内容**）
 //
 // 定时刷新：QTimer 每秒查询 HttpServer 状态并更新 UI
 // ============================================================================
@@ -220,7 +223,29 @@ private:
     void livePanelTrimRows();                  // 超上限裁掉最旧行
 
     // ──── ★ 2026-09-13 第二行多页窗口（标签在左侧）────
-    QTabWidget*  m_tabMain = nullptr;          // 5 页：绑定状态/记录查询/波次历史/实时面板/运行日志
+    QTabWidget*  m_tabMain = nullptr;          // 6 页：绑定状态/记录查询/波次历史/计划分配表/实时面板/运行日志
+
+    // ──── ★ 2026-09-14 计划分配表页（独立窗口页，客户要求：不改波次面板）────
+    //   口径：**一行 = 一个产品（SKU）**，横向按格口展开；
+    //   每个格口一组「计划/已落/在途/余量」，类型只区分「正常分拣 / 发货」。
+    //   数据源：HttpServer::planAllocSnapshot()（只读快照，锁内拷内存，不查 DB）
+    //   刷新：每 2 秒只读一个版本号，版本未变或本页不在前台 → 不重建（主线程零开销）
+    QTableWidget* m_tblPlanAlloc   = nullptr;   // 分配表主表
+    QWidget*      m_pagePlanAlloc  = nullptr;   // ★ 本页根容器（= 加入 QTabWidget 的那个 widget）
+                                                //   用于判断"本页是否在前台"：表格的直接父级是
+                                                //   QGroupBox，而 QTabWidget 直接持有的是该 GroupBox，
+                                                //   两者不是同一对象 —— 直接比 parentWidget() 会永假。
+    QLabel*       m_lblPlanAllocSum = nullptr;  // 顶部汇总条
+    QLabel*       m_lblPlanAllocHint= nullptr;  // 页脚提示（分页/截断说明）
+    QLineEdit*    m_editPlanAllocSku= nullptr;  // 产品/SKU 过滤输入
+    QSpinBox*     m_spinPlanAllocPage = nullptr;// 页码
+    QString       m_planAllocFilter;            // 当前过滤词（空=全部）
+    int           m_planAllocPage = 1;          // 当前页（1 基）
+    int           m_planAllocVersion = -1;      // 上次渲染的数据版本（-1=强制首次渲染）
+    qint64        m_planAllocLastRefreshMs = 0; // 上次刷新时刻（2 秒节流）
+    PlanAllocSnapshot m_planAllocSnap;          // 最近一次快照（分页/过滤只重填表格，不再取数）
+    void refreshPlanAllocPage(bool force = false);   // 刷新「计划分配表」页
+    void renderPlanAllocRows();                      // 按当前页/过滤重填表格（不重新取快照）
 
     // ──── ★ 2026-09-08 水平分隔条（默认宽度分配：波次信息占首行一半）────
     QSplitter* m_rowTopInner    = nullptr;   // 第一行左半内部：任务接收控制 | 设备状态

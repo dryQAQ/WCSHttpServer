@@ -148,16 +148,52 @@ typedef std::function<QString(const QString& code)> PlcLookupCallback;
 typedef std::function<QString(const QString& code)> PlcCarNumCallback;
 
 // ★ 2026-09-14 同品多格口「计划分配」查询结果（由 HttpServer 依据 H4 计划 + 已落格计数提供）
+//   ★ 2026-09-14 落格结构优化：改由 PlanAllocTable 提供，并**在查询时直接完成额度认领**
+//     （锁内"判定 + 改数"），从而杜绝"先查已落数、再另行登记"造成的：
+//       · 同时两件在线时两件都被判为"未满额" → 都发同一格口 → 箱内实落超计划；
+//       · 计划格口被禁用/锁格时，该格口的计划件数被静默丢弃。
 struct PlcPlanAllocInfo
 {
     bool               valid = false;  // 是否查到该 SKU 的计划（false → 选格退回旧逻辑）
     QMap<QString, int> planQtyPerGrid; // 格口号(内部3位key) → 计划件数
-    QMap<QString, QString> gridTypePerGrid; // 格口号(内部3位key) → 类型 "0"=分类/"1"=异常/"2"=发货
+    QMap<QString, QString> gridTypePerGrid; // 格口号(内部3位key) → 类型 "0"=正常分拣/"1"=异常/"2"=发货
     QMap<QString, int> landedNum;      // 格口号(内部3位key) → 已落格件数（PLC 反馈成功累计）
+    QMap<QString, int> reservNum;      // ★ 格口号(内部3位key) → 在途认领件数
     int                excGrid = -1;   // 超计划（各计划格口均已满额）时的兜底去往格口，-1=未配置
+    int                skuIdx  = -1;   // ★ 分配表内 SHA 下标（认领登记用）
+    QString            orderCode;      // ★ 分配表所属波次（日志追溯用）
+
+    // ── ★ 额度认领结果（HttpServer::planAllocOf 在锁内完成）──
+    bool               claimOk   = false; // true=已成功认领一个计划格口（额度已扣）
+    int                claimGrid = -1;    // 认领到的格口（内部号）
+    qint16             claimPlanIdx = -1; // 认领单元在该 SKU 计划内的下标
+    quint64            claimId   = 0;     // 认领号（日志串联 + 落格提交/失败释放）
+    bool               allEpcsLanded = false; // 该 EPC 已在本 (SKU,格口) 落格（重投回原格口放行）
 };
-// 入参 = EPC编码（=SKU编码），返回该 SKU 的计划分配信息
-typedef std::function<PlcPlanAllocInfo(const QString& code)> PlcPlanAllocCallback;
+// 入参 = (EPC编码, SKU编码, 是否认领额度)，返回该 SKU 的计划分配信息
+//   ★ 为什么要 bClaim=false 的"只读预查"模式：
+//     选格流程需要先看一次计划（判断是否需要缺口搬迁），若那次调用就认领额度，
+//     搬迁后再次调用会**二次认领**，前一次认领将泄漏为"在途"直至超时。
+//     因此约定：bClaim=false 只读不扣额度；bClaim=true 才在锁内完成"判定 + 扣额度"。
+//   ★ 为什么要传 EPC：分配表需在同一次加锁内判定"该件是否已落入过原格口
+//     （重投放行）"与"额度是否还有"，避免两次加锁之间被其它线程插队
+//     （这正是改造前"同时两件在线都判未满额"的超计划根因）。
+//   注：PlcManager 侧调用时两个字符串入参都传 code（识别码=EPC），SKU 由 HttpServer 按 EPC 取。
+typedef std::function<PlcPlanAllocInfo(const QString& epc, const QString& sku, bool bClaim)> PlcPlanAllocCallback;
+
+// ★ 2026-09-14 计划缺口搬迁回调：(EPC, 不可用格口, 承接格口) → 实际搬迁件数
+//   用途：计划格口满箱未重绑/锁格时，把其未完成计划件转给同 SKU 其它可用计划格口，
+//         避免"计划有 N 件却只落 M 件"（客户口径：按各格口数量分）。
+typedef std::function<int(const QString& epc, qint16 fromGrid, qint16 toGrid)> PlcMoveGapCallback;
+
+// ★ 2026-09-14 选格成功日志节流回调：返回 true = 本次输出"选格-按计划分配"日志
+//   目的：日万级件下把每件两条日志降到量级可控（异常/超计划/搬迁日志仍逐条保留）
+typedef std::function<bool()> PlcSelectLogCallback;
+
+// ★ 2026-09-14 单条下发结果回调（EPC, 是否成功）：发送失败时释放已认领的额度
+//   为什么放在 sendCodeInfo 出口：sendBatchCodesWithEpcCache 内部存在"发送成功但
+//   failCount 未归零"的路径，只在批出口释放会漏；出口回调保证每一条都可对账。
+typedef std::function<void(const QString& epc, bool success)> PlcSendResultCallback;
 
 class PlcManager : public QObject, public CTcpServerListener
 {
@@ -199,8 +235,14 @@ public:
     void setLookupCallback(PlcLookupCallback cb) { m_lookupCb = std::move(cb); }
     // ★ 设置小车号查询回调（从 EpcCache 获取 RFID 提供的小车号）
     void setCarNumCallback(PlcCarNumCallback cb) { m_carNumCb = std::move(cb); }
-    // ★ 2026-09-14 设置「计划分配」查询回调（同品多格口按计划件数分配的依据）
+    // ★ 2026-09-14 设置「计划分配」查询回调（同品多格口按计划件数分配的依据，含额度认领）
     void setPlanAllocCallback(PlcPlanAllocCallback cb) { m_planAllocCb = std::move(cb); }
+    // ★ 2026-09-14 设置计划缺口搬迁回调（计划格口不可用 → 未完成件转同 SKU 其它计划格口）
+    void setMoveGapCallback(PlcMoveGapCallback cb) { m_moveGapCb = std::move(cb); }
+    // ★ 2026-09-14 设置选格成功日志节流回调
+    void setSelectLogCallback(PlcSelectLogCallback cb) { m_selectLogCb = std::move(cb); }
+    // ★ 2026-09-14 设置单条下发结果回调（发送失败 → 释放认领额度）
+    void setSendResultCallback(PlcSendResultCallback cb) { m_sendResultCb = std::move(cb); }
 
     // ──── 发送指令 ────
     // code 为 EPC编码，客户已确认（2026-08-10）
@@ -265,7 +307,10 @@ signals:
     PlcFeedbackCallback m_feedbackCb;
     PlcLookupCallback  m_lookupCb;   // ★ 相机查询回调：查格口
     PlcCarNumCallback  m_carNumCb;   // ★ 小车号查询回调：从 EpcCache 获取 RFID 小车号
-    PlcPlanAllocCallback m_planAllocCb;  // ★ 2026-09-14 计划分配查询回调（同品多格口按计划件数选格）
+    PlcPlanAllocCallback m_planAllocCb;  // ★ 2026-09-14 计划分配查询回调（同品多格口按计划件数选格+额度认领）
+    PlcMoveGapCallback   m_moveGapCb;    // ★ 2026-09-14 计划缺口搬迁回调（计划格口不可用时转移未完成件）
+    PlcSelectLogCallback m_selectLogCb;  // ★ 2026-09-14 选格成功日志节流回调（日万级件日志量控制）
+    PlcSendResultCallback m_sendResultCb;// ★ 2026-09-14 单条下发结果回调（失败释放认领额度）
 
     // ──── TCP 统计 ────
     std::atomic<int64_t> m_tcpSendCount{0};

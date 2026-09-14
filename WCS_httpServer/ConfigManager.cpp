@@ -103,6 +103,16 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "rescanResendCooldownMs")  rescanResendCooldownMs = xml.readElementText().toInt();
         else if (name == "rescanResendMaxTimes")    rescanResendMaxTimes = xml.readElementText().toInt();
         else if (name == "plcInFlightTimeoutMs")    plcInFlightTimeoutMs = xml.readElementText().toInt();
+        // ──── ★ 2026-09-14 计划分配表（落格结构优化）────
+        else if (name == "allocEnabled")            allocEnabled = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "allocRequirePlanValid")   allocRequirePlanValid = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "allocGapMoveOnDisabled")  allocGapMoveOnDisabled = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "allocGapMoveOnLocked")    allocGapMoveOnLocked = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "allocMaxInflight")        allocMaxInflight = xml.readElementText().toInt();
+        else if (name == "allocAuditIntervalMs")    allocAuditIntervalMs = xml.readElementText().toInt();
+        else if (name == "allocClaimTimeoutMs")     allocClaimTimeoutMs = xml.readElementText().toInt();
+        else if (name == "allocPlanLogTail")        allocPlanLogTail = xml.readElementText().toInt();
+        else if (name == "allocPlanLogStep")        allocPlanLogStep = xml.readElementText().toInt();
         else if (name == "binding")
         {
             // 容器绑定: <binding grid="00001">BOX001</binding>
@@ -232,6 +242,26 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("gridCodePrefix",   gridCodePrefix);
     xml.writeComment(" 格口号补零宽度（默认 3，与内部/PLC 3位一致） ");
     xml.writeTextElement("gridCodeWidth",    QString::number(gridCodeWidth));
+
+    // ──── ★ 2026-09-14 计划分配表（落格结构优化）────
+    xml.writeComment(" ★ 计划分配表总开关（true=按各格口计划数量分配；false=回退改造前'恒取首个格口'行为） ");
+    xml.writeTextElement("allocEnabled",            allocEnabled ? "true" : "false");
+    xml.writeComment(" true=开工预检发现『Σ每格口计划 ≠ H4 orderQty』即拒绝开工（默认 false 仅告警） ");
+    xml.writeTextElement("allocRequirePlanValid",   allocRequirePlanValid ? "true" : "false");
+    xml.writeComment(" 计划格口满箱未重绑(禁用)时，把未完成计划件转给同 SKU 其它可用计划格口（true/false） ");
+    xml.writeTextElement("allocGapMoveOnDisabled",  allocGapMoveOnDisabled ? "true" : "false");
+    xml.writeComment(" 计划格口物理锁格时同样转移（true/false；false 时锁格格口不转移） ");
+    xml.writeTextElement("allocGapMoveOnLocked",    allocGapMoveOnLocked ? "true" : "false");
+    xml.writeComment(" 在途认领上限（超出即强制清扫+异常留痕，防认领泄漏） ");
+    xml.writeTextElement("allocMaxInflight",        QString::number(allocMaxInflight));
+    xml.writeComment(" 不变量巡检 + 认领超时清扫周期(ms) ");
+    xml.writeTextElement("allocAuditIntervalMs",    QString::number(allocAuditIntervalMs));
+    xml.writeComment(" 认领超时(ms)：下发后迟迟无落格反馈则释放额度 ");
+    xml.writeTextElement("allocClaimTimeoutMs",     QString::number(allocClaimTimeoutMs));
+    xml.writeComment(" 选格成功日志前 N 条逐条输出（0=全部逐条） ");
+    xml.writeTextElement("allocPlanLogTail",        QString::number(allocPlanLogTail));
+    xml.writeComment(" 之后每 N 条输出一条（异常/超计划/搬迁/兜底日志一律逐条保留） ");
+    xml.writeTextElement("allocPlanLogStep",        QString::number(allocPlanLogStep));
 
     // ──── S7 分拣增强配置 ────
     xml.writeComment(" EPC 任务内防重（true/false） ");

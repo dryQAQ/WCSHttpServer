@@ -782,3 +782,21 @@ bool WaveManager::tryCancelWave()
         m_orderCode.toLocal8Bit().data(), prevStatus);
     return true;
 }
+
+// ★ 2026-09-14 仅供无人值守 E2E 的强制取消（跳过"已开始分拣"判定）
+//   目的：让"结束当前波次 → 接替下一波次 → 挂起件补发"这条链路可在无人工点击时验证。
+//   调用方负责校验环境变量；生产路径不会走到这里。
+bool WaveManager::forceCancelForE2E()
+{
+    std::unique_lock<std::mutex> cancelLock(m_cancelSortMutex);
+    const int prevStatus = m_waveStatus.load();
+    if (!setState(WAVE_CANCELLED))
+    {
+        WCS_WARN("[WaveMgr] E2E强制取消失败 状态迁移被拒 order=%s prev=%d now=%d",
+            m_orderCode.toLocal8Bit().data(), prevStatus, m_waveStatus.load());
+        return false;
+    }
+    WCS_WARN("[WaveMgr] E2E强制取消成功（测试钩子）order=%s %d→CANCELLED",
+        m_orderCode.toLocal8Bit().data(), prevStatus);
+    return true;
+}

@@ -32,6 +32,7 @@
 #include "SortingDatabase.h"
 #include "EpcCache.h"
 #include "define.h"
+#include "PlanAllocTable.h"   // ★ 2026-09-14 波次级计划分配表
 
 class HttpClient;  // 前向声明（避免循环依赖）
 
@@ -48,6 +49,48 @@ struct GridSortRecord
     int     gridCount = 0; // 配货件数
     QString volu;          // 来源库位（=WMS下发 items[].sobi；满箱回传报文 head.fromLocation 来源）
     qint64  timeMs   = 0;  // 分拣时间
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-14 计划分配表「计划分配表」独立窗口页的只读数据（供 MainWindow 使用）
+//   表头口径：**一行 = 一个产品（SKU）**，横向按格口展开；
+//   每个格口一组「计划 / 已落 / 在途 / 余量」，类型只区分「正常分拣 / 发货」
+//   （异常口 66 号为特殊口，不参与产品计划）。
+// ════════════════════════════════════════════════════════════════════════════
+struct PlanAllocCell
+{
+    QString gridKey;      // 内部 3 位格口 key（如 "034"）
+    QString gridType;     // "0"=正常分拣  "1"=异常  "2"=发货
+    int     planQty = 0;  // 本格口对该产品的计划件数
+    int     landedQty = 0;// 已落格
+    int     reservQty = 0;// 在途认领
+    int     remainQty = 0;// 余量
+    bool    bound = false;    // 该格口是否已绑定容器
+    bool    disabled = false;  // 满箱未重绑（WCS 禁用）
+    bool    locked = false;    // S7 物理锁格
+    QString boxcode;      // 当前容器号
+};
+
+struct PlanAllocRow
+{
+    QString sku;
+    int     planTotal = 0, landedTotal = 0, reservTotal = 0, remainTotal = 0;
+    QVector<PlanAllocCell> cells;    // 只含该 SKU 计划内格口（按格口号升序）
+};
+
+struct PlanAllocSnapshot
+{
+    QString     orderCode;
+    int         version = 0;         // 表版本号：未变化时 UI 无需重建
+    QStringList gridColumns;         // 全波次计划格口（升序去重）= 表格的格口分组
+    QVector<PlanAllocRow> rows;      // 全部 SKU（按计划件数降序）
+    // 汇总
+    int skuCount = 0, cellCount = 0;
+    int planTotal = 0, landedTotal = 0, reservTotal = 0, remainTotal = 0;
+    int inflightCnt = 0, multiSkuCnt = 0;
+    int warnCount = 0;               // 超计划预警条目数
+    int auditBad = 0;                // 不变量巡检违规条数（0=正常）
+    bool valid = false;              // 分配表是否生效（false=退回老逻辑）
 };
 
 // 连接状态
@@ -126,6 +169,13 @@ public:
     void submitEpcBindingQueries(const QStringList& epcList);      // ★ 波次下发后提交 EPC 绑定查询
     void onRfidBindingResult(const QMap<QString, QString>& epcBarcodeMap);  // ★ RFID 绑定查询结果回调
     bool trySendToPlcForEpc(const QString& epc);                   // ★ 尝试发送单条 EPC 到 PLC（就绪检查），返回 true=已发送
+    // ★ 2026-09-14 补发重放专用入口：bReplayed=true 表示本件来自"挂起件补发"
+    //   （replayPendingRfidPlcEpcs），此时**跳过波次隔离判定**，
+    //   避免"所属波次已开始分拣、但又有其它波次在排队"时被自己的隔离逻辑二次拦下。
+    //   其余判定（执行态/就绪/SKU 映射/选格）完全一致。
+    //   ★ 选格始终以**当前波次的最新计划**为准：同一 SKU 在不同波次格口不同时，
+    //     补发件会按新波次的新格口落格，不会沿用上一波次的格口。
+    bool trySendToPlcForEpcInternal(const QString& epc, bool bReplayed);
     void scheduleSkuQueryRetry(const QStringList& epcList);          // ★ SKU 查询失败后延迟重试（最多重试 SKU_QUERY_MAX_RETRY 次）
     void scheduleNotReadyRetry(const QString& epc);                // ★ 未就绪(carNum未到)时延迟重试（最多重试 NOT_READY_RETRY_MAX 次）
 
@@ -134,6 +184,9 @@ public:
         if (m_pEpcCache) return m_pEpcCache->get(epc);
         return QString();
     }
+    // ★ 2026-09-14 计划分配表：按 EPC 取 SKU（EpcCache 自身带互斥量，可跨线程调用）
+    //   供 planAllocOf 在"跨线程回调"与"主线程选格"两条路径上解析 SKU，语义与 getSkuByEpc 一致。
+    QString skuOfEpcForAlloc(const QString& epc) const { return getSkuByEpc(epc); }
 
     // ★ 2026-09-13 实时面板/异常弹窗只读访问（全部为无副作用查询）
     // 格口当前容器号（内存绑定表，含补零兜底；无绑定返回空串）
@@ -216,7 +269,22 @@ public:
         QByteArray rawBody;            // H4 原始报文（重放时交 ParseWorker 重新解析）
         QString    fullUrl;
         qint64     recvTime  = 0;
+        // ★ 2026-09-14 波次隔离：本排队波次涉及的 SKU 集合（入队时从 H4 轻量提取 inco 字段）
+        //   用途：上一波次仍在分拣时，若到货件的 SKU 属于**排队中的下一波次**，
+        //   则该件必须挂起等待下一波次（绝不能按上一波次已耗尽的计划投进异常口）。
+        QSet<QString> skuSet;
     };
+
+    // 取"排队中波次"是否包含指定 SKU（仅主线程调用；供波次隔离判定）
+    bool skuBelongsToPendingWave(const QString& sku) const
+    {
+        if (sku.isEmpty()) return false;
+        for (const PendingWave& pw : m_pendingWaveQueue)
+        {
+            if (pw.skuSet.contains(sku)) return true;
+        }
+        return false;
+    }
     // ★ 只读元数据（不含 rawBody）：避免把大报文整份拷贝给 UI（队列可能驻留数 MB 报文）
     struct PendingWaveInfo {
         QString orderCode;
@@ -290,7 +358,7 @@ public:
     // ★ 2026-09-14 同品多格口「按计划件数分配」支撑接口（选格由 PlcManager 回调本方法取依据）
     //   计划件数：H4 解析时写入 GridEntry::planQtyPerGrid（每格口各几件）
     //   已落格件数：本类按 PLC 反馈（status=1 落格成功）累计，同一 EPC 只计一次，跨换箱持续累计
-    PlcPlanAllocInfo planAllocOf(const QString& sku);
+    PlcPlanAllocInfo planAllocOf(const QString& epc, const QString& sku, bool bClaim);
     // 落格成功登记：PLC 反馈确认落入某格口某 SKU 后调用（供选格计数使用，同一 EPC 只计一次）
     void noteGridLanded(const QString& sku, const QString& gridKey, const QString& epc);
     // ★ 2026-09-14 落格即计时归零（只在主线程执行，见实现处说明）
@@ -320,6 +388,48 @@ public:
     //   依据：客户口径「每个格口有对应这个产品的数量」（正常分拣/发货格口各自一份计划），
     //   按数量分配的前提是计划格口都能落箱；只告警不阻塞（绑定可由 WMS 后续 H6 补上）。
     void precheckPlanGridBindings(const QString& orderCode);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-14 计划分配表（落格结构优化）公开接口
+    //
+    // 线程：除 commitLandedAlloc（PLC 反馈线程池）与 planAllocSnapshot（UI 主线程）
+    //   之外，其余方法**仅主线程**调用（选格链路与波次生命周期同在 Qt 主线程）。
+    //   全表由 m_allocMutex 保护，"判定 + 改数"在同一把锁内完成。
+    // ════════════════════════════════════════════════════════════════════════
+
+    // ── 编译（波次解析完成时调用一次，主线程）──
+    // 返回 false = 编译失败/开关关闭 → 分配表失效，全系统退回改造前老逻辑
+    bool buildPlanAllocTable(const QString& orderCode, int orderQty, int planSum,
+                             const QVector<QPair<QString, QVector<PlanGridInput>>>& skuPlans);
+    // ── 认领：按计划额度选格（主线程，锁内"判定+改数"）──
+    // 返回 true = 选中格口成功（claimGrid/claimId/planIdx 输出，供 PLC 下发与回传提交）
+    // 返回 false = 该 SKU 各计划格口已满额（按超计划处置：改投异常口）
+    // 说明：若该 EPC 已在本 (SKU,格口) 落格过（件被拿出重投回原格口），
+    //      调用方应先查 epcLandedInPlan() 放行，不进入本函数（保持既有重投口径）。
+    bool claimAlloc(const QString& sku, qint16* claimGrid, quint64* claimId, qint16* planIdx);
+    // 认领登记（PLC 指令发出后立即调用；幂等，避免重复挂账导致额度泄漏）
+    void noteAllocIssued(const QString& epc, int skuIdx, qint16 planIdx, quint64 claimId);
+    // 释放认领（发送失败时立即释放，保证"缺件可由人工重投异常件补上"）
+    void releaseAlloc(const QString& epc);
+    // 落格登记（**唯一跨线程入口**：PLC 反馈线程池）
+    // 返回 false = 该 (SKU,格口) 不在计划内（落错格）；mismatchOut = 认领不匹配（留痕用）
+    bool commitLandedAlloc(const QString& sku, const QString& gridKey, const QString& epc,
+                           quint64 claimId, bool* mismatchOut, int* landedNowOut, int* planQtyOut);
+    // 计划格口不可用时的缺口搬迁（把未完成计划件转给同 SKU 其它可用计划格口）
+    int  moveAllocGap(const QString& sku, qint16 fromGrid, qint16 toGrid);
+    // 该 EPC 是否已在本 (SKU,格口) 落格（重投回原格口的放行依据）
+    bool epcLandedInPlan(const QString& sku, const QString& gridKey, const QString& epc) const;
+    // 分配表是否已生效（false=退回老逻辑）
+    bool allocValid() const { return m_allocValid.load(); }
+    // 不变量巡检（每 30s 一次；违规写异常表 + ERROR 日志）
+    void auditPlanAlloc();
+    // 认领超时清扫 + 在途上限保护（每 30s 一次，主线程）
+    void sweepPlanAllocClaims();
+    // 波次报告（完结/切出/恢复/开工各输出一条聚合日志，不是每件）
+    void reportPlanAlloc(const QString& tag);
+
+    // ★ 「计划分配表」独立窗口页的只读快照（UI 主线程调用；锁内拷内存、不查 DB）
+    PlanAllocSnapshot planAllocSnapshot() const;
 
 signals:
     void serverStarted(int port);
@@ -540,7 +650,9 @@ private:
     int landedCountOf(const QString& gridKey, const QString& sku) const;
     // ★ 2026-09-14 判定某格口是否配置的物理异常口（超计划件改投落点）
     bool isExceptionGridKey(const QString& gridKey) const;
-    // ★ 2026-09-14 取「该 SKU 在该格口的计划件数」（多格口按格口取；无分格口计划时退回总数）
+    // ★ 2026-09-14 取「该 SKU 在某格口的类型数字」（0=正常分拣 1=异常 2=发货）；不在计划内返回 0
+    int gridTypeOfGridInPlan(const QString& sku, const QString& gridKey) const;
+    // ★ 2026-09-14 取「该 SKU 在该格口的计划件数」（多格口按格口取；无该格口计划返回 0）
     int planQtyOfGrid(const QString& sku, const QString& gridKey) const;
     // ★ 2026-09-14 该格口是否在「该 SKU 的计划」内（用于判定"落错格"；无计划信息时不拦）
     bool isGridInPlanOf(const QString& sku, const QString& gridKey) const;
@@ -549,12 +661,50 @@ private:
     int clampFullboxQtyToPlan(const QString& gridKey, QJsonArray& detailList, QStringList& trimLog) const;
 
     // ──── ★ 2026-09-14 同品多格口「按计划件数分配」计数（选格依据）────
+    //   ★★ 已由 PlanAllocTable（m_alloc）取代，保留容器仅为兼容历史调用点 ★★
     //   计划数来自 H4（GridEntry::planQtyPerGrid：该 SKU 在某格口计划几件）；
     //   本表记录「该 SKU 已在某格口落了几件」——★ 以 PLC 反馈落格成功为准（status=1），
     //   同一 EPC 只计一次，跨换箱持续累计，仅在 H4 新波次重下发/波次清理时清零。
-    //   选格时取「已落格数 < 计划件数」的首个计划格口；全部满额 → 超计划件按策略处置。
     QMap<QString, QMap<QString, QSet<QString>>> m_gridLandedNum;  // SKU → (格口号 → 已落格 EPC 集合)
     mutable std::mutex                           m_gridLandedMutex;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-14 波次级「计划分配表」（落格结构优化的核心）
+    //
+    // 设计要点（详见 PlanAllocTable.h 顶部说明）：
+    //   · 波次开始时把 H4 计划一次性编译成定长数组（顺序在编译期固化）
+    //     → 决策与 items 到达顺序无关，同一波次可完整重现（可追溯）；
+    //   · 运行期只做「整数加减 + 数组下标」，每件选格 ≈ 1 次哈希 + 若干整数运算；
+    //   · 额度 = 计划 − 已落 − 在途认领：已落/在途都算占用 →
+    //     "同时两件在线""人工多投"在**下发时刻**就被拦住（改投异常口），
+    //     杜绝改造前"先查已落数、再另行登记"造成的超计划；
+    //   · 只记"在途"认领 → 常驻内存 O(在途)，与波次件数无关。
+    //
+    // 线程：编译/认领/释放/搬迁/清空/快照 = 主线程；commitLandedAlloc = PLC 反馈线程池。
+    //       全表由 m_allocMutex 串行化，锁内完成"判定 + 改数"。
+    // 失效隔离：m_allocValid=false（未编译/编译失败/开关关闭）→ 所有查表路径
+    //       立即退回改造前老逻辑，**绝不因分配表异常而不发指令或阻塞投线**。
+    // ════════════════════════════════════════════════════════════════════════
+    PlanAllocTable          m_alloc;
+    mutable std::mutex      m_allocMutex;
+    std::atomic<bool>       m_allocValid{false};     // 分配表是否生效（false=退回老逻辑）
+    std::atomic<int>        m_allocAuditBad{0};      // 不变量巡检违规条数（UI 显示用）
+    QString                 m_allocOrderCode;        // 分配表对应的波次号（仅主线程读写）
+    int                     m_allocPlanLogCnt = 0;   // 选格成功日志节流计数（仅主线程）
+    QTimer*                 m_allocSweepTimer = nullptr;  // 认领超时清扫 + 不变量巡检定时器
+    void clearPlanAllocTable(const QString& reason);      // 五处清零点统一入口
+    // 选格成功日志节流（前 N 条逐条 + 之后每步长一条；异常类日志一律逐条保留）
+    bool allocShouldLogSelect();
+    // ★ 认领号登记（EPC → claimId）：落格反馈提交认领时使用，与在途认领同生命周期
+    //   ★ 跨线程：主线程写（认领时）、PLC 反馈线程池读（落格时）→ 独立小锁保护
+    QHash<QString, quint64>  m_allocClaimIds;
+    mutable std::mutex       m_allocClaimIdMutex;
+    // ★ 发送失败待释放队列：sendPool 线程写入 → 主线程（清扫/波次边界）释放
+    //   为什么不让 sendPool 线程直接释放：分配表的写操作统一由主线程独占
+    //   （保证"判定+改数"与选格同线程），避免引入跨线程写导致的状态错乱。
+    QSet<QString>            m_allocPendingRelease;
+    std::mutex               m_allocPendingReleaseMutex;
+    void drainAllocPendingRelease();                      // 主线程：处理发送失败待释放队列
 
     // ──── ★ 2026-09-14 落格明细去重（同一 EPC 同波次同格口只 1 条，见上方方法说明）────
     //   key = 内部格口 key(3位) + "\n" + EPC；value = 该明细写入时刻(ms)，便于比较先后

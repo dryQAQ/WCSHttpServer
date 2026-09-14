@@ -1,14 +1,20 @@
 #include "HttpServer.h"
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QElapsedTimer>
+#include <QDateTime>
+#include <QThread>
+#include <QCoreApplication>
+#include <QUrlQuery>
+#include <algorithm>
+#include <climits>
+#include <cstring>
 #include "ParseWorker.h"
 #include "HttpClient.h"
 #include "LogService.h"
 #include "ConfigManager.h"
 #include "WmsGridCode.h"     // ★ 2026-09-07 WMS 格口编码(22+3位) 转换工具
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QUrlQuery>
-#include <QDateTime>
-#include <QElapsedTimer>
 #include <QThread>
 #include <QCoreApplication>
 #include <QUuid>
@@ -83,9 +89,28 @@ HttpServer::HttpServer(QObject* parent)
     });
 
     // ★ 2026-09-14 设置「计划分配」查询回调：同品多格口按计划件数分配（选格依据）
-    //   计划件数来自 H4 解析（GridEntry::planQtyPerGrid），已落格件数由本类按 PLC 反馈累计。
-    m_pPlcMgr->setPlanAllocCallback([this](const QString& code) -> PlcPlanAllocInfo {
-        return planAllocOf(code);
+    //   ★ 入参两个都是识别码（=EPC）：SKU 由本回调内部按 EPC 从 EpcCache 解析，
+    //     这样 PlcManager 侧无需知道 EPC→SKU 的映射来源。
+    m_pPlcMgr->setPlanAllocCallback([this](const QString& epc, const QString& sku, bool bClaim) -> PlcPlanAllocInfo {
+        return planAllocOf(epc, sku, bClaim);
+    });
+
+    // ★ 2026-09-14 计划缺口搬迁回调：计划格口满箱未重绑/锁格 → 未完成件转同 SKU 其它可用计划格口
+    m_pPlcMgr->setMoveGapCallback([this](const QString& epc, qint16 fromGrid, qint16 toGrid) -> int {
+        const QString sku = skuOfEpcForAlloc(epc);
+        if (sku.isEmpty()) return 0;
+        return moveAllocGap(sku, fromGrid, toGrid);
+    });
+
+    // ★ 2026-09-14 选格成功日志节流回调（日万级件下控制日志量；异常/超计划/搬迁仍逐条保留）
+    m_pPlcMgr->setSelectLogCallback([this]() -> bool { return allocShouldLogSelect(); });
+
+    // ★ 2026-09-14 单条下发结果回调：失败只**入队**，由主线程释放额度
+    //   （分配表写操作统一主线程独占，避免 sendPool 线程直接改表引入状态错乱）
+    m_pPlcMgr->setSendResultCallback([this](const QString& epc, bool success) {
+        if (success) return;
+        std::lock_guard<std::mutex> lk(m_allocPendingReleaseMutex);
+        m_allocPendingRelease.insert(epc);
     });
 
     // ──── 业务线程池 ────
@@ -147,7 +172,8 @@ HttpServer::HttpServer(QObject* parent)
     // 但 emit 发生在工作线程，导致信号跨线程传递异常。
     connect(m_pWorker, &ParseWorker::waveParsed, this,
         [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet,
-               const QByteArray& rawBody) {
+               const QByteArray& rawBody,
+               const QVector<QPair<QString, QVector<PlanGridInput>>>& skuPlans, int planSum) {
             // ★ 2026-09-06 接收闸门：停止接收后到达的队列残余任务不注册波次，仅记录
             //   ★ 2026-09-07 待执行队列重放（自动开始下一波次）放行
             if (!m_receiving.load() && !m_replayingPending.load())
@@ -184,6 +210,28 @@ HttpServer::HttpServer(QObject* parent)
                     pw.orderQty  = orderQty;      // ★ 2026-09-08 队列弹窗展示件数
                     pw.rawBody   = rawBody;
                     pw.recvTime  = QDateTime::currentMSecsSinceEpoch();
+                    // ★ 2026-09-14 波次隔离：从 H4 轻量提取本波次涉及的 SKU（只需 inco 字段）
+                    //   用途：上一波次仍在分拣时，若到货件的 SKU 属于本排队波次，
+                    //   则该件必须挂起等本波次（不得按上一波次计划投异常口）。
+                    //   只读 JSON 的 items[].inco，不做映射/校验，开销可忽略且不影响后续重放解析。
+                    {
+                        QJsonParseError perr;
+                        const QJsonDocument pdoc = QJsonDocument::fromJson(rawBody, &perr);
+                        if (!perr.error)
+                        {
+                            const QJsonArray pitems = pdoc.object().value("items").toArray();
+                            for (const QJsonValue& v : pitems)
+                            {
+                                const QString inco = v.toObject().value("inco").toString().trimmed();
+                                if (!inco.isEmpty()) pw.skuSet.insert(inco);
+                            }
+                        }
+                        if (pw.skuSet.isEmpty())
+                        {
+                            HTTP_LOG_WARN("新波次排队：SKU 集合提取为空 orderCode=%s（不影响执行，仅波次隔离判定退化为按状态判定）",
+                                orderCode.toLocal8Bit().data());
+                        }
+                    }
                     m_pendingWaveQueue.append(pw);
                     emit pendingWavesChanged();   // ★ 2026-09-08 UI 队列/波次列表刷新
                     // ★ 落波次头（波次记录列表可见，状态=已下发/待执行）；明细待执行时随格口映射一起落库
@@ -201,6 +249,16 @@ HttpServer::HttpServer(QObject* parent)
 
             m_pWaveMgr->setWaveData(orderCode, orderQty, skuCount);
             m_pWaveMgr->setRecvSet(recvSet);
+
+            // ════════════════════════════════════════════════════════════════
+            // ★ 2026-09-14 编译「计划分配表」（本波次唯一一次，主线程）
+            //   客户口径落地：每个格口有对应这个产品的数量（正常分拣格口/发货格口
+            //   各一份），按各格口数量分件；已落+在途 ≥ 计划 → 改投异常口。
+            //   ★ 只在主线程编译：表的写操作统一由主线程独占（选格链路同线程），
+            //     PLC 反馈线程池只通过 commitOnLanded 读改，由 m_allocMutex 串行化。
+            //   ★ 编译失败/开关关闭 → valid=false，全系统退回改造前老逻辑（不阻塞投线）。
+            // ════════════════════════════════════════════════════════════════
+            buildPlanAllocTable(orderCode, orderQty, planSum, skuPlans);
 
             // ★ 新波次下发时重启 Outbox 重试定时器（上一波次完结时已停止）
             if (m_outboxEndTimer)     m_outboxEndTimer->start(OUTBOX_POLL_INTERVAL_SEC * 1000);
@@ -334,13 +392,19 @@ HttpServer::HttpServer(QObject* parent)
             }
 
             // ★ 提交到 PLC 反馈接收专用线程池（不阻塞主线程）
+            //
+            // ★★ landedEpcs 必须【按值捕获】**副本** ★★
+            //   ThreadPool::commitNoWait 只做"入队 + notify_one"就返回（见 ThreadPool.h 第 82-99 行），
+            //   任务由池内线程**稍后**执行。若按引用捕获栈上局部变量，本函数返回后该对象即析构，
+            //   工作线程随后访问就是 use-after-free（表现为随机崩溃 C0000005）。
+            //   按值捕获后，任务写入的是它自己那份副本 → 因此所有 landedEpcs.insert(...)
+            //   都必须发生在任务 lambda 内部（下面的代码正是如此），外层变量仅作为传参载体。
+            //   此前的注释"commitNoWait 保证本帧内执行完"与实现不符，已一并纠正。
+            {
+            QSet<QString> landedEpcs;
             if (m_pPlcRecvPool)
             {
-                // ★ 2026-09-14 本批"投递已结束"的 EPC（正常落格 / 防重分支 / 超计划落异常口）
-                //   → 批处理结束后回主线程计时归零。用引用捕获：lambda 无 detach，
-                //   commitNoWait 保证本帧内执行完（与已有 entries/rescanEpcs 同源用法）。
-                QSet<QString> landedEpcs;
-                m_pPlcRecvPool->commitNoWait([this, entries, rescanEpcs, &landedEpcs]() {
+                m_pPlcRecvPool->commitNoWait([this, entries, rescanEpcs, landedEpcs]() mutable {
                     AppConfig& cfg = ConfigManager::instance()->config();
                     int waveStatus = m_pWaveMgr->status();
 
@@ -726,28 +790,61 @@ HttpServer::HttpServer(QObject* parent)
                                 }
 
                                 const QString gridKey = normalizeGridKey(e.grid);
-                                // 计划件数：优先取「该格口的计划件数」（同品多格口时各格口不同），
-                                // 无分格口计划时退回该 SKU 的计划总数（旧数据/单格口场景）
-                                const GridEntry curEntry = m_pBuffer ? m_pBuffer->get(curSku) : GridEntry();
-                                const int planQty = curEntry.planQtyPerGrid.contains(gridKey)
-                                    ? curEntry.planQtyPerGrid.value(gridKey)
-                                    : curEntry.gridCount;
-                                // 本格口类型（0=分类/正常分拣, 1=异常, 2=发货）——便于人工判断该口性质
-                                const QString gridTypeNow = curEntry.gridTypePerGrid.value(gridKey, curEntry.gridType);
+                                // ★ 2026-09-14 计划分配表：**唯一权威**的计划/已落/在途来源
+                                //   commitLandedAlloc 在锁内一次完成：
+                                //     ① 已落格登记（同 EPC 去重，不变量①）
+                                //     ② 释放该件在途认领（与已落格解耦）
+                                //     ③ 返回本格口计划件数 + 本格口已落件数（供超计划判定）
+                                //   ★ 计划件数不再用"SKU 计划总数"兜底：多格口场景下会把每个格口
+                                //     都误判为不超计划（这是现场"人工多投没被拦住"的根因）。
+                                int landedNow = 0, planQtyNow = 0;
+                                bool claimMismatch = false;
+                                commitLandedAlloc(curSku, gridKey, e.code, 0,
+                                                  &claimMismatch, &landedNow, &planQtyNow);
+                                // 分配表未生效（valid=false）时退回老口径（保持改造前行为，不误报）
+                                const int planQty = m_allocValid.load() ? planQtyNow : 0;
 
-                                // ★ 2026-09-14 同品多格口分配计数：以「PLC 反馈落格成功」为准登记（同一 EPC 只计一次）
+                                // ★ 预警面板计数（m_boxLandedEpcs）仍按"PLC 实测已落入的 EPC"登记：
+                                //   与分配表解耦 → 即使分配表失效，波次面板「预警」数字依然可用（稳定性）
                                 noteGridLanded(curSku, gridKey, e.code);
-                                int landedNow = 0;
-                                if (noteLandedIntoPlanGrid(gridKey, curSku, e.code, planQty, landedNow))
+
+                                // 本格口类型（0=正常分拣, 1=异常, 2=发货）——便于人工判断该口性质
+                                const QString gridTypeNow = QString::number(gridTypeOfGridInPlan(curSku, gridKey));
+
+                                if (claimMismatch)
+                                {
+                                    // 认领不匹配（人工硬塞 / 认领已被超时释放）→ 账实照记，另留痕
+                                    HTTP_LOG_WARN("[分配表] 认领不匹配 epc=%s sku=%s grid=%s 计划%d件 已落%d件 "
+                                                  "—— 落格计数照实登记（账实优先），请核对是否人工放置",
+                                        e.code.toLocal8Bit().data(), curSku.toLocal8Bit().data(),
+                                        gridKey.toLocal8Bit().data(), planQtyNow, landedNow);
+                                    if (m_pSortingDb && m_pSortingDb->isOpen())
+                                    {
+                                        ExceptionRecord exMm;
+                                        exMm.type      = QString::fromUtf8("分配表认领不匹配");
+                                        exMm.orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+                                        exMm.epc       = e.code;
+                                        exMm.sku       = curSku;
+                                        exMm.reason    = QString::fromUtf8(
+                                            "格口%1 容器%2 计划%3件 已落%4件 —— 该件无在途认领或认领已超时释放；"
+                                            "落格计数已照实登记，请核对是否人工放置/是否有未下发件落入")
+                                            .arg(gridKey).arg(curBox).arg(planQtyNow).arg(landedNow);
+                                        exMm.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                                        m_pSortingDb->insertException(exMm);
+                                    }
+                                }
+
+                                const bool bOverPlan = (m_allocValid.load() && planQty > 0 && landedNow > planQty);
+                                if (bOverPlan)
                                 {
                                     const QString orderNow = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
                                     const int overQty = landedNow - planQty;
-                                    HTTP_LOG_WARN("[超计划-预警] 格口%s(类型%s) 容器%s SKU=%s EPC=%s 本格口计划%d件(SKU总计划%d件) "
+                                    HTTP_LOG_WARN("[超计划-预警] 格口%s(类型%s) 容器%s SKU=%s EPC=%s 本格口计划%d件 "
                                                   "实际落格%d件 多余%d件 → 已登记预警；该多余件不进入上传报文，请现场取出",
                                         gridKey.toLocal8Bit().data(), gridTypeNow.toLocal8Bit().data(),
                                         curBox.toLocal8Bit().data(),
                                         curSku.toLocal8Bit().data(), e.code.toLocal8Bit().data(),
-                                        planQty, curEntry.gridCount, landedNow, overQty);
+                                        planQty, landedNow, overQty);
                                     emit logMessage(QString::fromUtf8(
                                         "[超计划] 格口%1 容器%2 SKU %3：计划%4件 实际落格%5件 多余%6件"
                                         "（已在波次面板登记预警，多余件不进入上传报文，请现场取出）")
@@ -757,12 +854,14 @@ HttpServer::HttpServer(QObject* parent)
                                     if (m_pSortingDb && m_pSortingDb->isOpen())
                                     {
                                         ExceptionRecord exOver;
-                                        exOver.type      = QString::fromUtf8("超计划多入");
+                                        // ★ 区分语义：有计划但已满额 = "错投超计划"（人工多放/同时两件在线）；
+                                        //   原 type=超计划多入 保留（既有核对脚本与异常面板口径不变）
+                                        exOver.type      = QString::fromUtf8("错投超计划");
                                         exOver.orderCode = orderNow;
                                         exOver.epc       = e.code;
                                         exOver.sku       = curSku;
                                         exOver.reason    = QString::fromUtf8(
-                                            "格口%1 容器%2 计划%3件 实际落格%4件 多余%5件（本件为多余件之一）；"
+                                            "格口%1 容器%2 本格口计划%3件 实际落格%4件 多余%5件（本件为多余件之一）；"
                                             "该多余件不进入上传报文，请现场取出")
                                             .arg(gridKey).arg(curBox).arg(planQty)
                                             .arg(landedNow).arg(overQty);
@@ -808,18 +907,50 @@ HttpServer::HttpServer(QObject* parent)
                         //   因此不会出现在该格口的 H7 报文里。理由：该格口对这个 SKU 没有计划数量，
                         //   一旦上报，WMS 侧出现"该格口上报了它无计划的 SKU"，可能按格口校验而整条驳回。
                         //   该件仍计已分拣（PLC 报成功口径不变），异常表留痕 + UI 提示人工取出。
-                        const bool bWrongGrid = !isGridInPlanOf(sku, e.grid);
+                        //   ★ 边界：异常口(66) 是系统主动改投，不属于"落错格"（其件在更上方分支已被拦下，不会走到这里）。
+                        const bool bWrongGrid = m_allocValid.load() && !isGridInPlanOf(sku, e.grid)
+                                                && !isExceptionGridKey(normalizeGridKey(e.grid));
                         if (bWrongGrid)
                         {
-                            const GridEntry planEntry = m_pBuffer ? m_pBuffer->get(sku) : GridEntry();
+                            // 计划格口清单（分配表口径：格口(类型):件数），便于现场直接放回
+                            QStringList planList;
+                            if (m_allocValid.load())
+                            {
+                                std::lock_guard<std::mutex> lk(m_allocMutex);
+                                const QVector<qint16> grids = m_alloc.gridsOf(sku);
+                                for (qint16 g : grids)
+                                {
+                                    const QString gk = PlanAllocTable::gridKeyOf(g);
+                                    planList << QString("%1(%2):%3件").arg(gk)
+                                                    .arg(PlanAllocTable::typeNameOf(
+                                                        (quint8)m_alloc.gridTypeOf(sku, gk)))
+                                                    .arg(m_alloc.planQtyOf(sku, gk));
+                                }
+                            }
                             HTTP_LOG_WARN("[落错格] 件未写入落格明细（不进 H7）epc=%s sku=%s 实际格口=%s 计划格口=[%s] "
                                           "—— 已计已分拣并留痕，请人工取出并放回计划格口",
                                 e.code.toLocal8Bit().data(), sku.toLocal8Bit().data(),
                                 normalizeGridKey(e.grid).toLocal8Bit().data(),
-                                planEntry.gridNum.toLocal8Bit().data());
+                                planList.join(QString::fromUtf8(",")).toLocal8Bit().data());
                             emit logMessage(QString::fromUtf8(
                                 "[落错格] EPC %1（SKU %2）落到了无计划的格口%3 —— 该件不上传WMS，请人工取出放回计划格口[%4]")
-                                .arg(e.code).arg(sku).arg(normalizeGridKey(e.grid)).arg(planEntry.gridNum), true);
+                                .arg(e.code).arg(sku).arg(normalizeGridKey(e.grid))
+                                .arg(planList.join(QString::fromUtf8(","))), true);
+
+                            // 异常表留痕（type=错投无计划格口；与原 wrong_grid 并存，便于归类统计）
+                            if (m_pSortingDb && m_pSortingDb->isOpen())
+                            {
+                                ExceptionRecord exWg;
+                                exWg.type      = QString::fromUtf8("错投无计划格口");
+                                exWg.orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
+                                exWg.epc       = e.code;
+                                exWg.sku       = sku;
+                                exWg.reason    = QString::fromUtf8(
+                                    "实际落格%1，但该 SKU 在 %1 无计划（计划格口=[%2]）；该件不进入上传报文，请人工取出放回")
+                                    .arg(normalizeGridKey(e.grid)).arg(planList.join(QString::fromUtf8(",")));
+                                exWg.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                                m_pSortingDb->insertException(exWg);
+                            }
                         }
                         // ★ 2026-09-14 去重把关（客户确认：同一 EPC 同波次同格口只记 1 条）：
                         //   重复类落格（重扫重投 / 重复反馈 / DB防重）只要该 (格口,EPC) 已有明细，
@@ -897,6 +1028,7 @@ HttpServer::HttpServer(QObject* parent)
                         emit epcsLanded(QStringList(landedEpcs.constBegin(), landedEpcs.constEnd()));
                 });
             }
+            }   // ← 结束"按值捕获 landedEpcs 副本"的作用域
         });
 
     // ★ S7 锁格 → 满箱回传（H7 满箱同步到WMS，G2 修复）
@@ -1030,6 +1162,19 @@ HttpServer::HttpServer(QObject* parent)
     m_endSessionTimer = new QTimer(this);
     m_endSessionTimer->setSingleShot(true);
     connect(m_endSessionTimer, &QTimer::timeout, this, &HttpServer::onEndSessionTimeout);
+
+    // ★ 2026-09-14 计划分配表：认领超时清扫 + 不变量巡检 + 下发失败待释放队列处理
+    //   周期 30s（可配 allocAuditIntervalMs）。只做内存遍历（O(在途)）+ 一次 O(计划单元)
+    //   巡检，不查 DB、不发网络请求，主线程开销可控。
+    //   生命周期沿用本类既有定时器模式（new QTimer(this) + stopDevices() 内 stop）。
+    m_allocSweepTimer = new QTimer(this);
+    connect(m_allocSweepTimer, &QTimer::timeout, this, [this]() {
+        drainAllocPendingRelease();   // 先处理发送失败（尽快归还额度）
+        sweepPlanAllocClaims();       // 再清扫超时认领 + 不变量巡检
+    });
+    m_allocSweepTimer->start(ConfigManager::instance()->config().allocAuditIntervalMs > 0
+                                 ? ConfigManager::instance()->config().allocAuditIntervalMs
+                                 : ALLOC_AUDIT_INTERVAL_MS);
 
     LogCenter::Instance()->wcs_run_log_warn(true, "[Http] HttpServer已创建");
 }
@@ -1247,6 +1392,8 @@ void HttpServer::stopDevices()
     if (m_outboxEndTimer)     m_outboxEndTimer->stop();
     if (m_outboxFullboxTimer) m_outboxFullboxTimer->stop();
     if (m_endSessionTimer)    m_endSessionTimer->stop();
+    // ★ 2026-09-14 计划分配表清扫定时器（停止设备后不再触发，避免析构期间回调）
+    if (m_allocSweepTimer)    m_allocSweepTimer->stop();
     LOG_INFO("[析构] step2a 出站定时器已停止");
 
     if (m_pPlcMgr)
@@ -1832,9 +1979,10 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
             QStringList grids = e.gridNum.split(',', Qt::SkipEmptyParts);
             if (!grids.contains(it.gridNum))
                 e.gridNum = e.gridNum.isEmpty() ? it.gridNum : e.gridNum + "," + it.gridNum;
-            // 同格口重复行取大者、新格口另计；gridCount 同步为各格口之和
-            int& q = e.planQtyPerGrid[gKey];
-            q = it.planQty > q ? it.planQty : q;
+            // ★ 同格口多行**累加**（与解析期 ParseWorker 完全同口径）：同一 (SKU,格口) 出现多行，
+            //   语义是"这个产品在这个格口一共计划几件"。取大者会让计划数偏小，且与解析期
+            //   不一致 → 同一波次"恢复前/恢复后"结果不同（不可追溯）。
+            e.planQtyPerGrid[gKey] += it.planQty;
             // ★ 每格口类型同样保存（同品可同时计划到"正常分拣(分类)"与"发货"格口）
             if (!it.gridType.isEmpty())
                 e.gridTypePerGrid.insert(gKey, it.gridType);
@@ -1900,6 +2048,41 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
 
     // ★ 恢复时 ParseWorker 空闲（无排队任务），主线程 prepareSwap 安全
     m_pBuffer->prepareSwap(newMap);
+
+    // ★ 2026-09-14 计划分配表：恢复后**重新编译**（计划来自 DB return_wave_item 的
+    //   (SKU,格口,计划件数,类型) 行）。已落格计数不进表（DB 是唯一持久权威，落格明细在
+    //   sorting_records）；恢复后的余量从"计划全额"起算，与既有口径一致（docs 用例 7 已声明）。
+    {
+        QVector<QPair<QString, QVector<PlanGridInput>>> skuPlans;
+        skuPlans.reserve(newMap->size());
+        for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it)
+        {
+            const GridEntry& e = it.value();
+            if (e.planQtyPerGrid.isEmpty()) continue;
+            QVector<PlanGridInput> gs;
+            gs.reserve(e.planQtyPerGrid.size());
+            for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+            {
+                bool okG = false;
+                PlanGridInput gi;
+                gi.grid = (qint16)pit.key().toInt(&okG);
+                if (!okG) continue;
+                gi.qty = (qint32)pit.value();
+                const QString t = e.gridTypePerGrid.value(pit.key(), e.gridType);
+                gi.type = (quint8)t.toInt();
+                if (gi.type > 2) gi.type = 0;
+                gs.append(gi);
+            }
+            if (!gs.isEmpty()) skuPlans.append(qMakePair(it.key(), gs));
+        }
+        // 恢复场景先清旧表（可能残留上一个波次的计划），再按本波次明细编译
+        clearPlanAllocTable(QString::fromUtf8("波次恢复-重建前"));
+        if (!skuPlans.isEmpty())
+        {
+            buildPlanAllocTable(orderCode, wave.orderQty, 0, skuPlans);
+            reportPlanAlloc(QString::fromUtf8("波次恢复"));
+        }
+    }
 
     // 步骤4：重建进度集合
     QSet<QString> sortedEpcs    = m_pSortingDb->getSortedEpcsByOrder(orderCode);
@@ -2066,39 +2249,12 @@ int HttpServer::landedCountOf(const QString& gridKey, const QString& sku) const
 //   计数口径（客户确认）：以 PLC 反馈「落格成功」为准 —— 故在落格反馈处登记，
 //   同一 EPC 只计一次；跨换箱持续累计（H6 重绑不清零，仅 H4 新波次/波次清理时清零）。
 // ============================================================================
-PlcPlanAllocInfo HttpServer::planAllocOf(const QString& sku)
+PlcPlanAllocInfo HttpServer::planAllocOf(const QString& epc, const QString& skuIn, bool bClaim)
 {
     PlcPlanAllocInfo info;
-    if (sku.isEmpty())
-        return info;
+    info.orderCode = m_allocOrderCode;
 
-    // 1) 计划件数（H4 解析结果）+ 每格口类型（分类/异常/发货）
-    if (m_pBuffer)
-    {
-        GridEntry entry = m_pBuffer->get(sku);
-        if (!entry.planQtyPerGrid.isEmpty())
-        {
-            info.planQtyPerGrid  = entry.planQtyPerGrid;
-            info.gridTypePerGrid = entry.gridTypePerGrid;
-            info.valid = true;
-        }
-        else if (entry.gridCount > 0 && !entry.gridNum.isEmpty())
-        {
-            // 兼容：未记录分格口计划（旧数据/单格口）时，用总数折算到首个格口
-            const QString first = normalizeGridKey(entry.gridNum.split(',', Qt::SkipEmptyParts).value(0));
-            if (!first.isEmpty())
-            {
-                info.planQtyPerGrid.insert(first, entry.gridCount);
-                info.gridTypePerGrid.insert(first, entry.gridType);
-                info.valid = true;
-            }
-        }
-        // 计划全为空但类型表有值（异常数据）时，仍把类型表带出，供日志显示
-        if (info.gridTypePerGrid.isEmpty() && !entry.gridTypePerGrid.isEmpty())
-            info.gridTypePerGrid = entry.gridTypePerGrid;
-    }
-
-    // 2) 超计划兜底格口（配置项 exceptionGrid，未配置 = -1 表示不做异常口改投）
+    // 1) 超计划兜底格口（配置项 exceptionGrid；未配置 = -1 表示不做异常口改投）
     {
         const QString excCfg = ConfigManager::instance()->config().exceptionGrid.trimmed();
         bool okExc = false;
@@ -2106,32 +2262,103 @@ PlcPlanAllocInfo HttpServer::planAllocOf(const QString& sku)
         info.excGrid = (okExc && exc > 0 && exc <= BINDING_SLOT_COUNT) ? exc : -1;
     }
 
-    // 2.1) ★ 计划里若出现异常格口号 → 剔除（异常口不属于任何 SKU 的计划，
-    //      否则"计划件数"会把本该改投异常口的件算成"计划内"，多余件就漏判了）
-    if (info.excGrid > 0 && info.valid)
-    {
-        const QString excKey = normalizeGridKey(QString::number(info.excGrid));
-        if (info.planQtyPerGrid.contains(excKey))
-        {
-            const int drop = info.planQtyPerGrid.take(excKey);
-            info.gridTypePerGrid.remove(excKey);
-            HTTP_LOG_WARN("[计划分配] SKU=%s 的计划含异常格口%s(计划%2件) —— 已从计划中剔除，该格口只收超计划件",
-                sku.toLocal8Bit().data(), excKey.toLocal8Bit().data(), drop);
-        }
-    }
+    // SKU 解析：调用方可能只给 EPC（识别码即 EPC），此处按 EPC 从 EpcCache 取 SKU
+    //   （EpcCache 自带互斥量，可跨线程调用；与落格链路 getSkuByEpc 同一口径）
+    QString sku = skuIn;
+    if (sku.isEmpty() || sku == epc)
+        sku = skuOfEpcForAlloc(epc);
 
-    // 3) 已落格件数（PLC 反馈成功累计）
+    if (sku.isEmpty()) return info;
+    if (!m_allocValid.load() || !ConfigManager::instance()->config().allocEnabled)
+        return info;   // 未启用/未编译 → valid=false，调用方走改造前老逻辑（不阻塞投线）
+    // 2) 分配表：计划/类型/已落/在途 + ★ 在同一次加锁内完成额度认领
+    //    ★ 必须"判定 + 改数"在同一把锁内：这是修复"同时两件在线 → 两件都判未满额
+    //      → 都发同一格口 → 箱内实落超计划"的关键（改造前是两次独立读改）。
     {
-        std::lock_guard<std::mutex> lock(m_gridLandedMutex);
-        auto it = m_gridLandedNum.constFind(sku);
-        if (it != m_gridLandedNum.constEnd())
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        if (!m_alloc.skuHasPlan(sku))
+            return info;   // 该 SKU 本波次无计划 → 退回老逻辑
+
+        const QVector<qint16> grids = m_alloc.gridsOf(sku);
+        for (qint16 g : grids)
         {
-            for (auto git = it.value().constBegin(); git != it.value().constEnd(); ++git)
-                info.landedNum.insert(git.key(), git.value().size());
+            const QString gk = PlanAllocTable::gridKeyOf(g);
+            info.planQtyPerGrid.insert(gk, m_alloc.planQtyOf(sku, gk));
+            info.landedNum.insert(gk, m_alloc.landedOf(sku, gk));
+            info.reservNum.insert(gk, m_alloc.reservOf(sku, gk));
+            // 每格口类型按格口取（不会像合并后的 gridType 那样只剩最后一行）
+            info.gridTypePerGrid.insert(gk, QString::number(m_alloc.gridTypeOf(sku, gk)));
+        }
+        info.valid = !info.planQtyPerGrid.isEmpty();
+        info.skuIdx = m_alloc.skuIndexOf(sku);
+        if (!info.valid)
+            return info;
+
+        // bClaim=false：只读预查（供选格先判断是否需要缺口搬迁），**不扣额度、不登记认领**
+        if (!bClaim)
+            return info;
+
+        // ── 认领额度 ──
+        //   ① 该件此前已正确落入过原格口（件被拿出重投）→ 放行且不占用新额度，
+        //      保持"重扫重投仍回原格口"的既有口径（见 docs 用例 9/10）。
+        for (qint16 g : grids)
+        {
+            const QString gk = PlanAllocTable::gridKeyOf(g);
+            if (m_alloc.epcLandedIn(sku, gk, epc))
+            {
+                info.claimOk      = true;
+                info.claimGrid    = g;
+                info.claimPlanIdx = -1;          // 未新增认领 → 无需释放/提交
+                info.claimId      = 0;
+                info.allEpcsLanded = true;
+                return info;
+            }
+        }
+
+        //   ② 正常认领：按计划格口顺序取首个仍有额度的格口（额度 = 计划−已落−在途）
+        qint16 claimGrid = -1, planIdx = -1;
+        quint64 claimId = 0;
+        if (m_alloc.claim(sku, &claimGrid, &claimId, &planIdx))
+        {
+            info.claimOk      = true;
+            info.claimGrid    = claimGrid;
+            info.claimPlanIdx = planIdx;
+            info.claimId      = claimId;
+            // ③ 认领登记（同一次锁内）：落格提交/发送失败释放都按 EPC 反查
+            bool conflict = false;
+            m_alloc.noteIssued(epc, info.skuIdx, planIdx, claimId,
+                               QDateTime::currentMSecsSinceEpoch(), &conflict);
+            if (conflict)
+            {
+                // 同一 EPC 已有在途认领（重复下发）→ 保留原认领，本次额度立即释放，防泄漏
+                m_alloc.releaseEpc(epc);
+                if (!m_alloc.noteIssued(epc, info.skuIdx, planIdx, claimId,
+                                        QDateTime::currentMSecsSinceEpoch(), nullptr))
+                {
+                    HTTP_LOG_WARN("[分配表] 认领登记失败（已在途）epc=%s sku=%s grid=%s —— 立即释放本次额度",
+                        epc.toLocal8Bit().data(), sku.toLocal8Bit().data(),
+                        PlanAllocTable::gridKeyOf(claimGrid).toLocal8Bit().data());
+                    m_alloc.releaseByClaimId(claimId);
+                    info.claimOk = false;
+                }
+            }
+            // ④ 认领号登记（供落格反馈提交用；与在途认领同生命周期）
+            if (info.claimOk)
+            {
+                std::lock_guard<std::mutex> lk(m_allocClaimIdMutex);
+                m_allocClaimIds.insert(epc, claimId);
+            }
         }
     }
 
     return info;
+}
+
+// ★ 取「该 SKU 在某格口的类型数字」（0=正常分拣 1=异常 2=发货）；不在计划内返回 0
+int HttpServer::gridTypeOfGridInPlan(const QString& sku, const QString& gridKey) const
+{
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    return m_alloc.gridTypeOf(sku, gridKey);
 }
 
 void HttpServer::noteGridLanded(const QString& sku, const QString& gridKey, const QString& epc)
@@ -2212,6 +2439,472 @@ void HttpServer::clearLandingDedup()
         HTTP_LOG_INFO("落格明细去重集合已清空 keys=%d（波次切换/新波次/完结清理）", n);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-14 计划分配表（落格结构优化）——编译 / 认领 / 落格 / 释放 / 巡检 / 报告
+//
+// 客户口径（本块代码要落地的不变量）：
+//   ① 每个格口都有"对应这个产品的数量"——一个 SKU 可同时计划到「正常分拣格口」
+//      与「发货格口」，各格口各一份数量；落格按各格口数量分（不再全投第一个）。
+//   ② 人工失误 / 同时两件在线造成"箱内实落 > 计划"必须被拦住：
+//      已落格 + 在途认领 ≥ 计划件数 → 后续件一律改投异常口（66 号）。
+//
+// 为什么能拦住（改造前的根因）：改造前选格时"查已落数"与"登记已落数"是两次独立
+//   读改，同时两件在线时两件都读到"已落 0 < 计划 1"→ 两件都发同一格口。
+//   本表把**在途认领**也算占用额度，且"判定 + 扣减"在同一把锁内完成 → 第二件在下发
+//   时刻就看到额度为 0，直接改投异常口。
+// ════════════════════════════════════════════════════════════════════════════
+
+// ──── 编译（波次解析完成时调用一次；仅主线程）────
+bool HttpServer::buildPlanAllocTable(const QString& orderCode, int orderQty, int planSum,
+                                     const QVector<QPair<QString, QVector<PlanGridInput>>>& skuPlans)
+{
+    AppConfig& cfg = ConfigManager::instance()->config();
+
+    // ★ 2026-09-14 应急处置开关：环境变量 WCS_ALLOC_OFF=1 时强制关闭本特性
+    //   （优先级高于 XML 配置；用于现场/联调时"不改配置文件即可让行为回到改造前"）
+    const bool bAllocOn = cfg.allocEnabled && !qEnvironmentVariableIsSet("WCS_ALLOC_OFF");
+
+    // 开关关闭 → 明确失效，全系统退回改造前行为（可配置回退，无需回滚可执行文件）
+    if (!bAllocOn)
+    {
+        m_allocValid.store(false);
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        m_alloc.clear();
+        m_allocPlanLogCnt = 0;
+        HTTP_LOG_WARN("[计划分配表] 已关闭(allocEnabled=false) order=%s —— 选格退回改造前'恒取首个格口'行为",
+            orderCode.toLocal8Bit().data());
+        return false;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    m_alloc.clear();
+    m_allocPlanLogCnt = 0;
+
+    // 异常口（66）不属于任何 SKU 的产品计划：若 H4 把它写进计划，编译期剔除，
+    // 否则"计划件数"会把本该改投异常口的件算成"计划内"，多余件就漏判了。
+    const QString excCfg = cfg.exceptionGrid.trimmed();
+    bool okExc = false;
+    const int excGrid = excCfg.toInt(&okExc);
+    const bool hasExc = (okExc && excGrid > 0 && excGrid <= BINDING_SLOT_COUNT);
+
+    QVector<QPair<QString, QVector<PlanGridInput>>> cleaned;
+    cleaned.reserve(skuPlans.size());
+    int droppedExc = 0;
+    for (const auto& kv : skuPlans)
+    {
+        QVector<PlanGridInput> gs;
+        gs.reserve(kv.second.size());
+        for (const PlanGridInput& g : kv.second)
+        {
+            if (hasExc && g.grid == (qint16)excGrid) { ++droppedExc; continue; }
+            gs.append(g);
+        }
+        if (!gs.isEmpty()) cleaned.append(qMakePair(kv.first, gs));
+    }
+    if (droppedExc > 0)
+    {
+        HTTP_LOG_WARN("[计划分配] H4 计划中含异常格口%s 的条目共%d 行 —— 已从计划中剔除，该格口只收超计划件",
+            PlanAllocTable::gridKeyOf((qint16)excGrid).toLocal8Bit().data(), droppedExc);
+    }
+
+    const bool ok = m_alloc.build(BINDING_SLOT_COUNT, cleaned);
+    if (!ok)
+    {
+        m_allocValid.store(false);
+        HTTP_LOG_ERROR("[计划分配表] 编译结果为空 order=%s SKU条目=%d —— 分配表失效，选格退回老逻辑（不影响投线）",
+            orderCode.toLocal8Bit().data(), skuPlans.size());
+        return false;
+    }
+
+    m_allocOrderCode = orderCode;
+    m_allocValid.store(true);
+
+    const PlanStats st = m_alloc.stats();
+    const qint64 ms = timer.elapsed();
+    HTTP_LOG_INFO("[计划分配表] 构建 order=%s SKU=%d 计划单元=%d 多格口SKU=%d 计划件数合计=%d（H4 orderQty=%d %s）耗时=%lldms 内存≈%dKB",
+        orderCode.toLocal8Bit().data(), st.skuCount, st.cellCount, st.multiSkuCnt,
+        st.planTotal, orderQty,
+        (st.planTotal == orderQty ? "一致" : (st.planTotal == planSum ? "与Σitems一致但不等于orderQty" : "不一致")),
+        ms, (int)((st.cellCount * 24 + st.skuCount * 80) / 1024));
+
+    if (st.planTotal != orderQty)
+    {
+        HTTP_LOG_WARN("[计划分配表] 计划件数校验不一致 order=%s Σ每格口计划=%d orderQty=%d 差=%d "
+                      "（按 H4 明细为准分配；请核对 WMS 计划）",
+            orderCode.toLocal8Bit().data(), st.planTotal, orderQty, st.planTotal - orderQty);
+    }
+
+    // 多格口明细入日志（现场核对"哪个产品分到哪些格口、各几件"的底稿）
+    {
+        QStringList detail;
+        const int n = qMin(50, st.multiSkuCnt > 0 ? st.multiSkuCnt : 0);
+        int shown = 0;
+        QVector<PlanAllocTable::UiRow> rows;
+        m_alloc.snapshot(&rows);
+        for (const auto& r : rows)
+        {
+            if (r.cells.size() < 2) continue;
+            if (shown >= n) break;
+            QStringList one;
+            for (const auto& c : r.cells)
+                one << QString("%1(%2):%3件").arg(PlanAllocTable::gridKeyOf(c.grid))
+                           .arg(PlanAllocTable::typeNameOf(c.gridType)).arg(c.planQty);
+            detail << QString("%1→[%2]").arg(r.sku).arg(one.join("+"));
+            ++shown;
+        }
+        if (!detail.isEmpty())
+        {
+            HTTP_LOG_INFO("[计划分配表] 多格口分配 order=%s 涉及SKU=%d 明细(格口(类型):件数): %s%s",
+                orderCode.toLocal8Bit().data(), st.multiSkuCnt,
+                detail.join("; ").toLocal8Bit().data(),
+                st.multiSkuCnt > shown ? " …（其余见「计划分配表」页）" : "");
+        }
+    }
+    return true;
+}
+
+// ──── 认领（主线程）────
+bool HttpServer::claimAlloc(const QString& sku, qint16* claimGrid, quint64* claimId, qint16* planIdx)
+{
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    return m_alloc.claim(sku, claimGrid, claimId, planIdx);
+}
+
+void HttpServer::noteAllocIssued(const QString& epc, int skuIdx, qint16 planIdx, quint64 claimId)
+{
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    m_alloc.noteIssued(epc, skuIdx, planIdx, claimId, QDateTime::currentMSecsSinceEpoch(), nullptr);
+}
+
+void HttpServer::releaseAlloc(const QString& epc)
+{
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    if (!m_alloc.releaseEpc(epc))
+        HTTP_LOG_WARN("[分配表] 释放认领未命中（无在途认领或已释放）epc=%s —— 不改其余计数",
+            epc.toLocal8Bit().data());
+}
+
+bool HttpServer::epcLandedInPlan(const QString& sku, const QString& gridKey, const QString& epc) const
+{
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    return m_alloc.epcLandedIn(sku, gridKey, epc);
+}
+
+// ──── 落格登记（唯一跨线程入口：PLC 反馈线程池）────
+bool HttpServer::commitLandedAlloc(const QString& sku, const QString& gridKey, const QString& epc,
+                                   quint64 claimId, bool* mismatchOut, int* landedNowOut, int* planQtyOut)
+{
+    // 认领号反查（反馈线程读；主线程认领时写入）→ 独立小锁，避免与分配表锁交叉
+    quint64 cid = claimId;
+    if (cid == 0 && !epc.isEmpty())
+    {
+        std::lock_guard<std::mutex> lk(m_allocClaimIdMutex);
+        cid = m_allocClaimIds.value(epc, 0);
+    }
+
+    bool ok = false;
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        ok = m_alloc.commitOnLanded(sku, gridKey, epc, cid, mismatchOut, landedNowOut, planQtyOut);
+    }
+    // 认领已消费（无论成功与否）→ 清登记，避免无界增长（在途认领本身已在表内释放）
+    if (!epc.isEmpty())
+    {
+        std::lock_guard<std::mutex> lk(m_allocClaimIdMutex);
+        m_allocClaimIds.remove(epc);
+    }
+    return ok;
+}
+
+// ──── 发送失败待释放队列（主线程处理；sendPool 线程只入队）────
+void HttpServer::drainAllocPendingRelease()
+{
+    QSet<QString> pending;
+    {
+        std::lock_guard<std::mutex> lk(m_allocPendingReleaseMutex);
+        if (m_allocPendingRelease.isEmpty()) return;
+        pending = m_allocPendingRelease;
+        m_allocPendingRelease.clear();
+    }
+    int released = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        for (const QString& epc : pending)
+        {
+            if (m_alloc.releaseEpc(epc)) ++released;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_allocClaimIdMutex);
+        for (const QString& epc : pending)
+            m_allocClaimIds.remove(epc);
+    }
+    if (released > 0)
+    {
+        HTTP_LOG_WARN("[分配表] 下发失败已释放认领 %d 条（额度归还，件可按原计划重投）pending=%d",
+            released, pending.size());
+    }
+}
+
+// ──── 缺口搬迁（计划格口不可用 → 未完成件转同 SKU 其它可用计划格口）────
+int HttpServer::moveAllocGap(const QString& sku, qint16 fromGrid, qint16 toGrid)
+{
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    const int moved = m_alloc.moveGap(sku, fromGrid, toGrid);
+    if (moved > 0)
+    {
+        HTTP_LOG_WARN("[计划搬迁] SKU=%s 格口%s 不可用 → 未完成%d件转入格口%s（同SKU计划格口）",
+            sku.toLocal8Bit().data(),
+            PlanAllocTable::gridKeyOf(fromGrid).toLocal8Bit().data(), moved,
+            PlanAllocTable::gridKeyOf(toGrid).toLocal8Bit().data());
+    }
+    return moved;
+}
+
+// ──── 认领超时清扫 + 在途上限保护（每 30s，主线程）────
+void HttpServer::sweepPlanAllocClaims()
+{
+    AppConfig& cfg = ConfigManager::instance()->config();
+    if (!m_allocValid.load()) return;
+
+    QElapsedTimer timer;
+    timer.start();
+
+    int releasedCnt = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+
+        // ① 在途上限保护：超过上限说明有认领泄漏（下发后长期无落格反馈），强制清扫
+        const int inflight = m_alloc.inflightCount();
+        if (cfg.allocMaxInflight > 0 && inflight > cfg.allocMaxInflight)
+        {
+            HTTP_LOG_ERROR("[分配表] 在途认领超上限 inflight=%d > %d —— 强制清扫防止额度泄漏（请查现场落格反馈是否正常）",
+                inflight, cfg.allocMaxInflight);
+            const QStringList forced = m_alloc.sweepExpiredClaims(
+                QDateTime::currentMSecsSinceEpoch(), 1000);   // 1s 即视为超时，全部释放
+            releasedCnt += forced.size();
+        }
+
+        // ② 正常超时清扫（下发后 30s 无落格反馈 → 释放额度，让其它件可用）
+        const QStringList released = m_alloc.sweepExpiredClaims(
+            QDateTime::currentMSecsSinceEpoch(), cfg.allocClaimTimeoutMs);
+        for (const QString& epc : released)
+        {
+            HTTP_LOG_WARN("[分配表] 认领超时释放 epc=%s（下发后 %dms 无落格反馈 → 额度归还，件仍可按原计划重投）",
+                epc.toLocal8Bit().data(), cfg.allocClaimTimeoutMs);
+        }
+        releasedCnt += released.size();
+    }
+
+    if (releasedCnt > 0)
+        HTTP_LOG_INFO("[分配表] 认领清扫完成 released=%d 耗时=%lldms", releasedCnt, timer.elapsed());
+
+    auditPlanAlloc();
+}
+
+// ──── 不变量巡检（每 30s）────
+void HttpServer::auditPlanAlloc()
+{
+    if (!m_allocValid.load()) return;
+
+    QStringList bad;
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        bad = m_alloc.audit();
+    }
+    m_allocAuditBad.store(bad.size());
+
+    if (bad.isEmpty())
+    {
+        HTTP_LOG_INFO("[分配表] 不变量巡检通过 order=%s", m_allocOrderCode.toLocal8Bit().data());
+        return;
+    }
+
+    HTTP_LOG_ERROR("[分配表] 不变量巡检发现 %d 处违规 order=%s —— 明细见下（已写异常表，请人工核对账实）",
+        bad.size(), m_allocOrderCode.toLocal8Bit().data());
+    for (const QString& line : bad)
+        HTTP_LOG_ERROR("[分配表] 违规: %s", line.toLocal8Bit().data());
+
+    if (m_pSortingDb && m_pSortingDb->isOpen())
+    {
+        ExceptionRecord ex;
+        ex.type      = QString::fromUtf8("分配表不变量违反");
+        ex.orderCode = m_allocOrderCode;
+        ex.reason    = QString::fromUtf8("巡检发现 %1 处违规：%2")
+                           .arg(bad.size()).arg(bad.mid(0, 5).join(QString::fromUtf8("; ")));
+        ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+        m_pSortingDb->insertException(ex);
+    }
+}
+
+// ──── 波次报告（完结/切出/恢复/开工各一条聚合日志，不是每件）────
+void HttpServer::reportPlanAlloc(const QString& tag)
+{
+    if (!m_allocValid.load())
+    {
+        HTTP_LOG_INFO("[计划分配表] 报告 tag=%s order=%s 分配表未生效（valid=false，选格走老逻辑）",
+            tag.toLocal8Bit().data(), m_allocOrderCode.toLocal8Bit().data());
+        return;
+    }
+
+    PlanStats st;
+    QStringList multiDetail;
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        st = m_alloc.stats();
+        if (st.multiSkuCnt > 0)
+        {
+            QVector<PlanAllocTable::UiRow> rows;
+            m_alloc.snapshot(&rows);
+            int shown = 0;
+            for (const auto& r : rows)
+            {
+                if (r.cells.size() < 2 || shown >= 30) continue;
+                QStringList one;
+                for (const auto& c : r.cells)
+                    one << QString("%1(%2):%3件/已落%4").arg(PlanAllocTable::gridKeyOf(c.grid))
+                               .arg(PlanAllocTable::typeNameOf(c.gridType))
+                               .arg(c.planQty).arg(c.landed);
+                multiDetail << QString("%1→[%2]").arg(r.sku).arg(one.join(" | "));
+                ++shown;
+            }
+        }
+    }
+
+    HTTP_LOG_INFO("[计划分配表] 报告 tag=%s order=%s SKU=%d 计划单元=%d 计划件数=%d 已落=%d 在途=%d 余量=%d 多格口SKU=%d",
+        tag.toLocal8Bit().data(), m_allocOrderCode.toLocal8Bit().data(),
+        st.skuCount, st.cellCount, st.planTotal, st.landedTotal,
+        st.reservTotal, st.remainTotal, st.multiSkuCnt);
+    if (!multiDetail.isEmpty())
+    {
+        HTTP_LOG_INFO("[计划分配表] 多格口执行情况 order=%s（格口(类型):计划件数/已落件数）: %s",
+            m_allocOrderCode.toLocal8Bit().data(), multiDetail.join("; ").toLocal8Bit().data());
+    }
+}
+
+// ──── 选格成功日志节流（性能：5 万件波次下由 10 万行降到 1 万行量级）────
+bool HttpServer::allocShouldLogSelect()
+{
+    AppConfig& cfg = ConfigManager::instance()->config();
+    // ★ 计数与判定的读改写都在同一把分配表锁内完成 —— 本函数可能从 PLC 发送线程池
+    //   调用（sendBatchCodesWithEpcCache 在主线程或发送池内都可能执行），加锁保证节流
+    //   计数不会因并发而产生数据竞争（计数只影响日志，不影响任何分配判定）。
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    m_allocPlanLogCnt = (m_allocPlanLogCnt >= INT_MAX - 1) ? 1 : m_allocPlanLogCnt + 1;
+    if (cfg.allocPlanLogTail <= 0) return true;                       // 0 = 全部逐条
+    if (m_allocPlanLogCnt <= cfg.allocPlanLogTail) return true;
+    if (cfg.allocPlanLogStep <= 0) return false;
+    return (m_allocPlanLogCnt % cfg.allocPlanLogStep) == 0;
+}
+
+// ──── 清空分配表（五处清零点统一入口）────
+void HttpServer::clearPlanAllocTable(const QString& reason)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        const int inflight = m_alloc.inflightCount();
+        if (inflight > 0)
+        {
+            // 在途认领残留 = 有件已下发但未落格；清表前留痕，便于现场核对（不变量④）
+            HTTP_LOG_WARN("[分配表] 清空时有在途认领 %d 条（未收到落格反馈）reason=%s order=%s —— 已随表清空",
+                inflight, reason.toLocal8Bit().data(), m_allocOrderCode.toLocal8Bit().data());
+        }
+        m_alloc.clear();
+        m_allocPlanLogCnt = 0;
+    }
+    m_allocValid.store(false);
+    m_allocOrderCode.clear();
+    m_allocAuditBad.store(0);
+}
+
+// ──── UI 只读快照（主线程；锁内拷内存，不查 DB）────
+PlanAllocSnapshot HttpServer::planAllocSnapshot() const
+{
+    PlanAllocSnapshot snap;
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);   // m_allocOrderCode 也在此锁内读
+        snap.orderCode = m_allocOrderCode;
+    }
+    snap.valid     = m_allocValid.load();
+    snap.warnCount = overplanWarningCount();
+    snap.auditBad  = m_allocAuditBad.load();
+
+    QVector<PlanAllocTable::UiRow> rows;
+    QVector<qint16> grids;
+    PlanStats st;
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        snap.version = m_alloc.version();
+        m_alloc.snapshot(&rows);
+        grids = m_alloc.allPlanGrids();
+        st    = m_alloc.stats();
+    }
+
+    snap.skuCount    = st.skuCount;
+    snap.cellCount   = st.cellCount;
+    snap.planTotal   = st.planTotal;
+    snap.landedTotal = st.landedTotal;
+    snap.reservTotal = st.reservTotal;
+    snap.remainTotal = st.remainTotal;
+    snap.inflightCnt = st.inflightCnt;
+    snap.multiSkuCnt = st.multiSkuCnt;
+
+    for (qint16 g : grids)
+        snap.gridColumns << PlanAllocTable::gridKeyOf(g);
+
+    // 格口实时状态（容器绑定/禁用/锁格）——现场看这一页即可判断"能不能落"
+    QMap<QString, QString> binds = getContainerBindings();
+    QMap<QString, QString> bindNorm;
+    for (auto it = binds.constBegin(); it != binds.constEnd(); ++it)
+    {
+        const QString k = normalizeGridKey(it.key());
+        if (!k.isEmpty() && !it.value().isEmpty() && !bindNorm.contains(k))
+            bindNorm.insert(k, it.value());
+    }
+
+    snap.rows.reserve(rows.size());
+    for (const auto& r : rows)
+    {
+        PlanAllocRow row;
+        row.sku         = r.sku;
+        row.planTotal   = r.planTotal;
+        row.landedTotal = r.landedTotal;
+        row.reservTotal = r.reservTotal;
+        row.remainTotal = r.remainTotal;
+        row.cells.reserve(r.cells.size());
+        for (const auto& c : r.cells)
+        {
+            PlanAllocCell cell;
+            cell.gridKey   = PlanAllocTable::gridKeyOf(c.grid);
+            cell.gridType  = QString::number(c.gridType);
+            cell.planQty   = c.planQty;
+            cell.landedQty = c.landed;
+            cell.reservQty = c.reserv;
+            cell.remainQty = c.remain;
+            cell.boxcode   = bindNorm.value(cell.gridKey);
+            cell.bound     = !cell.boxcode.isEmpty();
+            if (m_pPlcMgr)
+            {
+                cell.disabled = m_pPlcMgr->isGridDisabled(c.grid);
+                cell.locked   = m_pPlcMgr->isGridLocked(c.grid);
+            }
+            row.cells.append(cell);
+        }
+        snap.rows.append(row);
+    }
+
+    // 按计划件数降序（现场最关心"件数多的产品"，也让分页首屏最有价值）
+    std::sort(snap.rows.begin(), snap.rows.end(),
+              [](const PlanAllocRow& a, const PlanAllocRow& b) {
+                  if (a.planTotal != b.planTotal) return a.planTotal > b.planTotal;
+                  return a.sku < b.sku;
+              });
+    return snap;
+}
+
 // ============================================================================
 // ★ 乙方案：H7 报文裁剪 —— 把某格口各 SKU 行的 qty 裁剪到"该格口计划件数"
 //   为什么需要：正常路径下超计划件已改投异常口、不会进箱；但"同时两件在线"等情形
@@ -2256,18 +2949,19 @@ int HttpServer::clampFullboxQtyToPlan(const QString& gridKey, QJsonArray& detail
     int trimmedTotal = 0;
     for (const QString& sku : order)
     {
-        const GridEntry entry = m_pBuffer->get(sku);
-        const int raw     = skuQty.value(sku);
-        const int planQty = entry.planQtyPerGrid.contains(gKey)
-                          ? entry.planQtyPerGrid.value(gKey)
-                          : entry.gridCount;          // 兜底：无分格口计划（旧数据/单格口）
+        const int raw = skuQty.value(sku);
+        // ★ 2026-09-14 落格结构优化：封顶基准**只认分配表**（该 SKU 在该格口的计划件数）。
+        //   去掉"退回 SKU 计划总数"的兜底 —— 多格口 SKU（34 计划1件 + 48 计划3件，总数4）
+        //   在 34 会被 4 件"总数"误判为不超计划，裁剪形同失效，WMS 侧实报超计划整条驳回。
+        //   分配表未生效（valid=false）时取 0 = 不加封顶（保持改造前不裁剪的老行为）。
+        const int planQty = planQtyOfGrid(sku, gKey);
         int qty = raw;
         if (planQty > 0 && raw > planQty)
         {
             qty = planQty;
             trimmedTotal += (raw - planQty);
-            trimLog << QString::fromUtf8("%1 本格口计划%2件(SKU总计划%3件) 实落%4件 → 报%5件（多余%6件不进入上传报文）")
-                           .arg(sku).arg(planQty).arg(entry.gridCount).arg(raw).arg(qty).arg(raw - planQty);
+            trimLog << QString::fromUtf8("%1 本格口计划%2件 实落%3件 → 报%4件（多余%5件不进入上传报文）")
+                           .arg(sku).arg(planQty).arg(raw).arg(qty).arg(raw - planQty);
             HTTP_LOG_WARN("[H7裁剪] 格口%s SKU=%s 本格口计划%d件 实落%d件 → 只报%d件（多余%d件不上传，已登记预警）",
                 gKey.toLocal8Bit().data(), sku.toLocal8Bit().data(), planQty, raw, qty, raw - planQty);
         }
@@ -2292,17 +2986,16 @@ bool HttpServer::isExceptionGridKey(const QString& gridKey) const
 }
 
 // ★ 2026-09-14 取「该 SKU 在该格口的计划件数」：
-//   同品多格口场景下每个格口各有计划（planQtyPerGrid），必须按格口取；
-//   无分格口计划（旧数据/单格口）时退回该 SKU 的计划总数。
+//   ★ 落格结构优化后：**只认分配表**，该格口不在该 SKU 计划内就返回 0。
+//   ★★ 为什么去掉"退回 SKU 计划总数"的兜底：多格口场景下（如 34 计划 1 件 +
+//      48 计划 3 件，总数 4），把总数当作每个格口的计划，会让每个格口都被 4 件
+//      "误判为不超计划" → H7 报文裁剪形同失效、超计划预警永不触发，最终 WMS 侧
+//      实报超计划被整条驳回（[2107632]…无法分配）。这是现场"人工多投未被拦住"的根因。
 int HttpServer::planQtyOfGrid(const QString& sku, const QString& gridKey) const
 {
-    if (!m_pBuffer || sku.isEmpty())
-        return 0;
-    const GridEntry entry = m_pBuffer->get(sku);
-    const QString g = normalizeGridKey(gridKey);
-    if (entry.planQtyPerGrid.contains(g))
-        return entry.planQtyPerGrid.value(g);
-    return entry.gridCount;
+    if (sku.isEmpty()) return 0;
+    std::lock_guard<std::mutex> lock(m_allocMutex);
+    return m_alloc.planQtyOf(sku, gridKey);
 }
 
 // ★ 2026-09-14 判定「该格口是否在该 SKU 的计划内」
@@ -2311,19 +3004,26 @@ int HttpServer::planQtyOfGrid(const QString& sku, const QString& gridKey) const
 //   为什么这样处理：该格口对这个 SKU 没有计划数量，一旦上报，WMS 侧会出现
 //   "格口 034 上报了它没有计划的 SKU"，可能按格口校验数量而整条驳回
 //   （[2107632]…无法分配），牵连同报文其它正常件一起不落账。
-//   保守边界：无计划信息（SKU 不在缓冲/计划表为空）→ 返回 true（视为计划内，不拦），
-//   与 planQtyOfGrid 的兜底口径一致，避免把"信息缺失"误判成"落错格"。
+//   ★ 边界：分配表未生效（valid=false）或该 SKU 不在本波次映射 → 返回 true（视为计划内，不拦），
+//     避免把"信息缺失"误判成"落错格"而误拦正常件；此时由老逻辑分支处理。
 bool HttpServer::isGridInPlanOf(const QString& sku, const QString& gridKey) const
 {
-    if (!m_pBuffer || sku.isEmpty())
-        return true;                        // 信息不全 → 不拦
+    if (sku.isEmpty()) return true;                  // 信息不全 → 不拦
+    if (m_allocValid.load())
+    {
+        std::lock_guard<std::mutex> lock(m_allocMutex);
+        if (m_alloc.skuHasPlan(sku))
+            return m_alloc.inPlanOf(sku, gridKey);   // 有计划 → 严格按计划判定
+        // 不在分配表 → 落回下方老口径（不拦）
+    }
+    // ── 老口径（分配表未生效/该 SKU 无计划时）──
+    if (!m_pBuffer) return true;
     const GridEntry entry = m_pBuffer->get(sku);
     if (entry.gridNum.isEmpty())
         return true;                        // 该 SKU 不在本波次映射 → 由其它分支处理，不在此拦
     const QString g = normalizeGridKey(gridKey);
     if (!entry.planQtyPerGrid.isEmpty())
         return entry.planQtyPerGrid.contains(g);
-    // 无分格口计划（旧数据）→ 退回候选串判定
     for (const QString& t : entry.gridNum.split(',', Qt::SkipEmptyParts))
     {
         if (normalizeGridKey(t) == g)
@@ -2424,6 +3124,9 @@ void HttpServer::switchAwayCurrentWave()
     clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随波次切出清空
     clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随波次切出清空
     clearLandingDedup();     // ★ 2026-09-14 落格明细去重集合随波次切出清空
+    // ★ 2026-09-14 计划分配表：切出前先出报告（现场核对"每个格口计划几件、实际落几件"），再清表
+    reportPlanAlloc(QString::fromUtf8("波次切出"));
+    clearPlanAllocTable(QString::fromUtf8("波次切出"));
     m_pendingSkuQuery.clear();
     m_skuQueryRetryCount.clear();
     m_notReadyRetryCount.clear();
@@ -2569,18 +3272,42 @@ QVector<ReturnWaveItemRecord> HttpServer::buildWaveItems(const QString& orderCod
     {
         for (auto it = pMap->constBegin(); it != pMap->constEnd(); ++it)
         {
+            const GridEntry& e = it.value();   // ★ 用引用：避免每个 SKU 深拷两个 QMap（万级 SKU 时开销可观）
             ReturnWaveItemRecord rec;
             rec.orderCode = orderCode;
             rec.inco      = it.key();  // inco=SKU编码
-            // gridNum 可能为 "1,2,3"（一品多格口），拆分为多条
-            QStringList grids = it.value().gridNum.split(',', Qt::SkipEmptyParts);
+
+            // ★ 2026-09-14 按「每格口计划」逐格口写行（落格结构优化的持久化侧）
+            //   口径（客户确认）：一个 SKU 可同时计划到「正常分拣格口」与「发货格口」，
+            //   **每个格口各有一份数量**，DB 一行 = 一个 (SKU,格口) 对该格口的计划件数。
+            //   ★ 修复的缺陷：改造前这里写的是 it.value().gridCount（该 SKU 的**计划总数**）
+            //     与合并后只剩最后一行的 gridType → return_wave_item 无法回答"这个格口计划
+            //     几件"，波次恢复后计划被污染，且"计划 vs 实际"对账失去依据（追溯链断裂）。
+            if (!e.planQtyPerGrid.isEmpty())
+            {
+                for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+                {
+                    ReturnWaveItemRecord r2 = rec;
+                    r2.gridNum  = pit.key();     // 内部 3 位 key（"034"），与绑定/PLC/落格库口径一致
+                    r2.planQty  = pit.value();   // ★ 本格口计划件数（不是 SKU 总数）
+                    r2.gridType = e.gridTypePerGrid.value(pit.key(), e.gridType.isEmpty() ? "0" : e.gridType);
+                    r2.volu     = e.volu;
+                    r2.obxCode  = e.obxCode;
+                    items.append(r2);
+                }
+                continue;
+            }
+
+            // 兜底（旧数据/无分格口计划）：按候选串拆分，计划数记为该 SKU 总数
+            //   —— 与改造前行为一致，保证老数据仍可落库、可恢复
+            QStringList grids = e.gridNum.split(',', Qt::SkipEmptyParts);
             for (const QString& g : grids)
             {
                 rec.gridNum   = g.trimmed();
-                rec.gridType  = it.value().gridType.isEmpty() ? "0" : it.value().gridType;  // 0=分类, 1=异常, 2=发货
-                rec.planQty   = it.value().gridCount;
-                rec.volu      = it.value().volu;
-                rec.obxCode   = it.value().obxCode;     // 容器号
+                rec.gridType  = e.gridType.isEmpty() ? "0" : e.gridType;  // 0=正常分拣, 1=异常, 2=发货
+                rec.planQty   = e.gridCount;
+                rec.volu      = e.volu;
+                rec.obxCode   = e.obxCode;     // 容器号
                 items.append(rec);
             }
         }
@@ -2703,6 +3430,65 @@ void HttpServer::precheckPlanGridBindings(const QString& orderCode)
             "[计划预检] 有 %1 个计划格口处于满箱未重绑(禁用)状态：%2 —— 其计划件将改分到同 SKU 的其它计划格口")
             .arg(disabled).arg(disabledDesc.join(" ")), true);
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-14 分配表口径预检（落格结构优化新增三项）
+    //   ① Σ每格口计划件数 与 H4 orderQty 是否一致（不一致说明计划本身有问题）
+    //   ② 已禁用计划格口按 SKU 列出件数缺口（并确认会转给谁）
+    //   ③ 无可用计划格口的 SKU 清单（这些 SKU 的件将全部改投异常口）
+    //   只告警不阻塞（除非 allocRequirePlanValid=true —— 由调用方决定是否拒绝开工）
+    // ════════════════════════════════════════════════════════════════════════
+    if (m_allocValid.load())
+    {
+        PlanStats st;
+        QStringList noneAvailSkus;
+        int noneAvailCnt = 0;
+        {
+            std::lock_guard<std::mutex> lk(m_allocMutex);
+            st = m_alloc.stats();
+            if (m_pPlcMgr)
+            {
+                const int skuN = m_alloc.skuCount();
+                for (int si = 0; si < skuN; ++si)
+                {
+                    const QString sku = m_alloc.skuNameAt(si);
+                    if (sku.isEmpty()) continue;
+                    const QVector<qint16> gs = m_alloc.gridsOf(sku);
+                    bool anyAvail = false;
+                    for (qint16 g : gs)
+                    {
+                        if (!m_pPlcMgr->isGridDisabled(g) && !m_pPlcMgr->isGridLocked(g)) { anyAvail = true; break; }
+                    }
+                    if (!anyAvail)
+                    {
+                        ++noneAvailCnt;
+                        if (noneAvailSkus.size() < 20) noneAvailSkus << sku;
+                    }
+                }
+            }
+        }
+
+        const int waveQty = m_pWaveMgr ? m_pWaveMgr->orderQty() : 0;
+        emit logMessage(QString::fromUtf8(
+            "[计划预检] 分配表：计划单元%1 个｜计划件数合计%2｜多格口SKU %3 个%4")
+            .arg(st.cellCount).arg(st.planTotal).arg(st.multiSkuCnt)
+            .arg(waveQty > 0 && st.planTotal != waveQty
+                     ? QString::fromUtf8("｜⚠Σ计划(%1)≠orderQty(%2)，差%3")
+                           .arg(st.planTotal).arg(waveQty).arg(st.planTotal - waveQty)
+                     : QString()),
+            waveQty > 0 && st.planTotal != waveQty);
+
+        if (noneAvailCnt > 0)
+        {
+            HTTP_LOG_WARN("计划格口预检 无可用计划格口的 SKU %d 个：%s —— 这些 SKU 的件将全部改投异常口",
+                noneAvailCnt, noneAvailSkus.join(" ").toLocal8Bit().data());
+            emit logMessage(QString::fromUtf8(
+                "[计划预检] 有 %1 个产品的计划格口全部不可用（禁用/锁格）：%2 —— 这些产品的件将全部改投异常口%3，"
+                "请先处理格口（重绑/解锁）")
+                .arg(noneAvailCnt).arg(noneAvailSkus.join(" "))
+                .arg(ConfigManager::instance()->config().exceptionGrid), true);
+        }
+    }
 }
 
 // ★ 2026-09-04 P0修复：波次明细异步落库完成回调（主线程）——推进 BOUND + 清理旧波次状态
@@ -2735,7 +3521,8 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
             // ★ 2026-09-13 自动化验证钩子（仅当进程环境变量 WCS_E2E_AUTOSORT=1 时生效）：
             //   无人值守跑 mock/E2E 时无法人工点「开始分拣」，此处自动执行一次同样的动作。
             //   生产默认不设置该环境变量 → 行为与以往完全一致（仍需人工点击）。
-            if (qEnvironmentVariableIsSet("WCS_E2E_AUTOSORT"))
+            if (qEnvironmentVariableIsSet("WCS_E2E_AUTOSORT") ||
+                qEnvironmentVariableIsSet("WCS_E2E_AUTOSORT_ANY"))   // ANY=任意路径均自动开工（含"成为当前波次"）
             {
                 if (m_pWaveMgr->startSorting())
                 {
@@ -2744,6 +3531,21 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
                     emit logMessage(QString("[测试钩子] 自动开工（E2E）：orderCode=%1 已进入分拣中").arg(orderCode));
                     precheckPlanGridBindings(orderCode);   // ★ 2026-09-14 计划格口 vs 容器绑定预检
                 }
+            }
+        }
+        // ★ 2026-09-14 自动化验证钩子（补）：待执行波次被"自动开始"接替为当前波次时，
+        //   其推进路径与上面不同（不经由 CREATED→BOUND 的那条分支），
+        //   为让"挂起件补发"可在无人值守下验证，这里再补一次。
+        //   仅当环境变量 WCS_E2E_AUTOSORT_ANY=1 时生效；生产不设置 → 行为与以往完全一致。
+        if (qEnvironmentVariableIsSet("WCS_E2E_AUTOSORT_ANY") && m_pWaveMgr &&
+            m_pWaveMgr->orderCode() == orderCode && m_pWaveMgr->status() == WAVE_BOUND)
+        {
+            if (m_pWaveMgr->startSorting())
+            {
+                HTTP_LOG_WARN("测试钩子：自动开工(WCS_E2E_AUTOSORT_ANY=1) BOUND→SORTING orderCode=%s",
+                    orderCode.toLocal8Bit().data());
+                emit logMessage(QString("[测试钩子] 自动开工（E2E/ANY）：orderCode=%1 已进入分拣中").arg(orderCode));
+                precheckPlanGridBindings(orderCode);
             }
         }
     }
@@ -2772,6 +3574,13 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
     clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随新波次清空
     clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随新波次清空
     clearLandingDedup();     // ★ 2026-09-14 落格明细去重集合随新波次清空
+    // ★ 2026-09-14 计划分配表：本回调在 waveParsed 之后异步到达，此时分配表**刚为该波次编译好**，
+    //   因此只有"表属于别的波次"（同波次重下发/未走解析链）时才清，避免把当前波次的计划误清空。
+    if (m_allocOrderCode != orderCode)
+    {
+        reportPlanAlloc(QString::fromUtf8("新波次落库完成"));
+        clearPlanAllocTable(QString::fromUtf8("新波次(表属于旧波次)"));
+    }
     // ★ 新波次到来，清空旧波次相关数据（EpcCache 保留，RFID 推送独立于波次生命周期）
     // ★ 纠正5: 新波次开始时恢复所有禁用格口
     if (m_pPlcMgr)
@@ -3569,19 +4378,38 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
     // 与 startSorting() 使用同一把锁，保证取消与首件分拣互斥
     if (!m_pWaveMgr->tryCancelWave())
     {
-        int currentStatus = m_pWaveMgr->status();
-        QByteArray statusText = WaveSnapshot::statusToString(currentStatus).toLocal8Bit();
-        HTTP_LOG_WARN("CancelWave 取消失败 orderCode=%s status=%d(%s) sorted=%d",
-            orderCode.toLocal8Bit().data(), currentStatus, statusText.data(),
-            m_pWaveMgr->sorted());
-        emit logMessage(QString("[取消波次] 取消失败 orderCode=%1 status=%2 sorted=%3")
-            .arg(orderCode).arg(QString::fromLocal8Bit(statusText)).arg(m_pWaveMgr->sorted()), true);
-        QJsonObject r;
-        r["code"] = "500";
-        r["message"] = QString("波次已开始分拣(status=%1 sorted=%2)，不允许取消")
-            .arg(QString::fromLocal8Bit(statusText)).arg(m_pWaveMgr->sorted());
-        r["cancellable"] = false;
-        return r;
+        // ★ 2026-09-14 自动化验证钩子（仅 WCS_E2E_ALLOW_CANCEL_SORTING=1 时生效）：
+        //   生产语义不变（分拣中不可取消）。无人值守的 E2E 需要一个"结束当前波次"的动作，
+        //   才能验证"接替下一波次 → 挂起件补发"这条链路；这里只放行**取消**，
+        //   其余流程与人工取消完全一致。
+        if (!qEnvironmentVariableIsSet("WCS_E2E_ALLOW_CANCEL_SORTING"))
+        {
+            int currentStatus = m_pWaveMgr->status();
+            QByteArray statusText = WaveSnapshot::statusToString(currentStatus).toLocal8Bit();
+            HTTP_LOG_WARN("CancelWave 取消失败 orderCode=%s status=%d(%s) sorted=%d",
+                orderCode.toLocal8Bit().data(), currentStatus, statusText.data(),
+                m_pWaveMgr->sorted());
+            emit logMessage(QString("[取消波次] 取消失败 orderCode=%1 status=%2 sorted=%3")
+                .arg(orderCode).arg(QString::fromLocal8Bit(statusText)).arg(m_pWaveMgr->sorted()), true);
+            QJsonObject r;
+            r["code"] = "500";
+            r["message"] = QString("波次已开始分拣(status=%1 sorted=%2)，不允许取消")
+                .arg(QString::fromLocal8Bit(statusText)).arg(m_pWaveMgr->sorted());
+            r["cancellable"] = false;
+            return r;
+        }
+        HTTP_LOG_WARN("测试钩子：放行『取消分拣中的波次』(WCS_E2E_ALLOW_CANCEL_SORTING=1) "
+                      "orderCode=%s status=%d sorted=%d —— 仅用于无人值守 E2E，生产不得开启",
+            orderCode.toLocal8Bit().data(), m_pWaveMgr->status(), m_pWaveMgr->sorted());
+        // ★ 必须真正完成状态迁移，否则后面的清理/接替链路不会执行（此前只"放行"是错的）
+        if (!m_pWaveMgr->forceCancelForE2E())
+        {
+            QJsonObject r;
+            r["code"] = "500";
+            r["message"] = "E2E 强制取消失败（状态迁移被拒）";
+            r["cancellable"] = false;
+            return r;
+        }
     }
 
     // ──── 步骤5: 取消后清理（T-S3-02）────
@@ -3616,6 +4444,27 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
         m_gridSortRecords.clear();
     }
 
+    // ★★ 2026-09-14 顺序修正（数据完整性）：先重置 WaveManager（→ 可能自动开始待执行波次），
+    //   再清 GridBuffer。
+    //
+    //   为什么必须这个顺序：
+    //     `m_pWaveMgr->clearWave()` 会把状态置为 IDLE 并发出 `waveStatusChanged`，
+    //     该回调里会调用 `maybeStartPendingWave()` —— 也就是**立刻把排队中的下一波次
+    //     交给 ParseWorker 重放解析**（异步线程）。
+    //     若先清 GridBuffer，则下一波次解析完成后、其落库回调 `buildWaveItems()` 去读
+    //     `m_pBuffer->activeMap()` 时映射已被清空 → **落库 items=0** →
+    //     该波次在 DB 里没有任何明细 → 之后"恢复波次"会因明细为空被拒绝（只能重下发）。
+    //     实测（test/e2e_pending_replay.py）曾复现 `波次明细写入成功 … count=0`。
+    //
+    //   先重置再清空后：下一波次的解析结果在本次清空之后写入缓冲，
+    //   落库读到的就是它自己的映射；本次清空只影响"已取消的旧波次"。
+    // ★ 重置 WaveManager 为 IDLE（含清空 orderCode），使 H4/H6 不再校验旧波次
+    if (m_pWaveMgr)
+    {
+        m_pWaveMgr->clearWave();
+        HTTP_LOG_INFO("CancelWave 已重置WaveManager orderCode=%s", orderCode.toLocal8Bit().data());
+    }
+
     // ★ 清理 GridBuffer（双缓冲置空），避免 H6 绑定校验旧波次数据
     if (m_pBuffer)
     {
@@ -3623,12 +4472,10 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
         HTTP_LOG_INFO("CancelWave 已清理GridBuffer orderCode=%s", orderCode.toLocal8Bit().data());
     }
 
-    // ★ 重置 WaveManager 为 IDLE（含清空 orderCode），使 H4/H6 不再校验旧波次
-    if (m_pWaveMgr)
-    {
-        m_pWaveMgr->clearWave();
-        HTTP_LOG_INFO("CancelWave 已重置WaveManager orderCode=%s", orderCode.toLocal8Bit().data());
-    }
+    // ★ 2026-09-14 计划分配表：取消波次同样出报告并清表（与"切出/新波次/完结"同一批清零点）
+    //   报告留在日志里，便于事后核对"取消时各格口的计划/实际"；在途认领随表清空（有残留会 WARN）
+    reportPlanAlloc(QString::fromUtf8("波次取消"));
+    clearPlanAllocTable(QString::fromUtf8("波次取消"));
 
     // 更新数据库状态为 CANCELLED
     if (m_pSortingDb)
@@ -4408,8 +5255,8 @@ void HttpServer::replayPendingRfidPlcEpcs()
             HTTP_LOG_INFO("RFID挂起补发跳过（在途） epc=%s", epc.toLocal8Bit().data());
             continue;
         }
-        if (trySendToPlcForEpc(epc))
-            HTTP_LOG_INFO("RFID挂起补发成功 epc=%s", epc.toLocal8Bit().data());
+        if (trySendToPlcForEpcInternal(epc, true /*bReplayed：跳过波次隔离，按当前波次最新计划选格*/))
+            HTTP_LOG_INFO("RFID挂起补发成功 epc=%s（按当前波次最新计划选格）", epc.toLocal8Bit().data());
         else
             HTTP_LOG_WARN("RFID挂起补发失败（格口禁用/无映射/PLC未连接） epc=%s——由异常/未就绪链路跟踪",
                 epc.toLocal8Bit().data());
@@ -5543,6 +6390,9 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
         clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随波次清理
         clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随波次清理
         clearLandingDedup();     // ★ 2026-09-14 落格明细去重集合随波次清理
+        // ★ 2026-09-14 计划分配表：完结前出报告（本波次"每格口计划/实际"终版对账），再清表
+        reportPlanAlloc(QString::fromUtf8("波次完结"));
+        clearPlanAllocTable(QString::fromUtf8("波次完结"));
         if (m_pPlcMgr)
             m_pPlcMgr->enableAllGrids();
         m_pendingSkuQuery.clear();
@@ -6462,11 +7312,77 @@ void HttpServer::clearAllEpcRuntimeState()
 
 bool HttpServer::trySendToPlcForEpc(const QString& epc)
 {
+    return trySendToPlcForEpcInternal(epc, false);
+}
+
+// bReplayed=true：本件来自"挂起件补发"（replayPendingRfidPlcEpcs）
+//   → 跳过波次隔离判定（该判定只用于"新到货件"分流，不适用于已判定归属的补发件）；
+//   → 其余校验与选格完全一致，因此**始终按当前波次的最新计划选格**：
+//     同一 SKU 在不同波次的格口不同时，补发件落的是新波次的格口。
+bool HttpServer::trySendToPlcForEpcInternal(const QString& epc, bool bReplayed)
+{
     if (!m_pEpcCache || !m_pPlcMgr || !m_pBuffer)
     {
         HTTP_LOG_WARN("trySendToPlcForEpc 前置条件不满足 epc=%s EpcCache=%d PlcMgr=%d Buffer=%d",
             epc.toLocal8Bit().data(), m_pEpcCache!=nullptr, m_pPlcMgr!=nullptr, m_pBuffer!=nullptr);
         return false;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ★★ 2026-09-14 波次隔离判定（**必须放在所有其它闸门之前**）★★
+    //
+    // 客户口径（两条，已确认）：
+    //   ① **波次与波次之间相互隔离、互不影响**；现场作业方式为
+    //      "同一时刻只有一个波次的货上线"。
+    //   ② 若**同一 SKU 同时出现在两个波次**，且当前波次已下发到该 SKU
+    //      → **按当前波次处理即可**（不做特殊区分，避免把正常件误挂起）。
+    //
+    // 因此"下一波次的货"只在**一个明确的、无歧义的条件**下才成立：
+    //     该 SKU **完全不在当前波次的计划里**（不是它的货）
+    //     且 该 SKU 出现在某个排队波次的 SKU 集合里
+    //   → 判为下一波次的货 → 挂起等待其所属波次。
+    //   反之，只要当前波次计划里有这个 SKU（无论还有没有余量），一律按当前波次处理：
+    //     · 有余量 → 正常按计划分配；
+    //     · 无余量（多投/超计划）→ 维持既有"超计划改投异常口 66"语义。
+    //
+    // 为什么必须最先判：既有"非执行态"闸门对 CREATED/BOUND 状态会**广播**下发
+    //   （历史实现：不选格口就发指令）→ PLC 可能把件导向任意格口。
+    //   若下一波次的货在此时上线，就会被这条广播链误送。
+    // ════════════════════════════════════════════════════════════════════════
+    if (!bReplayed && !m_pendingWaveQueue.isEmpty())
+    {
+        const int stIso = m_pWaveMgr ? m_pWaveMgr->status() : -1;
+        const QString skuIso = getSkuByEpc(epc);
+        if (!skuIso.isEmpty() && skuBelongsToPendingWave(skuIso))
+        {
+            // 本 SKU 是否属于**当前波次**的计划（不看余量，只看"是不是它的货"）
+            bool inCurWave = false;
+            {
+                std::lock_guard<std::mutex> lk(m_allocMutex);
+                inCurWave = m_alloc.skuHasPlan(skuIso);
+            }
+            if (!inCurWave)
+            {
+                bool readyIso = m_pEpcCache->isReadyForPlc(epc);
+                if (readyIso)
+                {
+                    std::lock_guard<std::mutex> lock(m_pendingRfidMutex);
+                    m_pendingRfidPlcEpcs.insert(epc);
+                }
+                HTTP_LOG_WARN("trySendToPlcForEpc 波次隔离：本件挂起（不按当前波次计划分配、不投异常口、不广播）"
+                              "epc=%s sku=%s status=%d(%s) 原因=SKU 不在当前波次计划内且属于排队中的下一波次 "
+                              "待执行队列=%d %s",
+                    epc.toLocal8Bit().data(), skuIso.toLocal8Bit().data(), stIso,
+                    stIso >= 0 ? WaveSnapshot::statusToString(stIso).toLocal8Bit().data() : "?",
+                    m_pendingWaveQueue.size(),
+                    readyIso ? "(已就绪→挂起，该波次开始分拣后自动补发)" : "(未就绪，走正常重试)");
+                emit logMessage(QString::fromUtf8(
+                    "[波次隔离] EPC %1（SKU %2）不属于当前波次、属于排队中的下一波次，暂不下发 —— "
+                    "待该波次开始分拣后按其计划补发；不会误投异常口、也不会被广播到任意格口")
+                    .arg(epc).arg(skuIso));
+                return false;
+            }
+        }
     }
 
     // ★ 2026-09-05：发送 PLC 仅限执行态（与主线一致）；SKU 绑定查询不受此限（接收即查已提前完成），
@@ -6492,6 +7408,12 @@ bool HttpServer::trySendToPlcForEpc(const QString& epc)
             return false;
         }
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-14 注：早期版本这里还有一段"待执行队列非空 + 当前波次非执行态 → 挂起"的重复守卫。
+    //   现已被函数开头的「波次隔离判定」统一取代（放在所有闸门之前，覆盖面更广：
+    //   既覆盖非执行态、也覆盖"当前波次仍在分拣但该 SKU 已无额度"的情形）。
+    //   保留此注释以免后人误以为漏了判断。
 
     // 检查是否就绪
     if (!m_pEpcCache->isReadyForPlc(epc))

@@ -92,6 +92,19 @@ struct AppConfig
     QString sortingConflictPolicy = SORTING_CONFLICT_POLICY;   // 冲突策略（STRICT_EXCEPTION/LOOSE_FIRST）
     bool    sortingAllowOverrecv = SORTING_ALLOW_OVERRECV;     // 允许超收（true/false）
 
+    // ──── ★ 2026-09-14 计划分配表（落格结构优化）配置 ────
+    //   客户口径：一个 SKU 可同时计划到「正常分拣格口」与「发货格口」，
+    //   每个格口各有一份数量，落格按各格口数量分；已落+在途 ≥ 计划 → 改投异常口。
+    bool    allocEnabled            = ALLOC_ENABLED;             // 总开关（false=回退改造前"恒取首个格口"行为）
+    bool    allocRequirePlanValid   = ALLOC_REQUIRE_PLAN_VALID;  // true=Σ每格口计划≠orderQty 时拒绝开工
+    bool    allocGapMoveOnDisabled  = ALLOC_GAP_MOVE_ON_DISABLED;// 计划格口禁用时把未完成件转给同 SKU 其它计划格口
+    bool    allocGapMoveOnLocked    = ALLOC_GAP_MOVE_ON_LOCKED;  // 物理锁格时同样转移
+    int     allocMaxInflight        = ALLOC_MAX_INFLIGHT;        // 在途认领上限（超出强制清扫+留痕）
+    int     allocAuditIntervalMs    = ALLOC_AUDIT_INTERVAL_MS;   // 不变量巡检+认领清扫周期(ms)
+    int     allocClaimTimeoutMs     = ALLOC_CLAIM_TIMEOUT_MS;    // 认领超时(ms)
+    int     allocPlanLogTail        = ALLOC_PLAN_LOG_TAIL;       // 选格成功日志前 N 条逐条
+    int     allocPlanLogStep        = ALLOC_PLAN_LOG_STEP;       // 之后每 N 条一条
+
     // ──── API 路由（WMS 调用 WCS 的接口路径，可配置以适应 WMS 路径变更）────
     QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① 波次下发（H4 WMS推送波次数据）(POST)
     QString apiBindingLatticePort = API_BINDING_LATTICE_PORT;  // ② 容器绑定（H6 格口容器绑定）(POST)
