@@ -131,6 +131,16 @@ class Wcs:
                 self.exceptions.append(("超计划多入", epc, sku,
                                         "格口%s 本格口计划%d件 实际落格%d件 多余%d件" % (gk, plan, now, now - plan)))
 
+        # ★ 落错格拦截（客户确认：落错格的件不进 H7 明细）
+        #   件落到的格口不在该 SKU 计划内 → 不写明细、不落库，只留异常留痕
+        if not self.is_grid_in_plan_of(sku, gk):
+            self.exceptions.append(("wrong_grid", epc, sku,
+                                    "落错格：实际格口%s 不在该SKU计划内（计划格口=[%s]）"
+                                    % (gk, self.map[sku].grid_num)))
+            self.logs.append("[落错格] epc=%s sku=%s 实际格口=%s 计划格口=[%s] → 不写明细、不进 H7"
+                             % (epc, sku, gk, self.map[sku].grid_num))
+            return "wrong_grid"
+
         # ④ 落格明细去重（客户口径：同 EPC 同波次同格口只 1 条）
         if (gk, epc) in self.detail_keys:
             self.logs.append("[落格明细去重] epc=%s grid=%s 已有明细，本次不重复记录" % (epc, gk))
@@ -138,6 +148,15 @@ class Wcs:
         self.detail_keys.add((gk, epc))
         self.details.setdefault(gk, []).append((epc, sku, box))
         return "ok"
+
+    def is_grid_in_plan_of(self, sku, gk):
+        """镜像 HttpServer::isGridInPlanOf（信息不全时不拦）"""
+        e = self.map.get(sku)
+        if not e or not e.grid_num:
+            return True
+        if e.plan_qty_per_grid:
+            return gk in e.plan_qty_per_grid
+        return gk in {normalize_grid_key(t) for t in e.grid_num.split(",") if t.strip()}
 
     # ── ⑤ H7 报文构造 ───────────────────────────────────────────
     def build_h7(self, grid):
@@ -354,21 +373,22 @@ def scene6():
     in_plan = gk in w.map["SKU-P"].plan_qty_per_grid
     print("  034 是否在 SKU-P 计划内 = %s → 触发「落格校验 实际格口不在该SKU计划内」+ 异常表 type=wrong_grid"
           % in_plan)
-    w.exceptions.append(("wrong_grid", "EPC-P1", "SKU-P",
-                         "落错格：实际格口034 不在该SKU计划内（计划格口=[22048]）"))
-    r = w.land("SKU-P", "EPC-P1", 34, boxes[34])       # 仍计已分拣，并按实际格口写明细
-    print("  落格结果 = %s（按实际格口 034 写了明细）" % r)
+    r = w.land("SKU-P", "EPC-P1", 34, boxes[34])       # 落错格 → 不写明细
+    print("  落格结果 = %s（wrong_grid = 不写明细、不进 H7）" % r)
+    for l in w.logs:
+        print("  " + l)
 
     h7_34 = w.build_h7(34)
     h7_48 = w.build_h7(48)
     print("\n  H7 格口034 → %s" % h7_34)
     print("  H7 格口048 → %s" % h7_48)
+    print("  异常留痕：%s" % [(e[0], e[1]) for e in w.exceptions])
     leak = "SKU-P" in h7_34["detail"]
-    print("\n  【判定】检测能力：%s（落错格被识别 + 异常留痕）" % ("✓ 有" if True else "✗ 无"))
-    print("  【残留风险】%s —— SKU-P 的件出现在 034 的上报里，但 034 对该 SKU 无计划；"
-          "WMS 是否接受取决于它按不按格口校验数量"
-          % ("★ 会被上报（未拦）" if leak else "已被拦（不上报）"))
-    return True
+    ok = (not leak) and h7_34["detail"].get("SKU-Q") == 1
+    print("\n  【判定】%s  —— 落错格的件已被拦在上报之外：034 只报它的正当 SKU-Q；"
+          "落错格件在异常表留痕、UI 提示人工取出"
+          % ("✓ 通过" if ok else "✗ 失败（仍被上报）"))
+    return ok
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -542,6 +542,8 @@ private:
     bool isExceptionGridKey(const QString& gridKey) const;
     // ★ 2026-09-14 取「该 SKU 在该格口的计划件数」（多格口按格口取；无分格口计划时退回总数）
     int planQtyOfGrid(const QString& sku, const QString& gridKey) const;
+    // ★ 2026-09-14 该格口是否在「该 SKU 的计划」内（用于判定"落错格"；无计划信息时不拦）
+    bool isGridInPlanOf(const QString& sku, const QString& gridKey) const;
     // ★ 乙方案：H7 报文裁剪——把各 SKU 行的 qty 裁剪到"计划件数"（先按 EPC 去重、再封顶）
     //   返回被裁掉的多余件总数（0=未裁剪）；明细写入 trimLog 供日志留痕
     int clampFullboxQtyToPlan(const QString& gridKey, QJsonArray& detailList, QStringList& trimLog) const;

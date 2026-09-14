@@ -803,11 +803,33 @@ HttpServer::HttpServer(QObject* parent)
                         }   // ← if (!bDedupLanded) 结束：以上为"正常落格"的计件与超计划预警
 
                         // ──── 按格口记录分拣明细（锁格/满箱时回传 WMS 用）────
+                        // ★ 2026-09-14 落错格拦截（客户确认：落错格的件不进 H7 明细）：
+                        //   件落到的格口不在该 SKU 计划内（人工硬塞/塞错箱子）→ **不写落格明细**，
+                        //   因此不会出现在该格口的 H7 报文里。理由：该格口对这个 SKU 没有计划数量，
+                        //   一旦上报，WMS 侧出现"该格口上报了它无计划的 SKU"，可能按格口校验而整条驳回。
+                        //   该件仍计已分拣（PLC 报成功口径不变），异常表留痕 + UI 提示人工取出。
+                        const bool bWrongGrid = !isGridInPlanOf(sku, e.grid);
+                        if (bWrongGrid)
+                        {
+                            const GridEntry planEntry = m_pBuffer ? m_pBuffer->get(sku) : GridEntry();
+                            HTTP_LOG_WARN("[落错格] 件未写入落格明细（不进 H7）epc=%s sku=%s 实际格口=%s 计划格口=[%s] "
+                                          "—— 已计已分拣并留痕，请人工取出并放回计划格口",
+                                e.code.toLocal8Bit().data(), sku.toLocal8Bit().data(),
+                                normalizeGridKey(e.grid).toLocal8Bit().data(),
+                                planEntry.gridNum.toLocal8Bit().data());
+                            emit logMessage(QString::fromUtf8(
+                                "[落错格] EPC %1（SKU %2）落到了无计划的格口%3 —— 该件不上传WMS，请人工取出放回计划格口[%4]")
+                                .arg(e.code).arg(sku).arg(normalizeGridKey(e.grid)).arg(planEntry.gridNum), true);
+                        }
                         // ★ 2026-09-14 去重把关（客户确认：同一 EPC 同波次同格口只记 1 条）：
                         //   重复类落格（重扫重投 / 重复反馈 / DB防重）只要该 (格口,EPC) 已有明细，
                         //   就不再新增第二条 —— 否则同一物理件会在换箱前后各写一条，
                         //   H7 按容器聚合上报时"旧箱+新箱各 1 件"，WMS 侧数量对不上并整条驳回。
-                        if (isLandingDetailRecorded(normalizeGridKey(e.grid), e.code))
+                        if (bWrongGrid)
+                        {
+                            // 落错格 → 不写明细（既不留内存、也不落库），仅上述告警与异常留痕
+                        }
+                        else if (isLandingDetailRecorded(normalizeGridKey(e.grid), e.code))
                         {
                             HTTP_LOG_WARN("[落格明细去重] 同一 EPC 在本波次该格口已有明细，本次不重复记录 "
                                           "epc=%s grid=%s sku=%s（件仍只有 1 件，账实保持 1:1；已分拣计数照计）",
@@ -2281,6 +2303,33 @@ int HttpServer::planQtyOfGrid(const QString& sku, const QString& gridKey) const
     if (entry.planQtyPerGrid.contains(g))
         return entry.planQtyPerGrid.value(g);
     return entry.gridCount;
+}
+
+// ★ 2026-09-14 判定「该格口是否在该 SKU 的计划内」
+//   口径（客户确认）：落到的格口若不在该 SKU 的计划里 → 属"落错格"，
+//   **该件不写入落格明细**（因而不会出现在该格口的 H7 报文里），只留异常留痕 + UI 提示人工取出。
+//   为什么这样处理：该格口对这个 SKU 没有计划数量，一旦上报，WMS 侧会出现
+//   "格口 034 上报了它没有计划的 SKU"，可能按格口校验数量而整条驳回
+//   （[2107632]…无法分配），牵连同报文其它正常件一起不落账。
+//   保守边界：无计划信息（SKU 不在缓冲/计划表为空）→ 返回 true（视为计划内，不拦），
+//   与 planQtyOfGrid 的兜底口径一致，避免把"信息缺失"误判成"落错格"。
+bool HttpServer::isGridInPlanOf(const QString& sku, const QString& gridKey) const
+{
+    if (!m_pBuffer || sku.isEmpty())
+        return true;                        // 信息不全 → 不拦
+    const GridEntry entry = m_pBuffer->get(sku);
+    if (entry.gridNum.isEmpty())
+        return true;                        // 该 SKU 不在本波次映射 → 由其它分支处理，不在此拦
+    const QString g = normalizeGridKey(gridKey);
+    if (!entry.planQtyPerGrid.isEmpty())
+        return entry.planQtyPerGrid.contains(g);
+    // 无分格口计划（旧数据）→ 退回候选串判定
+    for (const QString& t : entry.gridNum.split(',', Qt::SkipEmptyParts))
+    {
+        if (normalizeGridKey(t) == g)
+            return true;
+    }
+    return false;
 }
 
 int HttpServer::overplanWarningCount() const
