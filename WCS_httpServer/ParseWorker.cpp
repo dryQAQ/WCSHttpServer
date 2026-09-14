@@ -101,6 +101,8 @@ void ParseWorker::run()
             if (gridNumI >= 1 && gridNumI <= BINDING_SLOT_COUNT)
                 gridNum = QString::number(gridNumI);   // "22005"/"05"/"5" → "5"
             QString gridType = item["gridType"].toString().trimmed();
+            // ★ 2026-09-14 客户确认：WMS 会下发 gridType —— 0=分类(正常分拣) / 2=发货（1=异常保留）
+            //   未下发时按 0（分类）兜底，见下方 entry.gridType 赋值
             // ★ 2026-09-06 来源库位（对应满箱回传报文 head.fromLocation）：
             //   WMS 下发字段为 sobi（如 "H-01-AB"），旧报文兼容 volu；根节点 sobi 兜底
             QString sobi     = item["sobi"].toString().trimmed();
@@ -183,7 +185,7 @@ void ParseWorker::run()
             {
                 GridEntry entry;
                 entry.gridNum   = gridNum;
-                entry.gridType  = gridType.isEmpty() ? "0" : gridType;  // 0=分类, 1=异常, 2=发货
+                entry.gridType  = gridType.isEmpty() ? "0" : gridType;  // ★ WMS下发：0=分类/正常分拣, 2=发货（1=异常）
                 entry.gridCount = gridNumber;
                 entry.volu      = volu;                      // ★ 来源库位
                 entry.obxCode   = obxCode;                   // ★ 容器号

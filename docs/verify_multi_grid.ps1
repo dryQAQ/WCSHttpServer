@@ -57,6 +57,7 @@ $overLines     = New-Object System.Collections.Generic.List[string]   # 选格-�
 $excLandLines   = New-Object System.Collections.Generic.List[string]   # 异常口落格反馈
 $warnLines      = New-Object System.Collections.Generic.List[string]   # 超计划-预警
 $preLines       = New-Object System.Collections.Generic.List[string]   # 计划格口预检
+$wrongGridLines = New-Object System.Collections.Generic.List[string]   # 落格不在计划内（落错格）
 $h7NumGrids     = New-Object System.Collections.Generic.HashSet[string] # H7 报文里出现过的 num
 
 $rePlan  = [regex]'\[SKU映射\]\s*同品多格口分配\s+orderCode=(\S+)\s+涉及SKU=(\d+)\s+明细'
@@ -65,6 +66,7 @@ $reOver  = [regex]'选格-超计划\s+code=(\S+)\s+映射=\[([^\]]*)\]\s+分配�
 $reExcL  = [regex]'\[异常口\]\s*超计划件已真实落入异常口\s+epc=(\S+)\s+sku=(\S*)\s+grid=(\S+)\s+容器=(\S+)'
 $reWarn  = [regex]'\[超计划-预警\]\s*格口(\S+?)(?:\(类型(\S*?)\))?\s+容器(\S+)\s+SKU=(\S+)\s+EPC=(\S+)\s+本格口计划(\d+)件\(SKU总计划(\d+)件\)\s+实际落格(\d+)件\s+多余(\d+)件'
 $rePre   = [regex]'计划格口预检 order=(\S+)\s+计划格口=(\d+)（([^）]*)）已绑定=(\d+)\s+未绑定=(\d+)\s+已禁用=(\d+)'
+$reWrong = [regex]'落格校验 实际格口不在该SKU计划内\s+code=(\S+)\s+sku=(\S+)\s+实际=(\S+)\s+计划格口=\[([^\]]*)\]'
 $reNum   = [regex]'"num"\s*:\s*"(\d+)"'
 
 foreach ($f in $files) {
@@ -77,6 +79,7 @@ foreach ($f in $files) {
             if ($line -like '*已真实落入异常口*'){ if ($reExcL.IsMatch($line)) { $excLandLines.Add($line) } ; continue }
             if ($line -like '*超计划-预警*')    { if ($reWarn.IsMatch($line))  { $warnLines.Add($line) } ; continue }
             if ($line -like '*计划格口预检*')   { if ($rePre.IsMatch($line))   { $preLines.Add($line) } ; continue }
+            if ($line -like '*落格校验*')       { if ($reWrong.IsMatch($line)) { $wrongGridLines.Add($line) } ; continue }
             if ($line -like '*"num"*')          { foreach ($m in $reNum.Matches($line)) { [void]$h7NumGrids.Add($m.Groups[1].Value) } }
         }
     } finally {
@@ -205,7 +208,7 @@ $excWmsCode = "22" + $ExcGrid.TrimStart('0').PadLeft(3, '0')
 $hit = @($h7NumGrids | Where-Object { $_ -eq $excWmsCode -or $_ -eq $ExcGrid -or ($_ -match "\d{3}$" -and $_.Substring($_.Length - 3) -eq $ExcGrid) })
 if ($hit.Count -gt 0) {
     Write-Bad "H7 报文里出现异常口编码 $($hit -join ', ') —— 异常口件已上传，WMS 实报可能超计划（会被 [2107632] 整条驳回）"
-    Write-Warn2 "请人工核对异常口容器内实物，并检查 exe 是否为本次提交编译（sendFullbox/sendFullboxForGrid/manualFullbox 三处应跳过异常口）"
+    Write-Warn2 "请人工核对异常口容器内实物，并检查 exe 是否为本次提交编译（落格反馈识别 + 三处入口跳过 + 报文构建层拦截）"
 } else {
     Write-Ok "H7 报文中未出现异常口编码（$excWmsCode / $ExcGrid）"
 }
@@ -224,10 +227,21 @@ if ($warnLines.Count -eq 0) {
     Write-Info "（成因：件被硬塞进计划格口 / 同 SKU 两件同时在线上；多余件不上传，需现场取出）"
 }
 
+# ── ⑥ 落错格（实际格口不在该 SKU 计划内）────────────────────────────────
+Write-Head "⑥ 落错格检查（实际格口不在该SKU计划内）"
+if ($wrongGridLines.Count -eq 0) {
+    Write-Ok "无落错格 —— 所有落格都在该 SKU 的计划格口内（分类口/发货口不同类型不算落错）"
+} else {
+    Write-Warn2 "共 $($wrongGridLines.Count) 条："
+    $wrongGridLines | Select-Object -First $Top | ForEach-Object { Write-Info ("  " + $_.Trim()) }
+    if ($wrongGridLines.Count -gt $Top) { Write-Info "…（其余 $($wrongGridLines.Count - $Top) 条）" }
+    Write-Info "（处置：异常表已留痕 type=wrong_grid，PLC 报成功仍计已分拣；请核对该件是否需人工取出）"
+}
+
 # ── 汇总 ────────────────────────────────────────────────────────────────
 Write-Head "汇总"
-Write-Info ("多格口SKU数={0}  按计划分配={1}次  超计划改投={2}次  异常口落格={3}件  误落预警={4}条  开工预检={5}次" -f `
-    $planSku.Count, $allocLines.Count, $overLines.Count, $excLandLines.Count, $warnLines.Count, $preLines.Count)
+Write-Info ("多格口SKU数={0}  按计划分配={1}次  超计划改投={2}次  异常口落格={3}件  误落预警={4}条  落错格={5}条  开工预检={6}次" -f `
+    $planSku.Count, $allocLines.Count, $overLines.Count, $excLandLines.Count, $warnLines.Count, $wrongGridLines.Count, $preLines.Count)
 if ($planSku.Count -gt 0 -and $allocLines.Count -eq 0) {
     Write-Bad "存在多格口 SKU 但没有任何「按计划分配」日志 → exe 可能仍是旧版本，或 gridNumber 字段缺失"
 }

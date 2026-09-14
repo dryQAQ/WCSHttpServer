@@ -512,66 +512,56 @@ HttpServer::HttpServer(QObject* parent)
                             }
                         }
 
-                        // ──── 同品分类vs发货冲突检测 ────
-                        // 当同一商品同时存在于不同 gridType（如分类格口与发货格口）时
-                        // 按配置策略处理：STRICT_EXCEPTION=入异常口, LOOSE_FIRST=取首个匹配
+                        // ──── 落格与计划的一致性校验（替代原"分类vs发货冲突"判定）────
+                        // ★ 2026-09-14 口径修正：客户确认 WMS 会下发 gridType（0=分类/正常分拣、2=发货），
+                        //   且同一个 SKU 可以按「分类格口 + 发货格口」分别计划（每格口各一份数量）。
+                        //   原判定在 activeMap 内用 it.key()==e.code 比较 entry.gridType，恒为同一条目
+                        //   → 永不成立（等于没校验）；而合并后的 gridType 只保留最后一行，也不可靠。
+                        //   现按"每格口保存的 gridTypePerGrid"判定：
+                        //     · 落格口在本 SKU 计划内（planQtyPerGrid 命中）→ 正常落格，不记冲突；
+                        //     · 落格口不在计划内 → 真"落错格"，按 STRICT_EXCEPTION 策略留痕（仍计已分拣）。
                         {
-                            // 检查当前格口的 gridType，判断是否存在冲突
-                            QString currentGridType = entry.gridType;
-                            const QMap<QString, GridEntry>* pMap = m_pBuffer->activeMap();
-                            if (pMap && !currentGridType.isEmpty())
+                            const QString curGridKey = normalizeGridKey(e.grid);
+                            const bool bInPlan = entry.planQtyPerGrid.contains(curGridKey);
+                            if (bInPlan)
                             {
-                                QSet<QString> otherTypes;
-                                for (auto it = pMap->constBegin(); it != pMap->constEnd(); ++it)
+                                const QString plannedType = entry.gridTypePerGrid.value(curGridKey, entry.gridType);
+                                HTTP_LOG_INFO("落格校验 计划内格口 code=%s sku=%s grid=%s(类型%s,计划%d件) —— 正常，非冲突",
+                                    e.code.toLocal8Bit().data(), sku.toLocal8Bit().data(),
+                                    curGridKey.toLocal8Bit().data(), plannedType.toLocal8Bit().data(),
+                                    entry.planQtyPerGrid.value(curGridKey));
+                            }
+                            else if (!sku.isEmpty() && !entry.gridNum.isEmpty())
+                            {
+                                HTTP_LOG_WARN("落格校验 实际格口不在该SKU计划内 code=%s sku=%s 实际=%s 计划格口=[%s]（PLC报成功，计已分拣）",
+                                    e.code.toLocal8Bit().data(), sku.toLocal8Bit().data(),
+                                    curGridKey.toLocal8Bit().data(), entry.gridNum.toLocal8Bit().data());
+                                if (QString(cfg.sortingConflictPolicy) == "STRICT_EXCEPTION")
                                 {
-                                    if (it.key() == e.code && it.value().gridType != currentGridType
-                                        && !it.value().gridType.isEmpty())
+                                    // ★ 2026-09-13 异常及时清理（同"无匹配/无绑定"分支：先判定再计件）
+                                    const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
+                                    m_pWaveMgr->markSorted(e.code);
+                                    if (wasExc)
                                     {
-                                        otherTypes.insert(it.value().gridType);
+                                        HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(落错格留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
+                                        emit logMessage(QString::fromUtf8("[异常清理] EPC %1 已成功落格到格口%2 → 已从「处理/异常口」中减去")
+                                            .arg(e.code).arg(e.grid));
+                                        if (m_pSortingDb && m_pSortingDb->isOpen())
+                                            m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
                                     }
-                                }
-                                if (!otherTypes.isEmpty())
-                                {
-                                    // 存在冲突：同一商品映射到不同类型的格口
-                                    QStringList typeList = otherTypes.values();
-                                    if (QString(cfg.sortingConflictPolicy) == "STRICT_EXCEPTION")
+                                    if (m_pSortingDb)
                                     {
-                                        // ★ 2026-09-09 口径调整（客户确认"以实时记录PLC分拣数量为准"）：
-                                        //   PLC 报成功即计"已分拣"；本条仍写异常表留痕
-                                        HTTP_LOG_WARN("分类vs发货冲突 code=%s grid=%s type=%s otherTypes=%s 计为已分拣(PLC报成功)，异常表留痕",
-                                            e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(),
-                                            currentGridType.toLocal8Bit().data(),
-                                            typeList.join(",").toLocal8Bit().data());
-                                        // ★ 2026-09-13 异常及时清理（同"无匹配/无绑定"分支：先判定再计件）
-                                        const bool wasExc = m_pWaveMgr->removeExceptionOnSorted(e.code);
-                                        m_pWaveMgr->markSorted(e.code);
-                                        if (wasExc)
-                                        {
-                                            HTTP_LOG_WARN("[异常清理] code=%s 已成功落格(冲突留痕) → 处理/异常口 -1", e.code.toLocal8Bit().data());
-                                            emit logMessage(QString::fromUtf8("[异常清理] EPC %1 已成功落格到格口%2 → 已从「处理/异常口」中减去")
-                                                .arg(e.code).arg(e.grid));
-                                            if (m_pSortingDb && m_pSortingDb->isOpen())
-                                                m_pSortingDb->markExceptionResolved(m_pWaveMgr->orderCode(), e.code);
-                                        }
-                                        if (m_pSortingDb)
-                                        {
-                                            ExceptionRecord exRec;
-                                            exRec.type      = "conflict";
-                                            exRec.orderCode = m_pWaveMgr->orderCode();
-                                            exRec.epc       = e.code;
-                                            exRec.sku       = "";
-                                            exRec.reason    = QString("同品分类vs发货冲突 grid=%1 type=%2 otherTypes=%3（PLC报成功，计已分拣，仅留痕）")
-                                                .arg(e.grid).arg(currentGridType).arg(typeList.join(","));
-                                            exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-                                            m_pSortingDb->insertException(exRec);
-                                        }
-                                        continue;
+                                        ExceptionRecord exRec;
+                                        exRec.type      = "wrong_grid";
+                                        exRec.orderCode = m_pWaveMgr->orderCode();
+                                        exRec.epc       = e.code;
+                                        exRec.sku       = sku;
+                                        exRec.reason    = QString("落错格：实际格口%1 不在该SKU计划内（计划格口=[%2]）；PLC报成功，计已分拣，仅留痕")
+                                                              .arg(curGridKey).arg(entry.gridNum);
+                                        exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                                        m_pSortingDb->insertException(exRec);
                                     }
-                                    // LOOSE_FIRST：取首个匹配，仅日志记录
-                                    HTTP_LOG_INFO("分类vs发货冲突(宽松模式) code=%s grid=%s type=%s otherTypes=%s",
-                                        e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(),
-                                        currentGridType.toLocal8Bit().data(),
-                                        typeList.join(",").toLocal8Bit().data());
+                                    continue;
                                 }
                             }
                         }
@@ -3886,6 +3876,24 @@ QJsonObject HttpServer::buildFullboxPayload(const QString& orderCode, const QStr
 {
     AppConfig& cfg = ConfigManager::instance()->config();
 
+    // ── ★ 2026-09-14 异常口兜底拦截（客户确认：66 号的件不上传 WMS）──
+    //   正常路径下 66 号的件在落格反馈最前面就被识别为异常件（不进 m_gridSortRecords），
+    //   且 sendFullbox / sendFullboxForGrid / manualFullbox 三处入口都会跳过异常口。
+    //   这里再在**报文构建的唯一出口**兜一道：即使将来新增调用路径，异常口也不可能被上传，
+    //   避免"实报数超计划 → WMS 回 [2107632] 整条驳回、牵连同批正常件不落账"。
+    if (isExceptionGridKey(grid))
+    {
+        HTTP_LOG_ERROR("满箱回传报文（H7）拦截异常口 grid=%s box=%s 记录=%d —— 异常口件不上传WMS（请人工清出）",
+            grid.toLocal8Bit().data(), boxCode.toLocal8Bit().data(), records.size());
+        emit logMessage(QString::fromUtf8(
+            "[满箱回传] 拦截：格口%1 是异常口，该口件不上传WMS（请人工清出）").arg(normalizeGridKey(grid)), true);
+        QJsonObject blocked;
+        blocked["blocked"]   = QString::fromUtf8("异常口不上传");
+        blocked["orderCode"] = orderCode;
+        blocked["grid"]      = normalizeGridKey(grid);
+        return blocked;   // 标记报文：调用方识别 blocked 字段后跳过发送（不会产生 H7）
+    }
+
     // ── fromLocation 取值：WMS 下发 items[].sobi（来源库位，旧协议 volu 兼容已由解析层统一）──
     QString fromLocation;
     for (const GridSortRecord& rec : records)
@@ -4100,6 +4108,13 @@ void HttpServer::sendFullbox(const QString& grid)
 
     // ── 步骤4: 构建满箱回传报文（H7）──
     QJsonObject payload = buildFullboxPayload(orderCode, grid, boxCode, records);
+    // ★ 2026-09-14 兜底：异常口被拦截时不产生任何 H7（记录保留内存，人工清出即可）
+    if (payload.contains("blocked"))
+    {
+        HTTP_LOG_WARN("满箱回传（H7）中止：格口%s 为异常口（报文构建层拦截），记录不上传 grid=%s",
+            normalizeGridKey(grid).toLocal8Bit().data(), grid.toLocal8Bit().data());
+        return;
+    }
     qint64 t2 = funcTimer.elapsed();  // ★ 耗时：payload构建
 
     // ── 步骤5-6: 生成 msgId（UUID 幂等键）+ 插入 Outbox ──
@@ -4332,6 +4347,12 @@ bool HttpServer::sendFullboxForGrid(const QString& orderCode, const QString& gri
 
     // 3. 构建 H7 报文 + 入 Outbox + 清理该格记录 + 发送
     QJsonObject payload = buildFullboxPayload(orderCode, grid, boxCode, records);
+    // ★ 2026-09-14 兜底：异常口被拦截时不产生任何 H7（记录保留内存，人工清出即可）
+    if (payload.contains("blocked"))
+    {
+        HTTP_LOG_WARN("满箱补发 中止：格口%s 为异常口（报文构建层拦截）", normalizeGridKey(grid).toLocal8Bit().data());
+        return false;
+    }
     QString msgId = QString::fromUtf8(QUuid::createUuid().toByteArray().toHex());
     QString nowStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
     QString nextRetry = QDateTime::currentDateTime().addSecs(OUTBOX_RETRY_INTERVAL_SEC)
