@@ -470,7 +470,10 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
             //       则前 1 件去 34、后 3 件去 48，而不是全部取首个格口。
             //   满额后：若配置了异常口（exceptionGrid）→ 多余件发往异常口；否则退回旧「取首个」逻辑发计划格口。
             bool bPlanDecided = false;
-            if (m_planAllocCb && avail.size() > 1)
+            // ★ 2026-09-14 计划分配：多格口按各格口计划件数分流；单格口则只判"是否已满额"
+            //   （单格口时 avail.size()==1 也要走这里 —— 否则超计划件仍被发往计划格口，
+            //     既与"多余件一律去异常口"的规则不符，又会被 H7 裁剪掉、WMS 侧反而少账）
+            if (m_planAllocCb && avail.size() >= 1)
             {
                 PlcPlanAllocInfo info = m_planAllocCb(code);
                 // ★ 计划表 key 为 3 位内部 key（如 "034"），此处逐格口归一后再查

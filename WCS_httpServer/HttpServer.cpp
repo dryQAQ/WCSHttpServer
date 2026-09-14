@@ -1748,12 +1748,24 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
     for (const ReturnWaveItemRecord& it : items)
     {
         recvSet.insert(it.inco);
+        // ★ 2026-09-14 同品多格口：恢复时同样保留「格口→计划件数」明细
+        //   （DB return_wave_item 一行 = 一个 (SKU,格口) 对该格口的计划数），
+        //   否则恢复后 planQtyPerGrid 为空，planAllocOf 会退化成"总数全给首个格口"，
+        //   多格口 SKU 在恢复波次里又回到"全落第一个格口"的老问题。
+        const QString gKey = normalizeGridKey(it.gridNum);
         if (newMap->contains(it.inco))
         {
             GridEntry& e = (*newMap)[it.inco];
             QStringList grids = e.gridNum.split(',', Qt::SkipEmptyParts);
             if (!grids.contains(it.gridNum))
                 e.gridNum = e.gridNum.isEmpty() ? it.gridNum : e.gridNum + "," + it.gridNum;
+            // 同格口重复行取大者、新格口另计；gridCount 同步为各格口之和
+            int& q = e.planQtyPerGrid[gKey];
+            q = it.planQty > q ? it.planQty : q;
+            int sum = 0;
+            for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+                sum += pit.value();
+            e.gridCount = sum;
         }
         else
         {
@@ -1763,11 +1775,32 @@ bool HttpServer::resumeUnfinishedWave(const QString& orderCode)
             entry.gridCount = it.planQty;
             entry.volu      = it.volu;
             entry.obxCode   = it.obxCode;
+            entry.planQtyPerGrid.insert(gKey, it.planQty);   // ★ 分格口计划
             entry.orderCode = orderCode;
             entry.orderQty  = wave.orderQty;
             entry.skuCount  = 0;
             newMap->insert(it.inco, entry);
         }
+    }
+
+    // ★ 恢复场景同样重置按格口落格计数：否则残留上一个波次的计数会让本波次分配被打偏
+    clearGridLandedCount();
+    {
+        int multiSku = 0;
+        QStringList detail;
+        for (auto mit = newMap->constBegin(); mit != newMap->constEnd(); ++mit)
+        {
+            if (mit.value().planQtyPerGrid.size() < 2) continue;
+            ++multiSku;
+            if (detail.size() >= 20) continue;
+            QStringList one;
+            for (auto pit = mit.value().planQtyPerGrid.constBegin(); pit != mit.value().planQtyPerGrid.constEnd(); ++pit)
+                one << QString("%1:%2件").arg(pit.key()).arg(pit.value());
+            detail << QString("%1→[%2]").arg(mit.key()).arg(one.join("+"));
+        }
+        if (multiSku > 0)
+            HTTP_LOG_INFO("恢复波次 同品多格口分配 order=%s 涉及SKU=%d 明细: %s",
+                orderCode.toLocal8Bit().data(), multiSku, detail.join("; ").toLocal8Bit().data());
     }
     if (items.isEmpty())
     {
