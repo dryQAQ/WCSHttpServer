@@ -277,13 +277,23 @@ public:
     {
         QString gridKey;      // 格口号（内部 3 位 key）
         QString sku;
-        int     planQty   = 0;
+        int     planQty   = 0;      // ★ 本格口计划件数（多格口时各格口不同）
+        int     skuPlanQty = 0;     // 该 SKU 计划总数（各格口之和，供人工参考）
         int     landedQty = 0;
         int     overQty   = 0;      // 多余件数 = landedQty - planQty
-        QStringList epcs;           // 多余件 EPC 清单（计划件数之外的那些）
+        QStringList epcs;           // 多余件 EPC 清单（本格口计划件数之外的那些）
     };
     QVector<OverplanWarning> overplanWarnings() const;
     int overplanWarningCount() const;                   // 超计划条目数（UI 面板数字）
+
+    // ★ 2026-09-14 同品多格口「按计划件数分配」支撑接口（选格由 PlcManager 回调本方法取依据）
+    //   计划件数：H4 解析时写入 GridEntry::planQtyPerGrid（每格口各几件）
+    //   已落格件数：本类按 PLC 反馈（status=1 落格成功）累计，同一 EPC 只计一次，跨换箱持续累计
+    PlcPlanAllocInfo planAllocOf(const QString& sku);
+    // 落格成功登记：PLC 反馈确认落入某格口某 SKU 后调用（供选格计数使用，同一 EPC 只计一次）
+    void noteGridLanded(const QString& sku, const QString& gridKey, const QString& epc);
+    // 清空按格口落格计数（H4 新波次重下发/波次清理时调用，与计划件数一同重置）
+    void clearGridLandedCount();
 
 signals:
     void serverStarted(int port);
@@ -499,9 +509,21 @@ private:
                                 int planQty, int& landedNow);
     // 已真实落入该格口该 SKU 的件数（去重 EPC）
     int landedCountOf(const QString& gridKey, const QString& sku) const;
+    // ★ 2026-09-14 判定某格口是否配置的物理异常口（超计划件改投落点）
+    bool isExceptionGridKey(const QString& gridKey) const;
+    // ★ 2026-09-14 取「该 SKU 在该格口的计划件数」（多格口按格口取；无分格口计划时退回总数）
+    int planQtyOfGrid(const QString& sku, const QString& gridKey) const;
     // ★ 乙方案：H7 报文裁剪——把各 SKU 行的 qty 裁剪到"计划件数"（先按 EPC 去重、再封顶）
     //   返回被裁掉的多余件总数（0=未裁剪）；明细写入 trimLog 供日志留痕
     int clampFullboxQtyToPlan(const QString& gridKey, QJsonArray& detailList, QStringList& trimLog) const;
+
+    // ──── ★ 2026-09-14 同品多格口「按计划件数分配」计数（选格依据）────
+    //   计划数来自 H4（GridEntry::planQtyPerGrid：该 SKU 在某格口计划几件）；
+    //   本表记录「该 SKU 已在某格口落了几件」——★ 以 PLC 反馈落格成功为准（status=1），
+    //   同一 EPC 只计一次，跨换箱持续累计，仅在 H4 新波次重下发/波次清理时清零。
+    //   选格时取「已落格数 < 计划件数」的首个计划格口；全部满额 → 超计划件按策略处置。
+    QMap<QString, QMap<QString, QSet<QString>>> m_gridLandedNum;  // SKU → (格口号 → 已落格 EPC 集合)
+    mutable std::mutex                           m_gridLandedMutex;
 
     // ──── RFID 推送吞吐/峰值统计（★ 2026-09-07 效率与峰值显示）────
     //   滑动 1 分钟窗口（实时"效率"）用 deque；分桶（每分钟）与当日峰值用于

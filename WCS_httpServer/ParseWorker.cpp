@@ -142,10 +142,11 @@ void ParseWorker::run()
             // ★ 同品多格口合并（inco=SKU编码）
             if (newMap->contains(inco))
             {
-                QString exist = (*newMap)[inco].gridNum;
+                GridEntry& ent = (*newMap)[inco];
+                QString exist = ent.gridNum;
                 if (!exist.contains(gridNum))
                 {
-                    (*newMap)[inco].gridNum = exist + "," + gridNum;
+                    ent.gridNum = exist + "," + gridNum;
                     mergeCount++;
                     if (bFullSkuLog || mergeCount <= PARSE_SKU_LOG_TAIL || (mergeCount % PARSE_SKU_LOG_STEP) == 0)
                     {
@@ -163,6 +164,17 @@ void ParseWorker::run()
                             inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), exist.toLocal8Bit().data());
                     }
                 }
+                // ★ 2026-09-14 保留「格口→计划件数」：同品同格口的重复行累加、新格口另计，
+                //   并据此重算 gridCount（=各格口计划件数之和，与原「总计划件数」口径一致）。
+                //   ★ key 统一用 normalizeGridKey（3 位内部 key，如 "034"）：选格侧按 3 位 key 查表，
+                //     早期写成裸数字 "34" 会查不到、分配失效。
+                const QString gKey = normalizeGridKey(gridNum);
+                int& q = ent.planQtyPerGrid[gKey];      // 不存在则插入
+                q = gridNumber > q ? gridNumber : q;    // 同格口重复行取下发值（一般相等，取大者更安全）
+                int sum = 0;
+                for (auto pit = ent.planQtyPerGrid.constBegin(); pit != ent.planQtyPerGrid.constEnd(); ++pit)
+                    sum += pit.value();
+                ent.gridCount = sum;
             }
             else
             {
@@ -172,6 +184,9 @@ void ParseWorker::run()
                 entry.gridCount = gridNumber;
                 entry.volu      = volu;                      // ★ 来源库位
                 entry.obxCode   = obxCode;                   // ★ 容器号
+                // ★ 2026-09-14 记录该 SKU 在该格口的计划件数（多格口分配依据）
+                //   key = 3 位内部 key（normalizeGridKey），与选格侧查表口径一致
+                entry.planQtyPerGrid.insert(normalizeGridKey(gridNum), gridNumber);
                 // 批次信息：每个SKU编码都关联到所属批次
                 entry.orderCode = orderCode;
                 entry.orderQty  = orderQty;
@@ -185,6 +200,29 @@ void ParseWorker::run()
                         inco.toLocal8Bit().data(), gridNum.toLocal8Bit().data(), 
                         entry.gridType.toLocal8Bit().data(), gridNumber, sobi.toLocal8Bit().data());
                 }
+            }
+        }
+
+        // ★ 2026-09-14 同品多格口分配摘要：让「哪些 SKU 拆了多格口、各格口各几件」在日志中可核对
+        {
+            int multiSku = 0;
+            QStringList multiDetail;
+            for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it)
+            {
+                if (it.value().planQtyPerGrid.size() < 2)
+                    continue;
+                ++multiSku;
+                QStringList one;
+                for (auto pit = it.value().planQtyPerGrid.constBegin(); pit != it.value().planQtyPerGrid.constEnd(); ++pit)
+                    one << QString("%1:%2件").arg(pit.key()).arg(pit.value());
+                if (multiDetail.size() < 50)
+                    multiDetail << QString("%1→[%2]").arg(it.key()).arg(one.join("+"));
+            }
+            if (multiSku > 0)
+            {
+                WCS_INFO("[SKU映射] 同品多格口分配 orderCode=%s 涉及SKU=%d 明细: %s",
+                    orderCode.toLocal8Bit().data(), multiSku,
+                    multiDetail.join("; ").toLocal8Bit().data());
             }
         }
         WCS_INFO("[SKU映射] 解析完成 items=%lld 新增SKU=%d 合并=%d 重复行=%d",

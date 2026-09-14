@@ -872,6 +872,24 @@ void MainWindow::setupUI()
 
     serverLayout->addWidget(m_btnStartStop, 0, Qt::AlignHCenter);
 
+    // ★ 2026-09-13 需求：在「开始/结束接收任务」旁新增「一键满箱回传」
+    //   点击 → 对**当前所有已绑定容器**逐个按 H7 满箱回传上传（有分拣记录的格口才发，空格口跳过并提示）。
+    //   ★ 不影响其他功能：复用 manualFullbox → sendFullboxForGrid，不动波次状态机、不禁用格口、不改绑定；
+    //     未成功的报文照常保留在 Outbox（可重传），失败不会阻塞分拣。
+    m_btnOneKeyFullbox = new QPushButton(QCoreApplication::translate("MainWindow", "一键满箱回传"));
+    m_btnOneKeyFullbox->setMinimumWidth(120);
+    m_btnOneKeyFullbox->setMinimumHeight(32);
+    m_btnOneKeyFullbox->setStyleSheet(
+        "QPushButton { background-color: #00897B; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #00796B; }"
+        "QPushButton:disabled { background-color: #BDBDBD; }");
+    m_btnOneKeyFullbox->setToolTip(QCoreApplication::translate("MainWindow",
+        "对当前所有已绑定容器逐个执行 H7 满箱回传（同一批，自动统计）\n"
+        "有分拣记录的格口才发送；无记录的格口跳过\n"
+        "不影响波次状态机与格口启用状态，失败报文保留在 Outbox 可重传"));
+    serverLayout->addWidget(m_btnOneKeyFullbox, 0, Qt::AlignHCenter);
+
     // ★ 2026-09-07 布局：「未接收任务」状态 + 端口（水平同一行）
     QHBoxLayout* statusPortRow = new QHBoxLayout();
     statusPortRow->addStretch();
@@ -966,6 +984,9 @@ void MainWindow::setupUI()
     // ★ 重传目标说明（选中行优先，否则当前内存波次——在 onResendSelectedH7/H8 中解析；
     //   下拉选中失败记录时按所选格口/波次精确重传；H7 下拉手输文本时执行手动满箱切换）
     connect(m_btnResendH7, &QPushButton::clicked, this, &MainWindow::onResendSelectedH7);
+    // ★ 2026-09-13 需求：一键满箱回传（对所有已绑定容器逐个执行 H7 满箱回传；不影响其他功能）
+    if (m_btnOneKeyFullbox)
+        connect(m_btnOneKeyFullbox, &QPushButton::clicked, this, &MainWindow::onOneKeyFullbox);
     connect(m_btnResendH8, &QPushButton::clicked, this, &MainWindow::onResendSelectedH8);
     connect(m_btnViewWaveQueue, &QPushButton::clicked, this, &MainWindow::onViewWaveQueue);
 
@@ -4185,21 +4206,24 @@ void MainWindow::showOverplanWarningDialog()
 
     // ── 顶部说明 ──
     QLabel* tip = new QLabel(QString::fromUtf8(
-        "口径：按「格口 + SKU」比较 计划件数 与 PLC 确认真正落入该格口的去重件数（跨容器累计）。\n"
-        "超计划成因：同一 SKU 有两件同时在线上（都未落格），或人工多放了一件。\n"
-        "处置：多余件不进入上传报文（H7 已按计划件数裁剪），但实物可能已在箱内 → 请按下列清单现场取出。"));
+        "口径：按「格口 + SKU」比较 本格口计划件数 与 PLC 确认真正落入该格口的去重件数（跨容器累计）。\n"
+        "★ 同品多格口：计划按格口分列（如 034 计划 1 件 + 048 计划 3 件），故「计划件数」列是该格口的计划，\n"
+        "   「SKU总计划」列是该 SKU 各格口之和，仅作参考。\n"
+        "超计划成因：同一 SKU 有两件同时在线上（都未落格），或人工多放了一件；改投异常口的件不计入本表。\n"
+        "处置：多余件不进入上传报文（H7 已按本格口计划件数裁剪），但实物可能已在箱内 → 请按下列清单现场取出。"));
     tip->setWordWrap(true);
     tip->setStyleSheet("font-size: 13px; color: #555;");
     lay->addWidget(tip);
 
     // ── 明细表 ──
     QTableWidget* tbl = new QTableWidget();
-    tbl->setColumnCount(6);
+    tbl->setColumnCount(7);
     tbl->setHorizontalHeaderLabels({
         QString::fromUtf8("格口号"),
         QString::fromUtf8("容器号"),
         QString::fromUtf8("SKU编码"),
-        QString::fromUtf8("计划件数"),
+        QString::fromUtf8("本格口计划"),
+        QString::fromUtf8("SKU总计划"),
         QString::fromUtf8("实际落格件数"),
         QString::fromUtf8("多余件数")
     });
@@ -4237,8 +4261,9 @@ void MainWindow::showOverplanWarningDialog()
         setCell(1, box.isEmpty() ? QString::fromUtf8("—") : box);
         setCell(2, w.sku);
         setCell(3, QString::number(w.planQty));
-        setCell(4, QString::number(w.landedQty));
-        setCell(5, QString::number(w.overQty), QColor("#D32F2F"));
+        setCell(4, QString::number(w.skuPlanQty));
+        setCell(5, QString::number(w.landedQty));
+        setCell(6, QString::number(w.overQty), QColor("#D32F2F"));
 
         // 多余件 EPC 清单放进 SKU 单元格的 tooltip（列宽有限，不占表格空间）
         if (!w.epcs.isEmpty() && tbl->item(i, 2))
@@ -5129,5 +5154,94 @@ void MainWindow::onStartSortingClicked()
     {
         appendLog("[分拣] 开始分拣失败，请检查波次状态", true);
     }
+}
+
+// ============================================================================
+// ★ 2026-09-13 需求：一键满箱回传
+//   点击 → 对**当前所有已绑定容器**逐个执行 H7 满箱回传，同批自动统计。
+//
+//   设计要点（确保"不影响其他功能"）：
+//     · 复用 manualFullbox → sendFullboxForGrid：不动波次状态机、不禁用格口、不改容器绑定；
+//     · 只对"有分拣记录"的格口发送（无记录的格口跳过并计数提示，不发空报文）；
+//     · 失败不阻塞：报文已入 Outbox，失败/超时由既有重传机制处理（可面板重传）；
+//     · 已满箱回传过的格口（记录已清空）再点不会重复发送——sendFullboxForGrid 的入参为空直接返回。
+// ============================================================================
+void MainWindow::onOneKeyFullbox()
+{
+    if (!m_pServer || !m_pServer->waveManager())
+    {
+        appendLog("[一键满箱] 服务未就绪，无法执行", true);
+        return;
+    }
+    if (m_btnOneKeyFullbox) m_btnOneKeyFullbox->setEnabled(false);   // 防连点（动作末尾恢复）
+
+    WaveManager* wm = m_pServer->waveManager();
+    const QString orderCode = wm->orderCode();
+    if (orderCode.isEmpty())
+    {
+        appendLog("[一键满箱] 当前无运行波次，无法执行一键满箱回传", true);
+        if (m_btnOneKeyFullbox) m_btnOneKeyFullbox->setEnabled(true);
+        return;
+    }
+
+    // 当前全部绑定（格口号 → 容器号）
+    const QMap<QString, QString> binds = m_pServer->getContainerBindings();
+    if (binds.isEmpty())
+    {
+        appendLog("[一键满箱] 当前无已绑定容器，无可回传内容", true);
+        if (m_btnOneKeyFullbox) m_btnOneKeyFullbox->setEnabled(true);
+        return;
+    }
+
+    // 二次确认：涉及批量回传（每条一报、各自入 Outbox），避免误触
+    const int total = binds.size();
+    if (QMessageBox::question(this, QString::fromUtf8("一键满箱回传"),
+            QString::fromUtf8("将对当前 %1 个已绑定容器逐个执行满箱回传(H7)：\n"
+                              "· 只有存在分拣记录的格口会发送报文，无记录的格口自动跳过\n"
+                              "· 不影响分拣流程、波次状态与容器绑定\n\n确认执行？").arg(total),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    {
+        appendLog("[一键满箱] 已取消");
+        if (m_btnOneKeyFullbox) m_btnOneKeyFullbox->setEnabled(true);
+        return;
+    }
+
+    appendLog(QString("[一键满箱] 开始执行：已绑定容器 %1 个，波次 %2").arg(total).arg(orderCode));
+
+    int sent = 0, empty = 0, failed = 0;
+    QStringList sentGrids, emptyGrids;
+    for (auto it = binds.constBegin(); it != binds.constEnd(); ++it)
+    {
+        const QString grid = it.key();
+        const QString box  = it.value();
+
+        // manualFullbox：有记录 → 按 H7 立即上传（进入 Outbox + 发送）；无记录/无波次 → false
+        const bool ok = m_pServer->manualFullbox(grid);
+        if (ok)
+        {
+            ++sent;
+            sentGrids << QString::fromUtf8("%1(%2)").arg(grid, box);
+        }
+        else
+        {
+            // 失败原因只可能是"该格无待上传记录"（波次/容器前置校验已在上面通过）；
+            // 这里统一按"无记录跳过"计数，明细留痕便于现场核对
+            ++empty;
+            emptyGrids << grid;
+        }
+    }
+
+    QString msg = QString::fromUtf8(
+        "[一键满箱] 执行完成：已发送 %1 个格口（%2）｜跳过无记录 %3 个（%4）｜失败 %5 个")
+        .arg(sent)
+        .arg(sentGrids.isEmpty() ? QString::fromUtf8("无") : sentGrids.join(","))
+        .arg(empty)
+        .arg(emptyGrids.isEmpty() ? QString::fromUtf8("无") : emptyGrids.join(","))
+        .arg(failed);
+    appendLog(msg, sent == 0);
+    appendLog(QString::fromUtf8(
+        "[一键满箱] 提示：报文已入 Outbox 异步发送；失败/超时的报文可在「重传满箱切换(H7)」下拉中选择重传"));
+
+    if (m_btnOneKeyFullbox) m_btnOneKeyFullbox->setEnabled(true);
 }
 

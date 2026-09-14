@@ -147,6 +147,17 @@ typedef std::function<QString(const QString& code)> PlcLookupCallback;
 // ★ 小车号查询回调：从 EpcCache 获取 RFID 提供的小车号，返回 "001" 兜底
 typedef std::function<QString(const QString& code)> PlcCarNumCallback;
 
+// ★ 2026-09-14 同品多格口「计划分配」查询结果（由 HttpServer 依据 H4 计划 + 已落格计数提供）
+struct PlcPlanAllocInfo
+{
+    bool               valid = false;  // 是否查到该 SKU 的计划（false → 选格退回旧逻辑）
+    QMap<QString, int> planQtyPerGrid; // 格口号(内部数字串) → 计划件数
+    QMap<QString, int> landedNum;      // 格口号(内部数字串) → 已落格件数（PLC 反馈成功累计）
+    int                excGrid = -1;   // 超计划（各计划格口均已满额）时的兜底去往格口，-1=未配置
+};
+// 入参 = EPC编码（=SKU编码），返回该 SKU 的计划分配信息
+typedef std::function<PlcPlanAllocInfo(const QString& code)> PlcPlanAllocCallback;
+
 class PlcManager : public QObject, public CTcpServerListener
 {
     Q_OBJECT
@@ -187,6 +198,8 @@ public:
     void setLookupCallback(PlcLookupCallback cb) { m_lookupCb = std::move(cb); }
     // ★ 设置小车号查询回调（从 EpcCache 获取 RFID 提供的小车号）
     void setCarNumCallback(PlcCarNumCallback cb) { m_carNumCb = std::move(cb); }
+    // ★ 2026-09-14 设置「计划分配」查询回调（同品多格口按计划件数分配的依据）
+    void setPlanAllocCallback(PlcPlanAllocCallback cb) { m_planAllocCb = std::move(cb); }
 
     // ──── 发送指令 ────
     // code 为 EPC编码，客户已确认（2026-08-10）
@@ -251,6 +264,7 @@ signals:
     PlcFeedbackCallback m_feedbackCb;
     PlcLookupCallback  m_lookupCb;   // ★ 相机查询回调：查格口
     PlcCarNumCallback  m_carNumCb;   // ★ 小车号查询回调：从 EpcCache 获取 RFID 小车号
+    PlcPlanAllocCallback m_planAllocCb;  // ★ 2026-09-14 计划分配查询回调（同品多格口按计划件数选格）
 
     // ──── TCP 统计 ────
     std::atomic<int64_t> m_tcpSendCount{0};

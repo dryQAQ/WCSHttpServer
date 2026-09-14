@@ -82,6 +82,12 @@ HttpServer::HttpServer(QObject* parent)
         return carNum.isEmpty() ? CAR_NUM_STR(DEFAULT_CAR_NUM) : carNum;
     });
 
+    // ★ 2026-09-14 设置「计划分配」查询回调：同品多格口按计划件数分配（选格依据）
+    //   计划件数来自 H4 解析（GridEntry::planQtyPerGrid），已落格件数由本类按 PLC 反馈累计。
+    m_pPlcMgr->setPlanAllocCallback([this](const QString& code) -> PlcPlanAllocInfo {
+        return planAllocOf(code);
+    });
+
     // ──── 业务线程池 ────
     {
         AppConfig& cfg = ConfigManager::instance()->config();
@@ -358,13 +364,17 @@ HttpServer::HttpServer(QObject* parent)
                             if (bIsExcGrid && !bPlcFail)
                             {
                                 const QString skuExc = m_pEpcCache ? m_pEpcCache->get(e.code) : QString();
-                                HTTP_LOG_INFO("[异常口] 超计划件已真实落入异常口 epc=%s sku=%s grid=%s status=%d "
-                                              "—— 不计已分拣、不写箱内明细、不进 H7 报文",
+                                // 异常口当前容器（人工对账/清出用；无绑定则记"—"）
+                                QString excBox = currentBoxOfGrid(normalizeGridKey(e.grid));
+                                if (excBox.isEmpty()) excBox = QString::fromUtf8("未绑定容器");
+                                const int excPlanQty = planQtyOfGrid(skuExc, normalizeGridKey(e.grid));
+                                HTTP_LOG_WARN("[异常口] 超计划件已真实落入异常口 epc=%s sku=%s grid=%s 容器=%s "
+                                              "status=%d 该SKU在本口计划=%d件 —— 不计已分拣、不写箱内明细、不进 H7 报文，请人工清出",
                                     e.code.toLocal8Bit().data(), skuExc.toLocal8Bit().data(),
-                                    e.grid.toLocal8Bit().data(), e.status);
+                                    e.grid.toLocal8Bit().data(), excBox.toLocal8Bit().data(), e.status, excPlanQty);
                                 emit logMessage(QString::fromUtf8(
-                                    "[异常口] 超计划件已入异常口：EPC %1（SKU %2）格口%3 —— 请现场清出")
-                                    .arg(e.code).arg(skuExc).arg(normalizeGridKey(e.grid)), true);
+                                    "[异常口] 超计划件已入异常口：EPC %1（SKU %2）格口%3 容器%4 —— 请现场清出")
+                                    .arg(e.code).arg(skuExc).arg(normalizeGridKey(e.grid)).arg(excBox), true);
                                 if (m_pWaveMgr)
                                     m_pWaveMgr->markException(e.code);
                                 if (m_pSortingDb && m_pSortingDb->isOpen())
@@ -374,8 +384,9 @@ HttpServer::HttpServer(QObject* parent)
                                     exExc.orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
                                     exExc.epc       = e.code;
                                     exExc.sku       = skuExc;
-                                    exExc.reason    = QString::fromUtf8("超计划件按策略改投异常口%1并已落格（不计已分拣）")
-                                                          .arg(normalizeGridKey(e.grid));
+                                    exExc.reason    = QString::fromUtf8(
+                                        "超计划件按策略改投异常口%1并已落格（容器%2，不计已分拣、不上传WMS，请人工清出）")
+                                                          .arg(normalizeGridKey(e.grid)).arg(excBox);
                                     exExc.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                                     m_pSortingDb->insertException(exExc);
                                 }
@@ -687,20 +698,26 @@ HttpServer::HttpServer(QObject* parent)
                                     }
                                 }
 
-                                // 计划件数：GridBuffer 里 WMS 下发的该 SKU 计划数（= H4 items[].gridNumber）
-                                const int planQty = m_pBuffer ? m_pBuffer->get(curSku).gridCount : 0;
-
                                 const QString gridKey = normalizeGridKey(e.grid);
+                                // 计划件数：优先取「该格口的计划件数」（同品多格口时各格口不同），
+                                // 无分格口计划时退回该 SKU 的计划总数（旧数据/单格口场景）
+                                const GridEntry curEntry = m_pBuffer ? m_pBuffer->get(curSku) : GridEntry();
+                                const int planQty = curEntry.planQtyPerGrid.contains(gridKey)
+                                    ? curEntry.planQtyPerGrid.value(gridKey)
+                                    : curEntry.gridCount;
+
+                                // ★ 2026-09-14 同品多格口分配计数：以「PLC 反馈落格成功」为准登记（同一 EPC 只计一次）
+                                noteGridLanded(curSku, gridKey, e.code);
                                 int landedNow = 0;
                                 if (noteLandedIntoPlanGrid(gridKey, curSku, e.code, planQty, landedNow))
                                 {
                                     const QString orderNow = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
                                     const int overQty = landedNow - planQty;
-                                    HTTP_LOG_WARN("[超计划-预警] 格口%s 容器%s SKU=%s EPC=%s 计划%d件 "
+                                    HTTP_LOG_WARN("[超计划-预警] 格口%s 容器%s SKU=%s EPC=%s 本格口计划%d件(SKU总计划%d件) "
                                                   "实际落格%d件 多余%d件 → 已登记预警；该多余件不进入上传报文，请现场取出",
                                         gridKey.toLocal8Bit().data(), curBox.toLocal8Bit().data(),
                                         curSku.toLocal8Bit().data(), e.code.toLocal8Bit().data(),
-                                        planQty, landedNow, overQty);
+                                        planQty, curEntry.gridCount, landedNow, overQty);
                                     emit logMessage(QString::fromUtf8(
                                         "[超计划] 格口%1 容器%2 SKU %3：计划%4件 实际落格%5件 多余%6件"
                                         "（已在波次面板登记预警，多余件不进入上传报文，请现场取出）")
@@ -1920,11 +1937,106 @@ int HttpServer::landedCountOf(const QString& gridKey, const QString& sku) const
 }
 
 // ============================================================================
-// ★ 乙方案：H7 报文裁剪 —— 把某格口各 SKU 行的 qty 裁剪到"计划件数"
+// ★ 2026-09-14 同品多格口「按计划件数分配」：选格依据 + 落格计数
+//   现场背景：H4 允许同一 SKU 按多格口分别计划
+//     （如 106101134113101 → 22034 计划 1 件 + 22048 计划 3 件），
+//   但旧选格逻辑恒取「首个格口」，导致 4 件全落在 034、计划中的 048 落空，
+//   满箱上报的格口分布与计划不符（WMS 虽按 SKU 总量校验通过，但账实分布已错）。
+//   现口径（客户确认）：
+//     · 前 N 件按计划分流到各格口（N 取该格口计划件数）；
+//     · 各计划格口满额后的多余件 → 一律投异常口，并在日志标注（不再占用计划格口）。
+//   计数口径（客户确认）：以 PLC 反馈「落格成功」为准 —— 故在落格反馈处登记，
+//   同一 EPC 只计一次；跨换箱持续累计（H6 重绑不清零，仅 H4 新波次/波次清理时清零）。
+// ============================================================================
+PlcPlanAllocInfo HttpServer::planAllocOf(const QString& sku)
+{
+    PlcPlanAllocInfo info;
+    if (sku.isEmpty())
+        return info;
+
+    // 1) 计划件数（H4 解析结果）
+    if (m_pBuffer)
+    {
+        GridEntry entry = m_pBuffer->get(sku);
+        if (!entry.planQtyPerGrid.isEmpty())
+        {
+            info.planQtyPerGrid = entry.planQtyPerGrid;
+            info.valid = true;
+        }
+        else if (entry.gridCount > 0 && !entry.gridNum.isEmpty())
+        {
+            // 兼容：未记录分格口计划（旧数据/单格口）时，用总数折算到首个格口
+            const QString first = normalizeGridKey(entry.gridNum.split(',', Qt::SkipEmptyParts).value(0));
+            if (!first.isEmpty())
+            {
+                info.planQtyPerGrid.insert(first, entry.gridCount);
+                info.valid = true;
+            }
+        }
+    }
+
+    // 2) 超计划兜底格口（配置项 exceptionGrid，未配置 = -1 表示不做异常口改投）
+    {
+        const QString excCfg = ConfigManager::instance()->config().exceptionGrid.trimmed();
+        bool okExc = false;
+        const int exc = excCfg.toInt(&okExc);
+        info.excGrid = (okExc && exc > 0 && exc <= BINDING_SLOT_COUNT) ? exc : -1;
+    }
+
+    // 2.1) ★ 计划里若出现异常格口号 → 剔除（异常口不属于任何 SKU 的计划，
+    //      否则"计划件数"会把本该改投异常口的件算成"计划内"，多余件就漏判了）
+    if (info.excGrid > 0 && info.valid)
+    {
+        const QString excKey = normalizeGridKey(QString::number(info.excGrid));
+        if (info.planQtyPerGrid.contains(excKey))
+        {
+            const int drop = info.planQtyPerGrid.take(excKey);
+            HTTP_LOG_WARN("[计划分配] SKU=%s 的计划含异常格口%s(计划%2件) —— 已从计划中剔除，该格口只收超计划件",
+                sku.toLocal8Bit().data(), excKey.toLocal8Bit().data(), drop);
+        }
+    }
+
+    // 3) 已落格件数（PLC 反馈成功累计）
+    {
+        std::lock_guard<std::mutex> lock(m_gridLandedMutex);
+        auto it = m_gridLandedNum.constFind(sku);
+        if (it != m_gridLandedNum.constEnd())
+        {
+            for (auto git = it.value().constBegin(); git != it.value().constEnd(); ++git)
+                info.landedNum.insert(git.key(), git.value().size());
+        }
+    }
+
+    return info;
+}
+
+void HttpServer::noteGridLanded(const QString& sku, const QString& gridKey, const QString& epc)
+{
+    const QString g = gridKey.trimmed();
+    if (sku.isEmpty() || g.isEmpty() || epc.isEmpty())
+        return;
+
+    std::lock_guard<std::mutex> lock(m_gridLandedMutex);
+    m_gridLandedNum[sku][g].insert(epc);   // 去重：同一 EPC 重复反馈不重复计数
+}
+
+void HttpServer::clearGridLandedCount()
+{
+    std::lock_guard<std::mutex> lock(m_gridLandedMutex);
+    m_gridLandedNum.clear();
+}
+
+// ============================================================================
+// ★ 乙方案：H7 报文裁剪 —— 把某格口各 SKU 行的 qty 裁剪到"该格口计划件数"
 //   为什么需要：正常路径下超计划件已改投异常口、不会进箱；但"同时两件在线"等情形
 //   仍可能让箱内实落数超过计划，此时若按实落数上报，WMS 会回
 //   [2107632]…无法分配 并**整条驳回**，牵连同报文其它正常件一起不落账（现场 034 格口事件）。
-//   裁剪策略：qty' = min(qty, 计划件数)（计划<=0 的行不裁剪）；只封顶不补足，
+//   ★ 2026-09-14 口径修正（配合"同品多格口按计划件数分配"）：
+//     封顶基准必须是 **本格口的计划件数**（GridEntry::planQtyPerGrid[本格口]），
+//     而不是该 SKU 的计划总数。否则同一 SKU 拆到多格口时（如 34 计划 1 件 + 48 计划 3 件），
+//     每个格口都会被 4 件"总数"误判为不超，裁剪形同失效。
+//     无分格口计划时（旧数据/单格口）退回该 SKU 计划总数。
+//   裁剪策略：qty' = min(qty, 本格口计划件数)（无计划的行不裁剪）；只封顶不补足，
 //   并且同一 SKU 只输出一行（重复行合并），保证报文自洽。
 //   裁剪掉的多余件不进入上传数据，但已计入"超计划预警"并在 UI 可查、异常表有留痕。
 // ============================================================================
@@ -1948,24 +2060,30 @@ int HttpServer::clampFullboxQtyToPlan(const QString& gridKey, QJsonArray& detail
         skuQty[sku] += qty;
     }
 
-    // 2) 逐 SKU 按计划件数封顶，重建 detailList（保留原行的 num/targetLocation 字段）
+    // 2) 逐 SKU 按「本格口计划件数」封顶，重建 detailList（保留原行的 num/targetLocation 字段）
     const QJsonObject first = detailList.first().toObject();
     const QString num = first.value("num").toString();
     const QString box = first.value("targetLocation").toString();
+    const QString gKey = normalizeGridKey(gridKey);
 
     QJsonArray rebuilt;
     int trimmedTotal = 0;
     for (const QString& sku : order)
     {
+        const GridEntry entry = m_pBuffer->get(sku);
         const int raw     = skuQty.value(sku);
-        const int planQty = m_pBuffer->get(sku).gridCount;
+        const int planQty = entry.planQtyPerGrid.contains(gKey)
+                          ? entry.planQtyPerGrid.value(gKey)
+                          : entry.gridCount;          // 兜底：无分格口计划（旧数据/单格口）
         int qty = raw;
         if (planQty > 0 && raw > planQty)
         {
             qty = planQty;
             trimmedTotal += (raw - planQty);
-            trimLog << QString::fromUtf8("%1 计划%2件 实落%3件 → 报%4件（多余%5件不进入上传报文）")
-                           .arg(sku).arg(planQty).arg(raw).arg(qty).arg(raw - planQty);
+            trimLog << QString::fromUtf8("%1 本格口计划%2件(SKU总计划%3件) 实落%4件 → 报%5件（多余%6件不进入上传报文）")
+                           .arg(sku).arg(planQty).arg(entry.gridCount).arg(raw).arg(qty).arg(raw - planQty);
+            HTTP_LOG_WARN("[H7裁剪] 格口%s SKU=%s 本格口计划%d件 实落%d件 → 只报%d件（多余%d件不上传，已登记预警）",
+                gKey.toLocal8Bit().data(), sku.toLocal8Bit().data(), planQty, raw, qty, raw - planQty);
         }
         QJsonObject item;
         item["num"]            = num;
@@ -1978,6 +2096,29 @@ int HttpServer::clampFullboxQtyToPlan(const QString& gridKey, QJsonArray& detail
     return trimmedTotal;
 }
 
+// ★ 2026-09-14 判定某格口是否为配置的物理异常口（超计划件落点）
+bool HttpServer::isExceptionGridKey(const QString& gridKey) const
+{
+    const QString excCfg = ConfigManager::instance()->config().exceptionGrid.trimmed();
+    if (excCfg.isEmpty() || excCfg == "0")
+        return false;
+    return normalizeGridKey(gridKey) == normalizeGridKey(excCfg);
+}
+
+// ★ 2026-09-14 取「该 SKU 在该格口的计划件数」：
+//   同品多格口场景下每个格口各有计划（planQtyPerGrid），必须按格口取；
+//   无分格口计划（旧数据/单格口）时退回该 SKU 的计划总数。
+int HttpServer::planQtyOfGrid(const QString& sku, const QString& gridKey) const
+{
+    if (!m_pBuffer || sku.isEmpty())
+        return 0;
+    const GridEntry entry = m_pBuffer->get(sku);
+    const QString g = normalizeGridKey(gridKey);
+    if (entry.planQtyPerGrid.contains(g))
+        return entry.planQtyPerGrid.value(g);
+    return entry.gridCount;
+}
+
 int HttpServer::overplanWarningCount() const
 {
     // ★ 单次遍历统计，不调用 overplanWarnings()（避免同一把锁被重复获取 + 构造无用明细）
@@ -1988,8 +2129,10 @@ int HttpServer::overplanWarningCount() const
         const QString key = it.key();                 // "格口号\nSKU"
         const int sep = key.indexOf('\n');
         if (sep <= 0) continue;
+        const QString g   = key.left(sep);
         const QString sku = key.mid(sep + 1);
-        const int planQty = m_pBuffer ? m_pBuffer->get(sku).gridCount : 0;
+        if (isExceptionGridKey(g)) continue;          // 异常口是"主动改投"，不计入预警
+        const int planQty = planQtyOfGrid(sku, g);    // ★ 按本格口计划（多格口各自计划不同）
         if (planQty > 0 && it.value().size() > planQty) ++n;
     }
     return n;
@@ -2011,15 +2154,20 @@ QVector<HttpServer::OverplanWarning> HttpServer::overplanWarnings() const
         w.sku       = key.mid(sep + 1);
         w.landedQty = it.value().size();
 
-        // 计划件数：取该 SKU 在 GridBuffer 的计划数（与判定同源）
-        w.planQty = m_pBuffer ? m_pBuffer->get(w.sku).gridCount : 0;
+        // ★ 异常口（改投超计划件）不作为"预警"列出：它本就是设计落点，由日志/异常表留痕
+        if (isExceptionGridKey(w.gridKey))
+            continue;
+
+        // 计划件数：取该 SKU 在**本格口**的计划数（同品多格口时各格口计划不同）
+        w.planQty = planQtyOfGrid(w.sku, w.gridKey);
+        w.skuPlanQty = m_pBuffer ? m_pBuffer->get(w.sku).gridCount : 0;
 
         if (w.planQty <= 0 || w.landedQty <= w.planQty)
             continue;                                 // 未超计划 → 不列入预警
 
         w.overQty = w.landedQty - w.planQty;
 
-        // 多余件 EPC 清单 = 已落格 EPC 中"计划件数之外"的那些
+        // 多余件 EPC 清单 = 已落格 EPC 中"本格口计划件数之外"的那些
         //   （QSet 无序，故清单顺序不代表落格先后；仅用于现场核对与取出）
         int idx = 0;
         for (const QString& e : it.value())
@@ -2057,6 +2205,7 @@ void HttpServer::switchAwayCurrentWave()
         m_gridSortedCount.clear();
     }
     clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随波次切出清空
+    clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随波次切出清空
     m_pendingSkuQuery.clear();
     m_skuQueryRetryCount.clear();
     m_notReadyRetryCount.clear();
@@ -2285,6 +2434,7 @@ void HttpServer::onWavePersistenceFinished(const QString& orderCode, bool ok, in
         m_gridSortedCount.clear();
     }
     clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随新波次清空
+    clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随新波次清空
     // ★ 新波次到来，清空旧波次相关数据（EpcCache 保留，RFID 推送独立于波次生命周期）
     // ★ 纠正5: 新波次开始时恢复所有禁用格口
     if (m_pPlcMgr)
@@ -2857,27 +3007,25 @@ QJsonObject HttpServer::handleBindingLatticePort(const QString& latticehole, con
         return r;
     }
 
-    // ──── ★ 2026-09-13 异常口保护（客户确认：66 号格口是异常口兼强排口，永不绑定容器）────
-    //   为什么必须挡：异常口一旦被绑上容器，它就会进入绑定表 → H7 报文可能把异常口的件
-    //   以该容器号上报给 WMS，制造"本不该出现在该箱的 SKU"，正是本次要根治的问题。
-    //   同时异常口也不需要容器：超计划件在反馈链最前面就被识别（见落格反馈的"物理异常口反馈识别"），
-    //   不计已分拣、不写箱内明细、不进 H7。
+    // ──── ★ 2026-09-14 异常口绑定：允许（原 09-13 的"拒绝绑定"已撤销）────
+    //   为什么必须允许：异常口 66 是超计划件的物理落点，现场要在此处放一个容器收件、人工清出；
+    //   若拒绝绑定（H6 被回 500），该口无容器 → 件落在异常口但没有箱号可查，人工无从对账。
+    //   防污染不靠"拒绝绑定"，而靠"异常口的件不进 H7"：
+    //     · 超计划件由本系统按 exceptionGrid 主动改投该口，并在落格反馈最前面被识别（见
+    //       "物理异常口反馈识别"），不计已分拣、不写箱内明细、不进 H7 报文；
+    //     · 该口本身不进入任何 SKU 的计划（planAllocOf 会把计划里出现的异常格口剔除）。
     {
         const QString excGridBind = ConfigManager::instance()->config().exceptionGrid.trimmed();
         if (!excGridBind.isEmpty() && excGridBind != "0" &&
             normalizeGridKey(QString::number(gridNum)) == normalizeGridKey(excGridBind))
         {
-            HTTP_LOG_WARN("BindingLatticePort 拒绝绑定异常口 latticehole=%s box=%s（异常口/强排口不参与容器绑定，"
-                          "exceptionGrid=%s）",
+            HTTP_LOG_INFO("BindingLatticePort 异常口绑定 latticehole=%s box=%s（exceptionGrid=%s）"
+                          "—— 允许绑定用于收集超计划件；该口落格件不入 H7 报文、需人工清出",
                 latticehole.toLocal8Bit().data(), boxcode.toLocal8Bit().data(),
                 excGridBind.toLocal8Bit().data());
             emit logMessage(QString::fromUtf8(
-                "[容器绑定] 格口%1 是异常口/强排口，已拒绝绑定容器%2（异常口不参与容器绑定）")
-                .arg(QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'))).arg(boxcode), true);
-            QJsonObject r;
-            r["code"] = "500";
-            r["message"] = QString("格口%1为异常口/强排口，不支持容器绑定").arg(gridNum);
-            return r;
+                "[容器绑定] 格口%1 是异常口/强排口，已绑定容器%2（该口只收超计划件，需人工清出、不上传WMS）")
+                .arg(QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'))).arg(boxcode));
         }
     }
 
@@ -3689,6 +3837,24 @@ void HttpServer::sendFullbox(const QString& grid)
         }
     }
 
+    // ── ★ 2026-09-14 异常口不做 H7 满箱回传 ──
+    //   异常口 66 收的是超计划件（本就不属于 WMS 计划），一旦按容器上报，
+    //   WMS 侧该波次"实报数量"就会超过计划总数 → 回 [2107632] 无法分配并整条驳回，
+    //   牵连同报文其它正常格口一起不落账。故此处直接跳过：异常口件只留本地异常账 + UI 预警，人工清出。
+    {
+        const QString excGridCfg = ConfigManager::instance()->config().exceptionGrid.trimmed();
+        if (!excGridCfg.isEmpty() && excGridCfg != "0" &&
+            normalizeGridKey(grid) == normalizeGridKey(excGridCfg))
+        {
+            HTTP_LOG_WARN("满箱回传（H7）跳过 格口%s 为异常口(exceptionGrid=%s)：异常口件不入上传报文，请人工清出",
+                grid.toLocal8Bit().data(), excGridCfg.toLocal8Bit().data());
+            emit logMessage(QString::fromUtf8(
+                "[满箱回传] 跳过格口%1（异常口）：该口只收超计划件、不上传WMS，请人工清出")
+                .arg(normalizeGridKey(grid)));
+            return;
+        }
+    }
+
     // ── 步骤3: 获取容器绑定（内存快速路径 → 数据库现查兜底）──
     QString boxCode = lookupGridBoxCode(grid);
 
@@ -3933,6 +4099,17 @@ bool HttpServer::sendFullboxForGrid(const QString& orderCode, const QString& gri
 {
     if (records.isEmpty()) return false;
 
+    // 0. ★ 2026-09-14 异常口不回传（同 sendFullbox：异常口件不属于 WMS 计划，上报会使实报数超计划被整条驳回）
+    {
+        const QString excGridCfg = ConfigManager::instance()->config().exceptionGrid.trimmed();
+        if (!excGridCfg.isEmpty() && excGridCfg != "0" &&
+            normalizeGridKey(grid) == normalizeGridKey(excGridCfg))
+        {
+            HTTP_LOG_WARN("满箱补发 跳过格口%s（异常口，件不上传WMS，请人工清出）", grid.toLocal8Bit().data());
+            return false;
+        }
+    }
+
     // 1. 容器号
     QString boxCode = lookupGridBoxCode(grid);
     if (boxCode.isEmpty())
@@ -4070,6 +4247,15 @@ bool HttpServer::manualFullbox(const QString& grid)
     if (grid.isEmpty())
     {
         emit logMessage("[手动满箱] 请先输入格口号", true);
+        return false;
+    }
+
+    // ★ 2026-09-14 异常口不参与满箱回传（异常口件不属于 WMS 计划，上报会使实报超计划被整条驳回）
+    if (isExceptionGridKey(grid))
+    {
+        HTTP_LOG_INFO("手动满箱 跳过格口%s（异常口/强排口，件不上传WMS）", grid.toLocal8Bit().data());
+        emit logMessage(QString::fromUtf8("[手动满箱] 格口%1 是异常口：该口只收超计划件、不上传WMS，请人工清出")
+            .arg(normalizeGridKey(grid)));
         return false;
     }
 
@@ -4938,6 +5124,7 @@ void HttpServer::onEndReplyFinished(const QString& msgId, bool success, const QS
             m_gridSortedCount.clear();
         }
         clearBoxLandedCount();   // ★ 2026-09-13 计划数封顶计数随波次清理
+        clearGridLandedCount();  // ★ 2026-09-14 按格口落格计数（多格口分配依据）随波次清理
         if (m_pPlcMgr)
             m_pPlcMgr->enableAllGrids();
         m_pendingSkuQuery.clear();

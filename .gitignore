@@ -22,3 +22,5 @@
 *.zip
 *.bak
 release_WcsHttpServer/crash.log
+# 本地编译验证工作区（moc 输出 + cl 编译日志，仅本地语法/编译校验用，不入库）
+/.build_check/

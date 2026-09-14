@@ -79,6 +79,8 @@ private slots:
     // ★ 2026-09-13 需求：超计划预警明细弹窗（落了几件/哪个格口容器/计划几件/多余几件）
     void showOverplanWarningDialog();
     void refreshOverplanWarning();   // 刷新面板「预警」数字与按钮可用态
+    // ★ 2026-09-13 需求：一键满箱回传（对当前所有已绑定容器逐个执行 H7 满箱回传）
+    void onOneKeyFullbox();
 
 private:
     // ★ 2026-09-02 修复"结束任务卡死/闪退"：停止流程阶段状态机
@@ -170,6 +172,8 @@ private:
     QLabel*      m_lblPeakEff      = nullptr;  // ★ 2026-09-07 峰值效率（当日最大，件/时；落库 daily_peak）
     QPushButton* m_btnStartSorting = nullptr;  // ★ 开始分拣按钮（手动触发分拣中状态）
     QPushButton* m_btnViewException= nullptr;  // ★ 2026-09-13 「查看异常」按钮（异常数值右侧）
+    // ★ 2026-09-13 需求：一键满箱回传（对当前所有已绑定容器逐个执行 H7 满箱回传；不影响波次状态机/格口启用/绑定）
+    QPushButton* m_btnOneKeyFullbox= nullptr;
 
     // ──── 容器绑定面板 UI（92格口 6列×16行）────
     QWidget*     m_bindingWidget   = nullptr;  // 绑定状态容器
