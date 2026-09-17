@@ -37,6 +37,10 @@ struct AppConfig
     // ★ 2026-09-05：是否向 RFID 服务端发送心跳包（1=发送 0=不发送）
     int     rfidHeartbeatEnable = 1;                   // 心跳开关（默认发送）
     int     rfidHeartbeatIntervalMs = RFID_HEARTBEAT_INTERVAL_MS;  // 心跳间隔(毫秒, 默认2000=2s)
+    // ★ 2026-09-15：EPC 码识别长度（字符数，默认 24）：识别『A + (长度-1) 位数字』形态
+    //   < 2 = 不启用识别（整串原样使用，回退改造前行为）；非法值保持默认并在 run.log 告警
+    //   改配置点「保存并生效」即热生效（无需重启）
+    int     rfidEpcTruncateLen = RFID_EPC_TRUNCATE_LEN;
 
     // ──── WMS 业务参数 ────
     QString warehouseCode    = WMS_WAREHOUSE_CODE;    // 仓库编码
@@ -104,6 +108,13 @@ struct AppConfig
     int     allocClaimTimeoutMs     = ALLOC_CLAIM_TIMEOUT_MS;    // 认领超时(ms)
     int     allocPlanLogTail        = ALLOC_PLAN_LOG_TAIL;       // 选格成功日志前 N 条逐条
     int     allocPlanLogStep        = ALLOC_PLAN_LOG_STEP;       // 之后每 N 条一条
+
+    // ──── ★ 2026-09-17 界面页显隐开关（现场要求：可隐藏「实时面板」「计划分配表」）────
+    //   ★★ 只在**启动时读取一次**（改 XML 需重启才生效 —— 现场要求"不立刻生效"）★★
+    //   · false（默认）= 该页不加入标签页；实时面板连表格都不创建 → 隐藏期间零开销
+    //   · true  = 与改造前一致，页面正常显示
+    bool    showLivePage      = UI_SHOW_LIVE_PAGE_DEFAULT;        // 实时面板页（落格反馈数据）
+    bool    showPlanAllocPage = UI_SHOW_PLAN_ALLOC_PAGE_DEFAULT;  // 计划分配表页
 
     // ──── API 路由（WMS 调用 WCS 的接口路径，可配置以适应 WMS 路径变更）────
     QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① 波次下发（H4 WMS推送波次数据）(POST)

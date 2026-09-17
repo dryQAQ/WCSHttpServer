@@ -62,6 +62,24 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "rfidPushServerPort") rfidPushServerPort = xml.readElementText().toInt();  // ★ 2026-09-04 RFID 推送服务端端口
         else if (name == "rfidHeartbeatEnable") rfidHeartbeatEnable = xml.readElementText().toInt(); // ★ 2026-09-05 心跳开关(1=发送 0=不发送)
         else if (name == "rfidHeartbeatIntervalMs") rfidHeartbeatIntervalMs = xml.readElementText().toInt(); // ★ 2026-09-05 心跳间隔(ms)
+        // ★ 2026-09-15 EPC 码识别长度（默认 24 = A + 23 位数字）
+        //   非法值（空/非数字/负数）保持默认 24 并告警——避免误配成"不识别"导致长串 EPC 查不到绑定
+        else if (name == "rfidEpcTruncateLen")
+        {
+            const QString raw = xml.readElementText().trimmed();
+            bool okNum = false;
+            const int v = raw.toInt(&okNum);
+            if (okNum && v >= 0 && v <= 128)
+            {
+                rfidEpcTruncateLen = v;
+            }
+            else
+            {
+                rfidEpcTruncateLen = RFID_EPC_TRUNCATE_LEN;
+                LOG_WARN("[配置] rfidEpcTruncateLen 取值非法(\"%s\")，已保持默认 %d（识别『A + %d 位数字』）",
+                    raw.toLocal8Bit().constData(), RFID_EPC_TRUNCATE_LEN, RFID_EPC_TRUNCATE_LEN - 1);
+            }
+        }
         else if (name == "warehouseCode")      warehouseCode = xml.readElementText();
         else if (name == "goodsOwner")         goodsOwner = xml.readElementText();
         else if (name == "waveTimeoutMin")     waveTimeoutMin = xml.readElementText().toInt();
@@ -113,6 +131,9 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "allocClaimTimeoutMs")     allocClaimTimeoutMs = xml.readElementText().toInt();
         else if (name == "allocPlanLogTail")        allocPlanLogTail = xml.readElementText().toInt();
         else if (name == "allocPlanLogStep")        allocPlanLogStep = xml.readElementText().toInt();
+        // ★ 2026-09-17 界面页显隐（仅在启动时读取一次；改 XML 需重启生效）
+        else if (name == "showLivePage")            showLivePage = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "showPlanAllocPage")       showPlanAllocPage = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "binding")
         {
             // 容器绑定: <binding grid="00001">BOX001</binding>
@@ -186,6 +207,9 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("rfidHeartbeatEnable", QString::number(rfidHeartbeatEnable));
     xml.writeComment(" 心跳发送间隔（毫秒，默认2000=2秒） ");
     xml.writeTextElement("rfidHeartbeatIntervalMs", QString::number(rfidHeartbeatIntervalMs));
+    xml.writeComment(" ★ EPC 码识别长度（字符数，默认24）：只识别『A + (长度-1) 位数字』形态，"
+                     "与开头是不是 A101 无关；<2 = 不识别（整串原样使用）。原始报文另在日志/界面/rfid_raw 表留痕 ");
+    xml.writeTextElement("rfidEpcTruncateLen", QString::number(rfidEpcTruncateLen));
 
     // ──── WMS 业务参数 ────
     xml.writeComment(" 仓库编码 ");
@@ -262,6 +286,12 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("allocPlanLogTail",        QString::number(allocPlanLogTail));
     xml.writeComment(" 之后每 N 条输出一条（异常/超计划/搬迁/兜底日志一律逐条保留） ");
     xml.writeTextElement("allocPlanLogStep",        QString::number(allocPlanLogStep));
+
+    // ──── ★ 2026-09-17 界面页显隐（现场要求：可隐藏「实时面板」「计划分配表」）────
+    xml.writeComment(" ★ 实时面板页是否显示（false=隐藏该页，默认 false）。★★ 仅启动时读取一次：改这里要重启程序才生效 ★★ ");
+    xml.writeTextElement("showLivePage",            showLivePage ? "true" : "false");
+    xml.writeComment(" ★ 计划分配表页是否显示（false=隐藏该页，默认 false）。★★ 仅启动时读取一次：改这里要重启程序才生效 ★★ ");
+    xml.writeTextElement("showPlanAllocPage",       showPlanAllocPage ? "true" : "false");
 
     // ──── S7 分拣增强配置 ────
     xml.writeComment(" EPC 任务内防重（true/false） ");
@@ -342,6 +372,16 @@ bool ConfigManager::load()
     }
 
     bool ok = m_config.loadFromFile(configPath);
+
+    // ★ 2026-09-15 配置兜底：EPC 识别长度（XML 缺失或非法时保持默认 24，避免误配成"不识别"
+    //   导致超长串 EPC 查不到绑定）。启动横幅会打印当前生效口径，现场一眼可确认。
+    if (m_config.rfidEpcTruncateLen < 0 || m_config.rfidEpcTruncateLen > 128)
+    {
+        LOG_WARN("[配置] rfidEpcTruncateLen=%d 越界，已回到默认 %d",
+            m_config.rfidEpcTruncateLen, RFID_EPC_TRUNCATE_LEN);
+        m_config.rfidEpcTruncateLen = RFID_EPC_TRUNCATE_LEN;
+    }
+
     m_seenHash = configFileHash(configPath);       // ★ 记录本次加载所见文件内容
     LOG_INFO("[配置] 配置文件已加载: %s（%s）", configPath.toLocal8Bit().constData(), ok ? "成功" : "失败");
     return ok;

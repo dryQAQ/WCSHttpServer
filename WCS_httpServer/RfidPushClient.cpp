@@ -1,4 +1,5 @@
 #include "RfidPushClient.h"
+#include "EpcCode.h"     // ★ 2026-09-15 EPC 码识别（A + N-1 位数字；单一实现源）
 #include "LogService.h"
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -206,16 +207,19 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
 
         if (!pureHeartbeat)
         {
-            bool truncated = (raw.size() > 512);
-            QByteArray head = raw.left(512);
+            // ★ 2026-09-15 原始报文留痕：取消原 512 字节截断——现场排查需要完整原文
+            //   （仅对单次 >64KB 的异常块截断并明确标注，防止日志被异常数据撑爆）
+            const int kMaxRawLog = 64 * 1024;
+            bool truncated = (raw.size() > kMaxRawLog);
+            QByteArray head = truncated ? raw.left(kMaxRawLog) : raw;
             RFID_INFO("[原始报文] conn=%llu len=%d hex=%s%s",
                       (unsigned long long)dwConnID, iLength,
                       head.toHex(' ').constData(),
-                      truncated ? " ...(截断)" : "");
+                      truncated ? " ...(超64KB已截断)" : "");
             RFID_INFO("[原始报文] conn=%llu text=%s%s",
                       (unsigned long long)dwConnID,
                       QString::fromUtf8(head).toLocal8Bit().constData(),
-                      truncated ? " ...(截断)" : "");
+                      truncated ? " ...(超64KB已截断)" : "");
         }
     }
 
@@ -292,6 +296,13 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
 
             QByteArray content = m_recvBuffer.mid(1, endBrace - 1);
             m_recvBuffer.remove(0, endBrace + 1);
+
+            // ★ 2026-09-15 原始报文留痕：合成"整帧原文"（含帧头 { 、帧尾 } 与协议字面帧尾 0D）
+            //   —— 帧尾在本步会被 stripFrameTail 剥离，故必须在剥离前取下来拼回
+            QByteArray frameTail;
+            if (m_recvBuffer.startsWith("0D")) frameTail = "0D";
+            const QString frameRaw = QString::fromUtf8("{" + content + "}" + frameTail);
+
             stripFrameTail(m_recvBuffer);
 
             // ── 解析 content：流水号|设备编码|epc ──
@@ -341,19 +352,65 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
                               seq.toLocal8Bit().constData());
             }
 
-            // ── 无条码帧：EPC 未读到（占位 NOREAD），仅记录不处理，不进入分拣 ──
-            if (epc.isEmpty() || epc.compare("NOREAD", Qt::CaseInsensitive) == 0)
+            // ★ 2026-09-15 EPC 码识别（需求：按配置长度识别，默认『A + 23 位数字』共 24 位）
+            //   识别前原文保留在 epcRaw；形态不符时**不猜**（按原文继续 + 告警），原文另有留痕可查
+            const QString epcRaw   = epc;
+            bool          noread   = false;
+            bool          normalized = false;
             {
-                RFID_INFO("未读到EPC(NOREAD) seq=%s car=%s — 仅记录，不进入分拣",
-                          seq.toLocal8Bit().constData(), carNum.toLocal8Bit().constData());
-                continue;
+                // ── 无条码帧：EPC 未读到（占位 NOREAD）→ 仅留痕，不进入分拣 ──
+                if (epc.isEmpty() || epc.compare("NOREAD", Qt::CaseInsensitive) == 0)
+                {
+                    noread = true;
+                    epc.clear();   // ★ 识别结果置空：下游按"空 EPC 不进入分拣"处理（原文在 epcRaw/raw 中）
+                    RFID_INFO("未读到EPC(NOREAD) seq=%s car=%s 原始报文=%s —— 仅留痕，不进入分拣",
+                              seq.toLocal8Bit().constData(), carNum.toLocal8Bit().constData(),
+                              frameRaw.toLocal8Bit().constData());
+                }
+                else if (m_epcTruncateLen >= 2)
+                {
+                    QString cut;
+                    int     pos = -1;
+                    if (EpcCode::extract(epc, m_epcTruncateLen, cut, &pos))
+                    {
+                        normalized = (cut != epc);
+                        if (normalized)
+                        {
+                            const int cutTail = epc.size() - (pos + cut.size());
+                            RFID_WARN("EPC已识别归一 seq=%s car=%s 原文(%d位)=%s → EPC(%d位)=%s "
+                                      "丢弃前缀(%d)=%s 丢弃后缀(%d)=%s 原始报文=%s",
+                                      seq.toLocal8Bit().constData(), carNum.toLocal8Bit().constData(),
+                                      epc.size(), epc.toLocal8Bit().constData(),
+                                      cut.size(), cut.toLocal8Bit().constData(),
+                                      pos, epc.left(pos).toLocal8Bit().constData(),
+                                      cutTail, epc.right(cutTail).toLocal8Bit().constData(),
+                                      frameRaw.toLocal8Bit().constData());
+                        }
+                        epc = cut;
+                    }
+                    else
+                    {
+                        // 串中不含该形态 → 不臆造 EPC，按原文继续，原文可查
+                        RFID_WARN("EPC未识别(%d位=A+%d位数字) seq=%s car=%s 原文=%s 原始报文=%s —— 按原文继续处理",
+                                  m_epcTruncateLen, m_epcTruncateLen - 1,
+                                  seq.toLocal8Bit().constData(), carNum.toLocal8Bit().constData(),
+                                  epc.toLocal8Bit().constData(), frameRaw.toLocal8Bit().constData());
+                    }
+                }
+                // m_epcTruncateLen < 2 = 关闭识别（整串原样使用，回退改造前行为）
             }
 
-            // ── 组装与 handleRfidCarNumReport 兼容的 JSON（barcode 恒空 → 触发 HTTP 绑定查询）──
+            // ── 组装与 handleRfidCarNumReport 兼容的 JSON ──
+            //   ★ barcode 恒空 → 触发 HTTP 绑定查询；★ epcRaw/raw 供下游三层留痕
             QJsonObject item;
-            item["epc"] = epc;
-            item["carNum"] = carNum;
-            item["seq"] = seq;   // ★ 2026-09-05 推送流水号（随数据进入下游保存/日志追溯）
+            item["epc"]        = epc;          // 识别归一后（参与分拣的 EPC）
+            item["epcRaw"]     = epcRaw;       // 识别前原文
+            item["carNum"]     = carNum;
+            item["seq"]        = seq;          // ★ 2026-09-05 推送流水号（随数据进入下游保存/日志追溯）
+            item["devCode"]    = devCode;      // 设备编码（两段帧为空）
+            item["raw"]        = frameRaw;     // 整帧原文（含 {} 与字面帧尾 0D）
+            item["normalized"] = normalized;   // 是否发生识别归一
+            item["noread"]     = noread;       // NOREAD 帧（仅留痕，不进入分拣）
             QJsonArray dataArr;
             dataArr.append(item);
             QJsonObject body;
@@ -362,9 +419,15 @@ EnHandleResult RfidPushClient::OnReceive(ITcpClient* pSender, CONNID dwConnID,
             //   供 HttpServer 计算"主线程事件滞后"（实时面板是否拖慢主链路的直接证据）
             body["recvMs"] = (double)QDateTime::currentMSecsSinceEpoch();
 
-            RFID_INFO("[解析] 数据帧 seq=%s car=%s epc=%s → 交业务处理",
-                      seq.toLocal8Bit().constData(), carNum.toLocal8Bit().constData(),
-                      epc.toLocal8Bit().constData());
+            // ★ 逐帧日志带识别前原文（未归一/未识别时为空串，不重复打印）
+            const QByteArray epcRawNote = (normalized && !epcRaw.isEmpty())
+                ? QString("(原文 %1)").arg(epcRaw).toLocal8Bit()
+                : QByteArray();
+            RFID_INFO("[解析] 数据帧 seq=%s dev=%s car=%s epc=%s%s → 交业务处理 原始报文=%s",
+                      seq.toLocal8Bit().constData(), devCode.toLocal8Bit().constData(),
+                      carNum.toLocal8Bit().constData(), epc.toLocal8Bit().constData(),
+                      epcRawNote.constData(),
+                      frameRaw.toLocal8Bit().constData());
             emit rfidPushReceived(body);
         }
     }

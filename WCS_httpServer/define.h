@@ -269,6 +269,45 @@
 #define NOT_READY_RETRY_INTERVAL_MS 5000     // 未就绪重试间隔(ms)，默认5秒
 #define EPC_CACHE_ALERT_THRESHOLD   10000    // EpcCache 条目数告警阈值（健康日志观测：理论容量=推送速率×300sTTL，超阈值预警）
 #define PLC_SEND_TIMEOUT_MS         1000     // RFID推送→PLC发送超时阈值(ms)，超过则入异常格口（现场实时性要求≤1s）
+// ★ 2026-09-16 双读判定窗口(ms)：同一 EPC 再次推送时，只有"carNum 相同且在该窗口内"
+//   才视为同一件的双读（保留首次 receivedAt，防止重复读把 1s 超时窗口起点一直推后）；
+//   carNum 变化 或 超出该窗口 → 视为新件/新一轮，重新起算。
+//   背景：格口满箱未重绑导致发送失败的件，其缓存条目会长时间留存，若沿用旧 receivedAt，
+//   下一次推送（实测间隔 142s）会把间隔累加进 1s 窗口，误报 elapsed=142457ms 的"发送超时"。
+#define DOUBLE_READ_WINDOW_MS       3000     // 双读判定窗口(ms)
+// ★ 2026-09-16 「根因优先」保鲜期(ms)：某 EPC 因发送失败入异常终态后，在此时长内
+//   若同一 EPC 再次推送并再次判定超时，异常记录沿用原根因（如"无可用格口"），
+//   不再单独记一条"发送超时"把根因覆盖。取 300s（与 EpcCache TTL 同量级），
+//   覆盖"格口满箱积压 → 同件再次上线"的现场节奏（实测间隔 142s）。
+#define EPC_TERMINAL_EXCEPTION_KEEP_MS 300000
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ EPC 码识别（RFID 推送报文中的 EPC 字段）
+//
+//   客户口径：『不管开头是不是 A101，只认识 A + 23 位数字组成的 EPC 码』
+//     · 形态 = 大写字母 'A' + (长度-1) 位 ASCII 数字；长度 = rfidEpcTruncateLen（XML 可配）
+//     · 默认 24 → 'A' + 23 位数字
+//     · 在推送串中**定位**该形态（不是简单取前 N 位、也不假定它在串首）：
+//         尾部附加数据（A10125010200876264980177 + 35303032）→ 正确取出前 24 位
+//         头部杂串（0000A10125010200876264980177）           → 也能定位到真实 EPC
+//     · 串中不含该形态时**不猜**：按原文继续处理并在 run.log 告警（原文另有留痕可查）
+//     · < 2 = 不启用识别（整串原样使用，回退改造前行为）
+//   单一实现源：WCS_httpServer/EpcCode.h（推送侧与绑定查询响应侧共用，改一处全生效）
+// ═══════════════════════════════════════════════════════════════════════════
+#define RFID_EPC_TRUNCATE_LEN       24       // EPC 码长度（字符数）；识别『A + (长度-1) 位数字』；默认 24
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ RFID 原始推送报文留痕（需求：保留 RFID 推送的原始报文）
+//
+//   三层互为备份：① run.log（[原始报文] 整块 + 逐帧行）② 界面（实时面板悬停 / EPC 全信息弹窗）
+//                ③ 数据库 rfid_raw 表（可按识别后 EPC / 识别前 EPC 双通道回查，长期追溯）
+//   落库策略（不影响 RFID→PLC 主链路）：业务入口只入队（O(1) 不写盘），
+//     满 RFID_RAW_FLUSH_MAX_ROWS 帧或每 RFID_RAW_FLUSH_INTERVAL_MS 落一次，退出前补写残留。
+// ═══════════════════════════════════════════════════════════════════════════
+#define RFID_RAW_FLUSH_MAX_ROWS     200      // 攒够 N 帧立即落库（单事务批量写入）
+#define RFID_RAW_FLUSH_INTERVAL_MS  1000     // 未攒满时的落库周期(ms)
+#define RFID_RAW_PENDING_MAX_ROWS   20000    // 待写队列上限（超限丢最旧并告警，防 DB 写不动时内存膨胀）
+#define RFID_RAW_RETAIN_DAYS        7        // 原始报文保留天数（启动清一次 + 跨天空闲拍清一次）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ★ 2026-09-11 同波次「重扫重投」配置（拿起已落格的件重新上料 → 仍按原格口下发）
@@ -324,6 +363,20 @@
 // ──── 波次明细落库（异步）可靠性参数（2026-09-04 P0修复）────
 #define WAVE_PERSIST_RETRY_MAX        3        // 波次明细落库最大重试次数（本地SQLite失败概率极低，重试后仍失败写异常表+保持CREATED）
 #define WAVE_PERSIST_RETRY_INTERVAL_MS 1000    // 波次明细落库重试间隔(ms)
+// ★ 2026-09-15 切出中的波次号保留时长：切出后内存波次为空，此窗口内到达的 H6 绑定
+//   记为"刚切出的波次"（而不是空波次），避免绑定归属丢失导致该波次切回时取不回绑定
+#define WAVE_SWITCH_OUT_KEEP_MS       120000   // 120s（足够覆盖 H4 与 H6 之间的下发间隔）
+
+// ──── ★ 2026-09-17 界面页显隐开关（现场要求：可隐藏「实时面板」「计划分配表」两页）────
+//   ★★ 只在**启动时读取一次**：改了 config/http_server.xml 必须**重启程序**才生效
+//      （现场要求"不立刻生效"：运行中改 XML 不会让页面突然出现/消失）。
+//   ★ 改法：关闭程序 → 编辑 <showLivePage> / <showPlanAllocPage> → 启动程序。
+//     程序运行中改也会被下次启动读到，但**不会即时生效**；配置自动保存采用
+//     "先比对外部改动再重载"策略（ConfigManager::save），不会覆盖手改内容。
+//   ★ 置 false（默认）时：页面不加入标签页；实时面板连表都不创建 →
+//     所有更新路径的 `if (!m_tblLive)` 守卫直接跳过 → 隐藏期间**零开销**。
+#define UI_SHOW_LIVE_PAGE_DEFAULT        false  // 实时面板页（默认隐藏）
+#define UI_SHOW_PLAN_ALLOC_PAGE_DEFAULT  false  // 计划分配表页（默认隐藏）
 
 // ──── 建表：分拣记录表 ────
 // 创建分拣记录主表，存储每条 PLC 落格反馈的完整信息
@@ -421,6 +474,49 @@
     "WHERE barcode = ? AND TRIM(boxcode) <> '' " \
     "  AND TRIM(boxcode) <> TRIM(?) COLLATE NOCASE " \
     "ORDER BY id ASC LIMIT ?"
+// ═════════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-16 现场需求③「分拣记录查询：结合日期条件筛选」——带日期区间的查询变体
+//
+//   口径（客户确认）：
+//     · 区间**必须生效**（界面上没有"全部/不筛日期"选项），默认起=今天−7天、止=今天；
+//     · 命中列 = sorting_records.sort_time（落格时间），字符串区间比较
+//       `>= 'yyyy-MM-dd 00:00:00' AND <= 'yyyy-MM-dd 23:59:59'`，与 SQL_QUERY_BY_TIME 完全一致，
+//       走既有 idx_sort_time 索引；
+//     · "待分拣"（return_wave_item 计划行）**没有落格时间，不受日期筛选影响**——
+//       因此 SQL_QUERY_PENDING_BY_BARCODE / SQL_QUERY_ALL_PENDING 刻意**不**加区间；
+//     · 派生量（格口汇总计数、SKU 去重 EPC、容器跨容器反查）一律基于**过滤后**的结果。
+//
+//   字段序与 SQL_SELECT_FIELDS 保持完全一致（解析处字段下标不变），只追加 WHERE 条件与参数。
+//   绑定顺序（在各自原宏的参数之后追加两枚）：... , fromDate, toDate, ...
+// ═════════════════════════════════════════════════════════════════════════════
+// 按格口 + 日期区间：?1=归一内部key  ?2=用户原始输入  ?3=归一内部key(整数比较)  ?4=from  ?5=to  ?6=limit
+#define SQL_QUERY_BY_GRID_RANGE \
+    SQL_SELECT_FIELDS "FROM sorting_records " \
+    "WHERE (grid_num = ? " \
+    "   OR grid_num = ? " \
+    "   OR CAST(grid_num AS INTEGER) = CAST(? AS INTEGER)) " \
+    "  AND sort_time >= ? AND sort_time <= ? " \
+    "ORDER BY id DESC LIMIT ?"
+// 按 SKU + 日期区间：?1=sku  ?2=from  ?3=to  ?4=limit
+#define SQL_QUERY_BY_SKU_RANGE \
+    SQL_SELECT_FIELDS "FROM sorting_records " \
+    "WHERE TRIM(sku) = TRIM(?) COLLATE NOCASE " \
+    "  AND sort_time >= ? AND sort_time <= ? " \
+    "ORDER BY id DESC LIMIT ?"
+// 按容器号 + 日期区间：?1=boxcode  ?2=from  ?3=to  ?4=limit
+#define SQL_QUERY_BY_BOXCODE_RANGE \
+    SQL_SELECT_FIELDS "FROM sorting_records " \
+    "WHERE TRIM(boxcode) = TRIM(?) COLLATE NOCASE " \
+    "  AND sort_time >= ? AND sort_time <= ? " \
+    "ORDER BY id ASC LIMIT ?"
+// 按容器号配套反查（同区间）：判断"同一 EPC 是否被分到过别的容器"
+//   绑定：?1=EPC  ?2=本容器（排除自身）  ?3=from  ?4=to  ?5=limit
+#define SQL_QUERY_BOXCODES_BY_EPC_RANGE \
+    "SELECT DISTINCT TRIM(boxcode) FROM sorting_records " \
+    "WHERE barcode = ? AND TRIM(boxcode) <> '' " \
+    "  AND TRIM(boxcode) <> TRIM(?) COLLATE NOCASE " \
+    "  AND sort_time >= ? AND sort_time <= ? " \
+    "ORDER BY id ASC LIMIT ?"
 // ★ 2026-09-09 需求2：全格口汇总（每格一行：格口号/分拣件数/SKU数/最近容器号/最近分拣时间）
 // ★ 2026-09-10 归一：按格口整数归组（"7"/"007" 不再重复成两行），显示统一为 3 位 key
 #define SQL_QUERY_GRID_SUMMARY \
@@ -434,6 +530,24 @@
     "    ORDER BY s2.id DESC LIMIT 1) AS box, " \
     "  MAX(s.sort_time) AS last_t " \
     "FROM sorting_records s " \
+    "GROUP BY CASE WHEN CAST(s.grid_num AS INTEGER) > 0 " \
+    "              THEN printf('%03d', CAST(s.grid_num AS INTEGER)) ELSE s.grid_num END " \
+    "ORDER BY 1"
+// ★ 2026-09-16 需求③：全格口汇总 + 日期区间（计数/SKU数/最近容器号/最近分拣时间**都只反映区间内**）
+//   绑定：?1=from  ?2=to
+#define SQL_QUERY_GRID_SUMMARY_RANGE \
+    "SELECT " \
+    "  CASE WHEN CAST(s.grid_num AS INTEGER) > 0 " \
+    "       THEN printf('%03d', CAST(s.grid_num AS INTEGER)) ELSE s.grid_num END AS grid_key, " \
+    "  COUNT(*) AS cnt, COUNT(DISTINCT s.sku) AS sku_cnt, " \
+    "  (SELECT s2.boxcode FROM sorting_records s2 " \
+    "    WHERE (s2.grid_num = s.grid_num " \
+    "       OR CAST(s2.grid_num AS INTEGER) = CAST(s.grid_num AS INTEGER)) " \
+    "      AND s2.sort_time >= ? AND s2.sort_time <= ? " \
+    "    ORDER BY s2.id DESC LIMIT 1) AS box, " \
+    "  MAX(s.sort_time) AS last_t " \
+    "FROM sorting_records s " \
+    "WHERE s.sort_time >= ? AND s.sort_time <= ? " \
     "GROUP BY CASE WHEN CAST(s.grid_num AS INTEGER) > 0 " \
     "              THEN printf('%03d', CAST(s.grid_num AS INTEGER)) ELSE s.grid_num END " \
     "ORDER BY 1"
@@ -746,6 +860,16 @@
     "WHERE e.order_code = ? AND e.epc <> '' " \
     "  AND NOT EXISTS (SELECT 1 FROM sorting_records s " \
     "                  WHERE s.order_code = e.order_code AND s.barcode = e.epc)"
+// ★ 2026-09-15 查询某波次全部已落格明细（按落格先后正序）——切回波次时补齐"已落格进度"的唯一持久权威
+//   取数：sorting_records（PLC 落格反馈写入），带落格当时的容器号/SKU/库位/时间
+//   返回**明细行本身**，不做去重：去重口径因目标结构而异，由调用方按各自键处理——
+//     · H7 满箱明细 / 落格去重集合 → key = (格口, EPC)（换箱重投时旧箱件不再进明细）
+//     · 计划额度 / 封顶计数          → key = (格口, SKU, EPC)（跨容器累计，换箱不重置额度）
+//   ★ 历史库中的重复行（09-14 之前写入）由调用方按上述键合并，不会重复计数。
+#define SQL_SELECT_LANDINGS_BY_ORDER \
+    "SELECT s.barcode, s.sku, s.grid_num, s.boxcode, s.volu, s.sort_time FROM sorting_records s " \
+    "WHERE s.order_code = ? AND s.barcode <> '' " \
+    "ORDER BY s.rowid ASC LIMIT ?"
 // 查询某波次是否存在成功满箱回传（H7）
 #define SQL_SELECT_HAS_SUCCESS_FULLBOX \
     "SELECT COUNT(*) FROM outbox_fullbox WHERE order_code = ? AND status = 'success'"
@@ -777,6 +901,75 @@
     "INSERT OR REPLACE INTO daily_peak (stat_date, peak_per_minute, peak_per_hour, updated_at) VALUES (?, ?, ?, ?)"
 #define SQL_SELECT_DAILY_PEAK \
     "SELECT peak_per_minute FROM daily_peak WHERE stat_date = ?"
+
+// ──── ★ RFID 原始推送报文留痕表（rfid_raw）────
+// 逐帧结构化留痕，可长期追溯、可按 EPC 反查、可导出核对
+// time       — 落库时间 yyyy-MM-dd HH:mm:ss
+// epc        — **识别归一后**用于分拣的 EPC（空 = 该帧为 NOREAD 未读到标签）
+// epc_raw    — **识别前**的 EPC 原文（未归一/未识别时与 epc 相同）
+// car_num    — 帧内解析出的小车号（流水号中的数字，如 SN0098 → 98）
+// seq        — 帧内流水号原文（如 SN0098）
+// dev_code   — 帧内设备编码（如 01；两段帧天然为空）
+// raw_frame  — RFID 原样推送的整帧报文（含帧头 {、帧尾 } 与协议字面帧尾 0D）
+// bytes      — 整帧字节数
+// noread     — 1 = NOREAD 帧（仅留痕，不进入分拣）
+// 注：所有文本列 NOT NULL + 默认空串——Qt 会把 null QString 绑定为 SQL NULL，
+//     不做空串归一就会 "NOT NULL constraint failed" 而静默丢帧
+#define SQL_CREATE_TABLE_RFID_RAW \
+    "CREATE TABLE IF NOT EXISTS rfid_raw (" \
+    "  id        INTEGER PRIMARY KEY AUTOINCREMENT," \
+    "  time      TEXT    NOT NULL DEFAULT ''," \
+    "  epc       TEXT    NOT NULL DEFAULT ''," \
+    "  epc_raw   TEXT    NOT NULL DEFAULT ''," \
+    "  car_num   TEXT    NOT NULL DEFAULT ''," \
+    "  seq       TEXT    NOT NULL DEFAULT ''," \
+    "  dev_code  TEXT    NOT NULL DEFAULT ''," \
+    "  raw_frame TEXT    NOT NULL DEFAULT ''," \
+    "  bytes     INTEGER NOT NULL DEFAULT 0," \
+    "  noread    INTEGER NOT NULL DEFAULT 0" \
+    ")"
+// 索引：按识别后 EPC / 识别前 EPC 双通道回查 + 按时间倒序取最近帧 + 超期清理
+#define SQL_CREATE_INDEX_RFID_RAW_EPC \
+    "CREATE INDEX IF NOT EXISTS idx_rfid_raw_epc ON rfid_raw(epc)"
+#define SQL_CREATE_INDEX_RFID_RAW_EPC_RAW \
+    "CREATE INDEX IF NOT EXISTS idx_rfid_raw_epc_raw ON rfid_raw(epc_raw)"
+#define SQL_CREATE_INDEX_RFID_RAW_TIME \
+    "CREATE INDEX IF NOT EXISTS idx_rfid_raw_time ON rfid_raw(time)"
+// 插入一帧原始报文（批量写入用，事务内逐帧 exec）
+#define SQL_INSERT_RFID_RAW \
+    "INSERT INTO rfid_raw (time, epc, epc_raw, car_num, seq, dev_code, raw_frame, bytes, noread) " \
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+// 按 EPC 回查（识别后与识别前两条通道都命中，便于核对"丢弃了什么"），按 id 倒序 = 最近在前
+#define SQL_QUERY_RFID_RAW_BY_EPC \
+    "SELECT id, time, epc, epc_raw, car_num, seq, dev_code, raw_frame, bytes, noread " \
+    "FROM rfid_raw WHERE epc = ? OR epc_raw = ? ORDER BY id DESC LIMIT ?"
+// 超期清理（只删除保留期外的行）
+#define SQL_CLEANUP_RFID_RAW \
+    "DELETE FROM rfid_raw WHERE time <> '' AND time < ?"
+// 表内总行数（页脚展示用）
+#define SQL_COUNT_RFID_RAW \
+    "SELECT COUNT(*) FROM rfid_raw"
+
+// ★ 2026-09-15 波次列表批量统计（3 条 GROUP BY 覆盖全部波次，替代"每波次 3 次查询"）
+//   口径与原逐波次统计严格一致：成功='success'、失败='failed'、其余(pending/cancelled/未知)='待发'
+#define SQL_SELECT_FULLBOX_STATUS_COUNT_ALL \
+    "SELECT order_code, " \
+    "  SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS c_success, " \
+    "  SUM(CASE WHEN status = 'failed'  THEN 0 ELSE (CASE WHEN status = 'success' THEN 0 ELSE 1 END) END) AS c_pending, " \
+    "  SUM(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS c_failed " \
+    "FROM outbox_fullbox WHERE order_code <> '' GROUP BY order_code"
+#define SQL_SELECT_END_STATUS_COUNT_ALL \
+    "SELECT order_code, " \
+    "  SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS c_success, " \
+    "  SUM(CASE WHEN status = 'failed'  THEN 0 ELSE (CASE WHEN status = 'success' THEN 0 ELSE 1 END) END) AS c_pending, " \
+    "  SUM(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS c_failed " \
+    "FROM outbox_end WHERE order_code <> '' GROUP BY order_code"
+// 未闭环异常去重 EPC 数（与 getOpenExceptions 口径一致：仅 PLC 判定失败两类 + handled=0 + 按 EPC 去重）
+#define SQL_SELECT_PENDING_EXC_COUNT_ALL \
+    "SELECT order_code, COUNT(DISTINCT epc) FROM exception_record " \
+    "WHERE order_code <> '' AND handled = 0 AND epc <> '' " \
+    "  AND type IN ('plc_no_grid', 'plc_info_incomplete') " \
+    "GROUP BY order_code"
 
 // ──── 波次明细操作 ────
 // 插入明细行
@@ -820,20 +1013,109 @@
 // 查询全部活跃绑定（程序重启后加载内存/UI 用）
 #define SQL_SELECT_ALL_ACTIVE_BINDS \
     "SELECT grid_num, boxcode, order_code, bind_time FROM grid_box_bind WHERE active = 1 ORDER BY grid_num ASC"
-// ★ 2026-09-06 按波次查询绑定快照：每格取该波次最近一条绑定（含已归档），供波次切换恢复格口绑定视图
+// ★ 2026-09-06 按波次查询绑定快照：每格取该波次最新一条记录（含已归档）
+//   —— 追溯口径：回答"该波次当时用过哪些容器"，**不**按 active 过滤
+//   ★ 2026-09-17：补 boxcode <> '' —— 空箱号不是有效绑定（当前无墓碑行，纯防御），
+//     并且该查询已升级为**切回波次恢复绑定的主口径**（见 SQL_SELECT_LAST_BINDS_BY_ORDER 注释）
 #define SQL_SELECT_BINDS_BY_ORDER \
     "SELECT g1.grid_num, g1.boxcode FROM grid_box_bind g1 " \
-    "WHERE g1.order_code = ? AND g1.rowid = " \
+    "WHERE g1.order_code = ? AND g1.boxcode <> '' AND g1.rowid = " \
     "  (SELECT MAX(g2.rowid) FROM grid_box_bind g2 WHERE g2.grid_num = g1.grid_num AND g2.order_code = ?) " \
     "ORDER BY CAST(g1.grid_num AS INTEGER) ASC"
-// ★ 2026-09-07 每格最近一次绑定记录（无论 active）：无当前绑定时"沿用上一波次绑定"用
-#define SQL_SELECT_LAST_KNOWN_BINDS \
+// ★ 2026-09-15 按波次查询该波次的容器绑定（"本波次最后一条仍生效"的确认口径）
+//   口径：**每格在全表中取最后一条记录**，且该记录属于本波次、容器号非空。
+//   —— 回答"本波次结束后该格口是否仍绑着本波次的箱子"。
+//   ★★ 2026-09-17 口径修正（现场取证，见 docs/格口绑定波次归属_根因与修复_20260917.md）：
+//     本查询**不再是切回恢复绑定的主口径**。原因：只要该格口之后被任何一个更晚的波次绑过，
+//     本查询就返回 0 行（实测真实库 14 个历史波次里 13 个返回 0 行）；而它一旦"部分命中"
+//     （一部分格口最后一条属本波次、另一部分属更晚波次），调用方若据此整体替换内存绑定，
+//     就会丢掉其余格口 —— 现场"切回后面板被清空"的来源之一。
+//     主口径已改为 SQL_SELECT_LAST_BINDS_BY_ORDER（每格取**本波次内**最后一条），
+//     本查询只用于打"是否已被更晚波次覆盖"的日志标签 / 命中数统计。
+//   ★ 刻意**不按 active 过滤**：关闭软件/启动新任务会把绑定归档（active=0 + unbind_time 留痕），
+//     若按 active 过滤，归档后就取不回绑定，"清空绑定关系"与"切回恢复绑定"将无法并存。
+//   ★ 也不看 unbind_time：归档时间只作留痕，绑定归属由 order_code + 每格最后一条决定。
+//   有界性：每格全表只可能命中一行 → 结果规模 ≤ 格口数(66)。旧行由 DBA 侧按需清理。
+#define SQL_SELECT_BINDS_BY_ORDER_ACTIVE \
     "SELECT g1.grid_num, g1.boxcode FROM grid_box_bind g1 " \
-    "WHERE g1.rowid = (SELECT MAX(g2.rowid) FROM grid_box_bind g2 WHERE g2.grid_num = g1.grid_num) " \
+    "WHERE g1.order_code = ? AND g1.boxcode <> '' AND g1.rowid = " \
+    "  (SELECT MAX(g2.rowid) FROM grid_box_bind g2 WHERE g2.grid_num = g1.grid_num) " \
     "ORDER BY CAST(g1.grid_num AS INTEGER) ASC"
+
+// ★ 2026-09-17 按波次查询"该波次自己绑过哪些格口、每格最后绑的是哪个容器"（切回恢复绑定的主口径）
+//   口径：每格取**本波次内**最后一条记录（boxcode 非空，含已被更晚波次覆盖的格口）。
+//     · 本波次绑过的格口 → 命中（含换箱后的最新箱）；
+//     · 本波次从未绑过的格口 → 不返回（保持未绑定，不臆造）；
+//     · 与 SQL_SELECT_BINDS_BY_ORDER_ACTIVE 的关系：后者 ⊂ 本查询（前者要求"全表最后一条属本波次"，
+//       那它必然也是"本波次内最后一条"）→ 先取本查询**绝不会漏格口**，是"全有或全无"缺陷的根修。
+//   有界性：结果规模 ≤ 格口数(66)。
+#define SQL_SELECT_LAST_BINDS_BY_ORDER \
+    "SELECT g1.id, g1.grid_num, g1.boxcode, g1.order_code, g1.active, g1.bind_time, g1.unbind_time " \
+    "FROM grid_box_bind g1 " \
+    "WHERE g1.order_code = ? AND g1.boxcode <> '' AND g1.rowid = " \
+    "  (SELECT MAX(g2.rowid) FROM grid_box_bind g2 WHERE g2.grid_num = g1.grid_num AND g2.order_code = ?) " \
+    "ORDER BY CAST(g1.grid_num AS INTEGER) ASC"
+
+// ★ 2026-09-17 归属补齐/纠偏（唯一新增的写入路径，也是唯一允许改写 order_code 的地方）
+//   时机：**H4 到达、波次落库完成时**（HttpServer::onWavePersistenceFinished → attributePendingBindsToWave）
+//   目的：把"当时无法确定归属"的绑定行补上真正的波次号。现场两类真实故障：
+//     ① H6 早于 H4（WMS 先发绑定再发波次）→ 内存无波次 → 归属写成空串 → 切回该波次取不到绑定；
+//     ② 切出/新任务后 120s "切出窗口"内到达的 H6 被记到**刚切出的上一个波次**（现场 2026-09-15
+//        23:53 的 66 行 H6 实为 456456 的绑定，却挂到了 6565656 名下）→ 新波次零绑定、旧波次被污染。
+//   约束（与"历史不得粘贴进其它波次"铁律共存）：
+//     · 只改 order_code，不动 active/bind_time/unbind_time，**不新增/不删除行**（行数只可能不变）；
+//     · 只处理 active=1（此刻物理生效）且 bind_time >= 会话启动时刻的行（历史行永不改判）；
+//     · 只处理"空归属"或"切出窗口内产生、属于本次投递的误归属"两类；
+//     · 该格口若已存在本波次自己的记录，则**不改判**（避免把已在用记录改错）。
+#define SQL_UPDATE_BINDS_ATTRIBUTE_TO_WAVE \
+    "UPDATE grid_box_bind SET order_code = ? " \
+    "WHERE active = 1 " \
+    "  AND bind_time >= ? " \
+    "  AND (order_code = '' OR (order_code = ? AND order_code <> '' AND bind_time >= ?)) " \
+    "  AND grid_num NOT IN (SELECT grid_num FROM grid_box_bind WHERE order_code = ?)"
+
+// ★ 2026-09-17 归属补齐候选行（与上面 UPDATE 完全同条件，用于改判前打明细日志）
+#define SQL_SELECT_BINDS_TO_ATTRIBUTE \
+    "SELECT id, grid_num, boxcode, order_code, bind_time FROM grid_box_bind " \
+    "WHERE active = 1 " \
+    "  AND bind_time >= ? " \
+    "  AND (order_code = '' OR (order_code = ? AND order_code <> '' AND bind_time >= ?)) " \
+    "  AND grid_num NOT IN (SELECT grid_num FROM grid_box_bind WHERE order_code = ?) " \
+    "ORDER BY CAST(grid_num AS INTEGER) ASC"
+
+// ★ 2026-09-17 按波次统计"绑过几个格口"（UI「波次数据记录」列表新增「格口绑定」列的批量数据源）
+//   —— 一次 GROUP BY 覆盖全部波次，避免列表刷新退化成逐波次查询（对齐既有 3 条批量统计的做法）。
+//   口径：该波次名下出现过的不同格口数（含换箱的多次行；boxcode 非空）。0 → 该波次无绑定记录。
+#define SQL_SELECT_BIND_COUNTS_BY_ORDER \
+    "SELECT order_code, COUNT(DISTINCT grid_num) FROM grid_box_bind " \
+    "WHERE order_code <> '' AND boxcode <> '' GROUP BY order_code"
+
+// ★ 2026-09-17 人工修复历史误归属用（仅供 DBA/人工核查脚本按需执行，产品代码不调用）
+#define SQL_UPDATE_BIND_ORDER_BY_ID \
+    "UPDATE grid_box_bind SET order_code = ? WHERE id = ?"
+
+// ★ 2026-09-17 绑定按波次过滤的索引（切回取数/归属补齐/列表统计三处都按 order_code 过滤）
+#define SQL_CREATE_INDEX_BIND_ORDER \
+    "CREATE INDEX IF NOT EXISTS idx_bind_order ON grid_box_bind(order_code)"
+// ★ 2026-09-15 按波次查询绑定历史明细（含绑定/解绑时间）——只读回溯用
+#define SQL_SELECT_BIND_HISTORY_BY_ORDER \
+    "SELECT id, grid_num, boxcode, order_code, active, bind_time, unbind_time FROM grid_box_bind " \
+    "WHERE order_code = ? ORDER BY CAST(grid_num AS INTEGER) ASC, id ASC"
 // 归档全部活跃绑定（波次完结/取消时清空全部格口绑定）
 #define SQL_ARCHIVE_ALL_BINDS \
     "UPDATE grid_box_bind SET active = 0, unbind_time = ? WHERE active = 1"
+
+// ★ 2026-09-17 「新任务」清空格口绑定：只归档**已归属**的活跃行，保留"待补齐"行（order_code=''）
+//   为什么不能直接用 SQL_ARCHIVE_ALL_BINDS（现场要求"新任务时清空绑定"时的关键取舍）：
+//     H6 早于 H4 到达时，绑定行以 order_code='' 保留，等 H4 到达时由
+//     attributeBindsToWave() 补齐归属。若在「新任务」时把它一并归档（active=0），
+//     后续 H4 到达就**补齐不到**这些行 → 该波次又是 0 绑定 → 切回无绑定可恢复（老毛病回归）。
+//   因此：已归属行（有波次号）照常归档留痕（行保留、归属不变 → 切回可恢复），
+//        未归属行保持 active，等 H4 到达补齐后再参与正常流程。
+//   （启动时仍用 SQL_ARCHIVE_ALL_BINDS 全量归档：那些行来自上一次会话，
+//     归属补齐的"本会话"时间护栏本来就不会认领它们。）
+#define SQL_ARCHIVE_ATTRIBUTED_BINDS \
+    "UPDATE grid_box_bind SET active = 0, unbind_time = ? WHERE active = 1 AND order_code <> ''"
 
 // ──── 分拣流水操作 ────
 // 插入分拣流水
@@ -880,9 +1162,14 @@
 // 查询某波次全部 满箱回传（H7）出站消息（含状态，供未完成波次面板展示/重传）
 #define SQL_SELECT_OUTBOX_FULLBOX_BY_ORDER_ALL \
     "SELECT msg_id, order_code, boxcode, grid, payload, status, retry_count, created_at FROM outbox_fullbox WHERE order_code = ? ORDER BY created_at DESC"
-// ★ 2026-09-08 UI「重传满箱切换(H7)」失败格口下拉：全部历史失败/已取消重试的满箱报文（含格口号）
-#define SQL_SELECT_FAILED_OUTBOX_FULLBOX \
-    "SELECT msg_id, order_code, boxcode, grid, payload, status, retry_count, created_at FROM outbox_fullbox WHERE status IN ('failed','cancelled') ORDER BY created_at DESC LIMIT ?"
+// ★ 2026-09-16 现场需求⑤「重传满箱切换旁的下拉框只显示本波次数据」
+//   （原"全部历史"宏 SQL_SELECT_FAILED_OUTBOX_FULLBOX 已随其唯一调用方一起删除）
+//   同一口径（status IN ('failed','cancelled')，列序完全一致）但**只取指定波次**：
+//   下拉里不再混入其他波次的历史失败报文（跨波次补发仍可从日志/DB 追溯）。
+//   绑定：?1=orderCode  ?2=limit
+#define SQL_SELECT_FAILED_OUTBOX_FULLBOX_BY_ORDER \
+    "SELECT msg_id, order_code, boxcode, grid, payload, status, retry_count, created_at FROM outbox_fullbox " \
+    "WHERE status IN ('failed','cancelled') AND order_code = ? ORDER BY created_at DESC LIMIT ?"
 // ★ 2026-09-08 UI「重传任务完结(H8)」失败波次下拉：全部历史失败/已取消重试的完结报文
 #define SQL_SELECT_FAILED_OUTBOX_END \
     "SELECT msg_id, order_code, payload, status, retry_count, created_at FROM outbox_end WHERE status IN ('failed','cancelled') ORDER BY created_at DESC LIMIT ?"

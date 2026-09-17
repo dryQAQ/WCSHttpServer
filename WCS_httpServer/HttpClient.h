@@ -34,6 +34,10 @@ public:
     void setTimeout(int ms)          { m_timeoutMs = ms; }    // 回传超时(ms)，默认HTTP_TIMEOUT_MS=3000
     void setRfidQueryUrl(const QString& url) { m_rfidQueryUrl = url; }  // ★ RFID SKU-EPC 绑定查询 URL
     void setRfidAppkey(const QString& k)     { m_rfidAppkey = k; }      // ★ 2026-09-05 RFID 查询鉴权 key（空=不发送）
+    // ★ 2026-09-15 EPC 识别长度（与推送侧同源同参数）：绑定查询**响应**里的 epc 按同一规则归一，
+    //   防止"响应回整串、缓存键是归一串"导致查不到绑定（推送侧见 RfidPushClient/EpcCode.h）
+    void setEpcTruncateLen(int len) { m_epcTruncateLen = len; }
+    int  epcTruncateLen() const { return m_epcTruncateLen; }
 
     // ──── 业务 ────
     // 回传波次完结通知到WMS（异步，不阻塞主线程）
@@ -86,6 +90,7 @@ private:
     int     m_timeoutMs = HTTP_TIMEOUT_MS;  // 超时时间(ms)，默认3000
     QString m_rfidQueryUrl;     // ★ RFID SKU-EPC 绑定查询 URL（查询 EPC→barcode 映射）
     QString m_rfidAppkey;       // ★ 2026-09-05 RFID 查询鉴权 key（HTTP Header: Authorization: APP_KEYS <key>；空=不发送）
+    int     m_epcTruncateLen = RFID_EPC_TRUNCATE_LEN;  // ★ 2026-09-15 EPC 识别长度（响应侧归一；<2=不识别）
 
     // ──── 请求追踪 ────
     // 跟踪进行中的异步请求，用于超时处理和响应匹配

@@ -27,6 +27,9 @@
 #include <QSpinBox>
 #include <QComboBox>
 #include <QHash>
+#include <QSet>        // ★ 2026-09-16 本次一键生成的 msgId 集合（失败回执归因）
+#include <QVector>     // ★ 2026-09-16 绑定面板外框/初始样式缓存
+#include <QList>       // ★ 2026-09-15 实时面板原始报文悬停缓存（FIFO 淘汰顺序）
 #include "HttpServer.h"
 #include "HttpClient.h"
 #include "PlcManager.h"
@@ -36,6 +39,19 @@
 class QDialog;     // ★ 2026-09-07 效率统计弹窗指针（仅在 .cpp 中定义具体类）
 class QTabWidget;  // ★ 2026-09-13 第二行多页窗口（标签在左侧）
 class QSplitter;   // ★ 第一行水平分隔条（默认宽度分配用，完整类型在 .cpp 中使用）
+class QFrame;      // ★ 2026-09-16 容器绑定面板外框（整格底色载体）
+
+// ════════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-16 现场需求②⑦：容器绑定面板的「四色底色 + 隐藏异常口」口径
+//   状态判定/配色/隐藏规则的**唯一实现**在 tests/BindingPanelPolicy.h 的纯函数里
+//   （产品侧与本仓库回归自测 tests/test_binding_panel_policy.cpp 共用同一口径，
+//    避免"界面底色/优先级被改坏而无人发现"）。
+//   四色（客户指定）：绿=已绑定 / 橙=满箱锁格 / 红=已解锁·待重绑 / 灰=未绑定
+//   优先级：锁格 > 待重绑 > 已绑定 > 未绑定
+//   ★ 构建注意：该头文件位于 tests/，vcxproj 与 tests/run_tests.bat 的包含目录均已加入
+//     $(ProjectDir)..\tests（Windows 上 MSVC 支持 include 路径中的正斜杠）。
+// ════════════════════════════════════════════════════════════════════════════
+#include "../tests/BindingPanelPolicy.h"
 
 class MainWindow : public QMainWindow
 {
@@ -62,8 +78,14 @@ private slots:
     void onViewWaveQueue();      // ★ 2026-09-08 查看接收波次队列（弹窗：接收新任务 + 剩余待执行波次）
     void onResendSelectedH7();     // ★ 重传满箱切换(H7)（服务控制区；选中行优先，否则当前波次）
     void onResendSelectedH8();     // ★ 重传任务完结(H8)（服务控制区；选中行优先，否则当前波次）
-    void onResumeSelectedWave();   // ★ 切换选中波次（恢复其进度继续 / 终态载入查看）
+    void onResumeSelectedWave();   // ★ 切换选中波次（恢复其进度继续；★ 2026-09-16 终态波次拒绝切回）
+    // ★ 2026-09-17 只读查看选中波次的格口绑定明细（每格取该波次内最后一条 = 切回时恢复的口径）
+    void onViewWaveBinds();
+    // ★ 2026-09-17 绑定落库失败即时告警（此前只写 data.log，现场表现为"面板绿、库里空"）
+    void onBindPersistFailed(const QString& grid, const QString& box, const QString& orderCode);
     void onStartNewWaveTask();     // ★ 新任务：保存当前波次进度与数据，清空等待接收新波次
+    // ★ 2026-09-16 需求④：H7 报文最终失败（重试耗尽）→ 本次一键计数归因 + 刷新计数标签
+    void onFullboxMessageFailed(const QString& msgId, const QString& orderCode, const QString& grid);
     void onClearLog();        // 清空日志窗口
     void onRefreshTimer();    // 每秒定时刷新UI
     void flushLogBuffer();    // 定时批量刷新日志到UI（防高频卡死）
@@ -76,8 +98,7 @@ private slots:
     // ★ 2026-09-13 需求：实时面板驻留行的超时打标（"待落格/未落格（无反馈）"）
     void refreshLivePanelPendingRows();
     // ★ 2026-09-13 需求：EPC 全信息窗（异常弹窗与查询结果共用）
-    void showEpcDetail(const QString& epc);
-    // ★ 2026-09-13 需求：按容器号查询渲染（查该容器下全部 EPC 物件明细+计划对照）
+    void showEpcDetail(const QString& epc);    // ★ 2026-09-13 需求：按容器号查询渲染（查该容器下全部 EPC 物件明细+计划对照）
     void renderContainerQuery();
     // ★ 2026-09-13 需求：超计划预警明细弹窗（落了几件/哪个格口容器/计划几件/多余几件）
     void showOverplanWarningDialog();
@@ -178,23 +199,39 @@ private:
     // ★ 2026-09-13 需求：一键满箱回传（对当前所有已绑定容器逐个执行 H7 满箱回传；不影响波次状态机/格口启用/绑定）
     QPushButton* m_btnOneKeyFullbox= nullptr;
 
-    // ──── 容器绑定面板 UI（92格口 6列×16行）────
+    // ──── 容器绑定面板 UI（业务格口，默认 6 列；异常口按 exceptionGrid 配置隐藏）────
     QWidget*     m_bindingWidget   = nullptr;  // 绑定状态容器
     QGridLayout* m_bindingGrid     = nullptr;  // 网格布局
-    QLabel*      m_bindingLabels[BINDING_SLOT_COUNT] = {};    // 状态指示圆点指针
+    QLabel*      m_bindingLabels[BINDING_SLOT_COUNT] = {};    // 状态指示圆点指针（★ 2026-09-16 已隐藏，保留指针供刷新兼容）
     QLabel*      m_bindingBoxLabels[BINDING_SLOT_COUNT] = {}; // ★ 容器号标签指针（避免findChildren）
+    // ★ 2026-09-16 需求⑦：整格底色 = 绑定状态（圆点去掉、文字白字），故需要外框指针与初始样式
+    QVector<QFrame*> m_bindingFrames;          // 每格外框（整格底色载体）；隐藏格不创建 → 无条目
+    QVector<QString> m_bindingInitialStyles;   // 与上面一一对应的初始 QSS（结束任务复位用）
     int          m_bindingCols     = 4;        // 每行列数
     int          m_bindingRows     = BINDING_SLOT_COUNT / m_bindingCols;
     QLabel*      m_lblBoundCount   = nullptr;  // 已绑定数量
+    // ★ 2026-09-17 现场要求：容器绑定面板上明文提示被隐藏的异常口（"异常口：66格口"）
+    QLabel*      m_lblExceptionGrid = nullptr;
     QLabel*      m_lblLockedCount  = nullptr;  // ★ 2026-09-11 已锁格数量（黄色，紧跟"已绑定"显示）
     QLabel*      m_lblUnboundCount = nullptr;  // 未绑定数量
     bool         m_bindingDirty    = false;     // ★ 绑定数据变更标记（避免无效刷新）
+    // ★ 2026-09-16 需求②：该格口是否在绑定面板中隐藏（= 配置的物理异常口，如 66）
+    //   口径：exceptionGrid 为空/"0" → 不隐藏任何格口（面板显示 66 格，零回归）；
+    //        配置为 66 → 66 号整格不渲染（状态/容器号均不显示），面板显示 65 格。
+    bool isGridHiddenInBindingPanel(int gridNum) const;
+    // 面板可见格口数（隐藏异常口后 = BINDING_SLOT_COUNT - 隐藏数）；计数口径与之保持一致
+    int  visibleBindingSlotCount() const;
 
     // ──── 波次数据记录面板 UI（★ 2026-09-06：全部已传输波次）────
     QTableWidget* m_tblWaveRecords      = nullptr;  // 波次数据记录列表
     QPushButton*  m_btnRefreshWaves     = nullptr;  // 刷新列表按钮
     QPushButton*  m_btnResumeWave       = nullptr;  // 切换选中波次按钮
+    QPushButton*  m_btnViewWaveBinds    = nullptr;  // ★ 2026-09-17 查看选中波次的格口绑定（只读）
     QPushButton*  m_btnNewTask          = nullptr;  // ★ 新任务按钮（保存当前进度，清空待接收）
+    // ★ 2026-09-17 绑定落库失败计数（H6 写了内存但没进 DB）：>0 时面板红字提示
+    int           m_bindPersistFailedCount = 0;
+    QString       m_lastBindPersistFailed;
+    QLabel*       m_lblBindPersistFailed = nullptr;  // 显示在「容器绑定状态」按钮行
 
     // ──── 服务控制区：重传保障按钮（★ 2026-09-06 自波次面板移入）────
     QPushButton*  m_btnResendH7         = nullptr;  // 重传满箱切换(H7)
@@ -206,8 +243,41 @@ private:
     QVector<HttpServer::FailedFullboxItem> m_failedH7Items;  // 下拉数据快照（与下拉行一一对应）
     QVector<HttpServer::FailedEndItem>     m_failedH8Items;
 
+    // ──── ★ 2026-09-16 现场需求④：「一键满箱回传」旁的三项计数 ────
+    //   口径（tooltip 同步写明）：
+    //     · 本波次满箱回传 = 当前波次已生成的 H7 报文总数（outbox_fullbox 行数：含自动满箱、
+    //       手动满箱与一键回传），并显示 成功/待发/失败 拆分；
+    //     · 本次一键 成功 = 本次「一键满箱回传」成功生成并入 Outbox 的报文件数（会话累计，切波次归零）；
+    //     · 本次一键 失败 = ① 本次未能生成报文（Outbox 写入失败等）＋
+    //                       ② 本次生成的报文最终"重试耗尽失败"的件数；
+    //                       "格口无分拣记录跳过"不计入失败（沿用既有日志口径）。
+    QLabel*       m_lblFullboxCount   = nullptr;  // 计数文字标签（按钮右侧）
+    QString       m_fullboxCountOrder;            // 「本波次」计数所属波次（变化时归零"本次"计数）
+    int           m_oneKeyBatches     = 0;        // 本次一键成功生成报文数
+    int           m_oneKeyFails       = 0;        // 本次一键失败数（未生成 + 最终告警失败）
+    QSet<QString> m_oneKeyMsgIds;                 // 本次一键生成的 msgId（用于失败回执归因；有界）
+    void refreshFullboxCountLabel();              // 唯一取数/渲染入口（不每秒查库）
+    // ★ 2026-09-16 需求④：按「效率统计」按钮的勾选状态显隐「运行日志」页右侧的效率面板
+    //   （面板懒创建：首次显示时才 new；on=true 时立即刷新一次，不等 1 秒定时器）
+    void applyLogEffPanelVisible(bool on);
+    // ★ 2026-09-17 现场要求：效率统计面板宽度 = 「波次信息」面板宽度（上下对齐，随窗口缩放同步）
+    //   由 1 秒刷新定时器调用；宽度未变时内部直接返回（零布局开销），用户拖动分隔条后不被秒级覆盖。
+    void syncLogEffPanelWidth();
+    QWidget* m_grpWaveInfo   = nullptr;   // 「波次信息」面板（宽度对齐的基准）
+    int      m_logEffSyncedW = -1;        // 上次对齐时采用的宽度（-1 = 尚未对齐）
+
     // ──── 日志区 ────
     QTextEdit*   m_txtLog = nullptr;           // 运行日志文本框
+    // ★ 2026-09-16 需求④：日志页右侧的「RFID 推送效率统计（当日观察）」
+    //   面板类型 LogEfficiencyPanel 定义在 MainWindow.cpp 内部（不参与 moc），故：
+    //     · m_logEffHost  = 分隔条右侧的**承载容器**（面板懒创建后放进来）
+    //     · m_logEffPanel = 面板实例（首次显示时才 new；Null 表示尚未创建）
+    //     · m_logEffTick  = "每秒一拍"回调（面板不可见时内部直接返回，零查询开销）
+    //   显隐由「任务接收控制」区的「效率统计」按钮（m_btnEffChart，可勾选、默认开启）控制
+    QWidget*              m_logEffHost  = nullptr;
+    QWidget*              m_logEffPanel = nullptr;
+    QSplitter*            m_logEffSplit = nullptr;
+    std::function<void()> m_logEffTick;
 
     // ──── ★ 2026-09-13 实时面板：落格反馈数据（实时）────
     //   表头：序号｜时间｜EPC｜对应SKU｜格口号｜容器号｜小车号｜状态
@@ -221,6 +291,12 @@ private:
     void livePanelApplyFeedback(const QString& epc, const QStringList& cells, bool bad); // PLC 反馈 → 就地补全/新增
     void livePanelRebuildPendingIndex();       // 行裁剪后重建占位索引（行号会整体位移）
     void livePanelTrimRows();                  // 超上限裁掉最旧行
+    // ★ 2026-09-15 原始报文留痕（界面）：记下每个 EPC 最近一帧的原文，供实时面板悬停显示
+    void rememberLiveFrameNote(const QString& epc, const QString& epcRaw,
+                               const QString& rawFrame, const QString& seq,
+                               const QString& devCode);
+    QHash<QString, QString> m_liveFrameNotes;   // EPC → 悬停提示文本（有界缓存）
+    QList<QString>          m_liveFrameNoteOrder; // 缓存淘汰顺序（FIFO）
 
     // ──── ★ 2026-09-13 第二行多页窗口（标签在左侧）────
     QTabWidget*  m_tabMain = nullptr;          // 6 页：绑定状态/记录查询/波次历史/计划分配表/实时面板/运行日志

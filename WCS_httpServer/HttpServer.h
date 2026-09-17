@@ -234,10 +234,45 @@ public:
     QVector<OutboxRecord> getWaveEndOutbox(const QString& orderCode);     // 某波次 H8 出站消息（含状态）
     // ★ 2026-09-07 清空格口容器绑定（人工重置）：内存清空 + DB 归档留史 + 恢复禁用格口
     void clearAllGridBinds();
+    // ★ 2026-09-17 某波次绑定明细（只读）：每格取"该波次内"最后一条（含换箱后的当前箱、含已被更晚波次覆盖的格口）
+    //   与切回恢复取数**同一口径**（SortingDatabase::getLastBindsByOrder），供 UI「查看绑定」弹窗。
+    QVector<GridBoxBindRecord> getWaveBindDetail(const QString& orderCode);
+    // ★ 2026-09-17 归属补齐/纠偏：把"本会话内、当前物理生效、尚未归属本波次"的绑定行改判给本波次
+    //   调用点：onWavePersistenceFinished（H4 到达、波次落库完成时），**早于** restoreBindsIfEmpty。
+    //   现场含义：H6 早于 H4（归属空串）、或切出窗口内 H6 被记到上一个波次（误归属）时，
+    //   切回该波次仍能恢复出它自己的绑定。只改 order_code，不新增/不删除行。
+    int attributePendingBindsToWave(const QString& orderCode);
+    // ★ 2026-09-15 关闭软件时的「切出当前波次」：绑定归档留痕 + 内存清空（进度/明细/报文早已在 DB）
+    //   调用点：MainWindow::closeEvent（正常退出）。异常关闭（崩溃/断电）由 restoreWaveFromDB() 启动兜底。
+    void switchOutWaveForExit();
+    // ★ 2026-09-17 现场要求：把「波次信息面板」复位为"等待 WMS 下发新波次"（= 新任务状态）
+    //   语义与「新任务」按钮的切出完全一致：当前波次**切出**（进度/明细/计划/落格/异常保留于 DB，
+    //   状态保持原值，可随时从「波次数据历史记录」切回）→ 内存清空 → 面板复位 → 发 waveResumed 刷新 UI。
+    //   调用点：HttpServer::startReceive()（点击「开始接收任务」时，与「新任务」同口径清空面板数据）。
+    //   reason：日志用语（如 "开始接收任务" / "新任务"），用于现场核对是谁触发的切出。
+    //   返回 true = 本次确实切出了波次；false = 当前本就无进行中波次（面板已是初始状态）。
+    bool resetWavePanelToIdle(const QString& reason);
+    // ★ 2026-09-15 该波次是否已终态（已完成/已取消）
+    //   ★ 2026-09-16 需求①：终态波次**一律不允许切回**（入口守卫在 resumeUnfinishedWave 最前），
+    //     本接口供 UI 判定"该行不可切回"（禁用/提示），不再用于"载入查看"分支。
+    bool isWaveTerminal(const QString& orderCode);
+    // ★ 2026-09-16 需求①：取该波次的 DB 状态（波次不存在/库未开 → -1，供 UI 判定与日志）
+    int  waveDbStatus(const QString& orderCode);
+    // ★ 2026-09-15 EPC 识别长度下发（启动注入 + 配置热生效）
+    void setEpcTruncateLen(int len);
+    int  epcTruncateLen() const;
+    // ★ 2026-09-15 RFID 原始报文留痕观测（页脚/健康日志）：待写队列帧数 / 累计落库帧数 / 累计丢弃帧数
+    int  rfidRawPendingRows() const;
+    qint64 rfidRawFlushedRows() const { return m_rfidRawFlushed; }
+    qint64 rfidRawDroppedRows() const { return m_rfidRawDropped; }
     void resendOutbox(const QString& orderCode, bool resendH7, bool resendH8); // 手动重传选中波次的 H7/H8
     void onOutboxResendReply(const QString& msgId, bool isH7, bool success);   // 手动重传结果（轻量，不动波次状态/绑定）
     // ★ 2026-09-07 手动满箱切换：UI 输入格口号 → 读取该格口当前记录+容器号，按 H7 满箱回传上传
-    bool manualFullbox(const QString& grid);
+    //   ★ 2026-09-16 需求④：返回值改为本次生成的 H7 msgId（成功=非空，已入 Outbox 待发/重试）；
+    //     失败返回空串，并把可读原因写入 *reasonOut（"无待上传记录"/"无容器绑定"/…），
+    //     供「一键满箱回传」区分"无记录跳过"与"真失败"。
+    //     ★ 日志与业务行为与改造前逐行一致（仅补返回值）。既有调用点不需要返回值，可直接忽略。
+    QString manualFullbox(const QString& grid, QString* reasonOut = nullptr);
     // ──── RFID 推送效率统计（★ 2026-09-07：滑动 1 分钟窗口）────
     void recordRfidPush();                              // 记录一次有效 RFID 推送（含 EPC）
     int  rfidPushPerMinute() const;                     // 最近 1 分钟接收件数（滑动窗口）
@@ -327,8 +362,10 @@ public:
         QString     lastTime;
         QString     status;
     };
-    QVector<FailedFullboxItem> getFailedFullboxItems(int limit = 200);  // 按(波次,格口)聚合
-    QVector<FailedEndItem>     getFailedEndItems(int limit = 200);      // 按波次聚合
+    // ★ 2026-09-16 现场需求⑤：H7 失败下拉只取**当前运行波次**（原"全部历史"版本已删除）
+    //   orderCode 为空 → 返回空表（界面显示"暂无本波次失败记录"）
+    QVector<FailedFullboxItem> getFailedFullboxItemsByOrder(const QString& orderCode, int limit = 200);
+    QVector<FailedEndItem>     getFailedEndItems(int limit = 200);      // 按波次聚合（H8 保持全部历史）
     // 精确重传：只重发失败/已取消报文，不改波次状态、不影响主流程
     bool resendFailedFullboxGrid(const QString& orderCode, const QString& grid);
     bool resendFailedEnd(const QString& orderCode);
@@ -460,6 +497,13 @@ signals:
     void pendingWavesChanged();
     // ★ 2026-09-08 失败重传记录变化（重试耗尽标记失败 / 手动重传成功后清除）→ UI 刷新两个失败下拉
     void outboxFailedChanged();
+    // ★ 2026-09-16 需求④：某条 H7 报文**最终失败**（重试耗尽 → status='failed'）
+    //   用途：「一键满箱回传」计数归因——只对"该次一键生成的 msgId"累加失败数，其它来源仅刷新总数
+    void fullboxMessageFailed(const QString& msgId, const QString& orderCode, const QString& grid);
+    // ★ 2026-09-17 绑定**落库失败**即时告警：此前失败只写 data.log，现场表现为
+    //   "面板显示已绑定、库里一行都没有"（切回该波次时无绑定可恢复）。
+    //   发出后 UI 红字提示 + 显示未落库计数，运维可当场重发 H6 / 排查磁盘。
+    void bindPersistFailed(const QString& grid, const QString& box, const QString& orderCode);
 
 protected:
     // CHttpServerListener 回调
@@ -498,6 +542,12 @@ private:
     int     flushUnreportedFullboxes(const QString& orderCode); // 补发内存中未满箱格口的 H7，返回补发格口数
     bool    sendFullboxForGrid(const QString& orderCode, const QString& grid,
                                QVector<GridSortRecord> records); // 单格口 H7 补发（完结前补发/手动满箱共用）
+    // ★ 2026-09-16 需求④：单格口 H7 补发的**唯一实现**——成功返回本次生成的 msgId（已入 Outbox），
+    //   失败返回空串并把可读原因写入 *reasonOut；上面的 bool 版本是它的薄封装（既有调用点零改动）。
+    QString sendFullboxForGridDetailed(const QString& orderCode, const QString& grid,
+                                       QVector<GridSortRecord> records, QString* reasonOut);
+    // ★ 2026-09-16 需求⑤：失败/已取消 H7 报文的按(波次,格口)聚合（两个数据源共用，避免口径漂移）
+    QVector<FailedFullboxItem> aggregateFailedFullbox(const QVector<OutboxRecord>& rows);
     void sendJsonResponse(IHttpServer* pSender, CONNID dwConnID,
                           const QJsonObject& json, USHORT status = 200);
     QJsonObject okResponse(const QString& msg = "");
@@ -530,6 +580,20 @@ private:
     QHash<QString, qint64> m_sentAtMs;       // ★ 在途 EPC 下发时刻(ms)，用于在途超时判定
     QHash<QString, qint64> m_lastPlcSendMs;  // ★ 同一 EPC 最近一次下发时刻(ms)，用于重扫冷却
     QHash<QString, int>    m_rescanResendTimes;  // ★ 同一 EPC 本波次重发次数（上限保护）
+
+    // ──── ★ 2026-09-16 「根因优先」：本轮已入异常终态的 EPC ────
+    //   背景：格口满箱未重绑(禁用)导致发送失败的件，缓存条目会留存（TTL 300s）；
+    //         同一 EPC 之后再次推送时，旧的 receivedAt 会让 elapsed 累积到 142457ms，
+    //         在超时守卫处被记成"发送超时"，把真实根因"无可用格口"覆盖掉。
+    //   用途：发送失败入异常时打标（EPC → {类型, 打标时刻}）；超时守卫处若仍在保鲜期内，
+    //         异常记录沿用原根因类型（如"发送超时(前序:无可用格口)"），不再单独产生"发送超时"。
+    //   保鲜期 EPC_TERMINAL_EXCEPTION_KEEP_MS：仅覆盖"一次失败 → 同件再次上线"的短窗口，
+    //   超期自动失效，避免长期运行下无限累积。
+    //   线程：仅在主线程访问（与 m_sentEpcs / m_lastPlcSendMs 同线程约定），无需加锁。
+    QHash<QString, QPair<QString, qint64>> m_epcTerminalException;  // EPC → {异常类型, 打标时刻ms}
+    void markEpcTerminalException(const QString& epc, const QString& type);  // 打标（本轮已入异常终态）
+    void clearEpcTerminalException(const QString& epc);                      // 解除（本轮成功下发/清理）
+    QString terminalExceptionType(const QString& epc) const;                 // 取保鲜期内的类型（无则空）
 
     bool isEpcInFlight(const QString& epc);       // 是否在途（含 plcInFlightTimeoutMs 超时判定，会顺手清理超时项）
     // ★ 2026-09-13 只读版本：不做任何写操作（UI 每秒查询"待落格/超时未反馈"用，避免 UI 改业务状态）
@@ -591,6 +655,39 @@ private:
     QString                 m_endSessionOrderCode;          // ★ 2026-09-06 H8 会话归属波次（切出后超时兜底只处理该波次）
     void                    onEndSessionTimeout();          // ★ H8 会话超时兜底（内部方法，定时器回调）
     void                    switchAwayCurrentWave();        // ★ 2026-09-06 挂起切出当前波次（清内存；状态/进度保留 DB）
+    // ★ 2026-09-15 切出中的波次号（切出瞬间保留）：切出后内存波次为空，
+    //   此期间到达的 H6 绑定不应记到"空波次"（否则该绑定的波次归属丢失、切回时取不回）。
+    //   ★ 2026-09-17 现场取证补充：该窗口**确实救回过真实数据**（09-15 23:53 有 66 条 H6 靠它落库），
+    //     但它同样会把"下一个波次的 H6"记到刚切出的上一个波次（同批 66 条 H6 实为 456456 的绑定，
+    //     却挂到 6565656 名下）→ 因此窗口保留、但**必须在 H4 到达时纠偏**（attributePendingBindsToWave）。
+    QString                 m_switchingOutOrderCode;
+    QString                 m_switchOutTime;                 // ★ 2026-09-17 切出时刻（纠偏的上界判据）
+    QTimer*                 m_switchingOutTimer = nullptr;   // 到期自动清空（WAVE_SWITCH_OUT_KEEP_MS）
+    // ★ 2026-09-17 本次会话启动时刻（'yyyy-MM-dd HH:mm:ss.zzz'，与 SortingDatabase::currentTimeStr 同格式）：
+    //   归属补齐只处理 bind_time >= 本时刻的行 —— 上一会话/历史遗留的空归属行**永不改判**。
+    QString                 m_sessionStartTime;
+    void                    applyWaveBinds(const QString& orderCode, const QMap<QString, QString>& binds,
+                                           const QString& source);   // ★ 恢复切回波次的绑定（只读恢复，不写库）
+    // ★ 2026-09-16 切回波次时按 DB（sorting_records）重建"已落格进度"：
+    //   H7 明细分录（只补当前容器内的件）/ 计划额度（整波次累计）/ 落格明细去重集合。
+    //   断电/关闭重启后"继续分拣"的依据；只读 DB、只写内存与界面（不写库）。
+    void                    restoreLandedProgress(const QString& orderCode);
+    // ──── ★ 2026-09-15 RFID 原始推送报文留痕（rfid_raw）────
+    //   业务入口只入队（O(1)，不写盘）→ 定时器/满批触发单事务批量落库；
+    //   队列上限 RFID_RAW_PENDING_MAX_ROWS，超限丢最旧并告警（防 DB 写不动时内存膨胀）。
+    QVector<RfidRawRecord>  m_rfidRawPending;
+    mutable std::mutex      m_rfidRawMutex;
+    qint64                  m_rfidRawFlushed = 0;            // 累计落库帧数（退出/健康日志打印）
+    qint64                  m_rfidRawDropped = 0;            // 累计丢弃帧数（队列超限）
+    QTimer*                 m_rfidRawFlushTimer = nullptr;   // 攒批落库定时器（RFID_RAW_FLUSH_INTERVAL_MS）
+    QTimer*                 m_rfidRawCleanTimer = nullptr;   // 跨天清理检查定时器（每天最多清一次）
+    QString                 m_rfidRawCleanDate;               // 上次清理日期 yyyy-MM-dd
+    void                    noteRfidRawFrame(const QString& epc, const QString& epcRaw,
+                                            const QString& carNum, const QString& seq,
+                                            const QString& devCode, const QString& rawFrame,
+                                            bool noread);    // 入队一帧（业务入口调用，含 HTTP 直推口径）
+    void                    flushRfidRawRows();              // 批量落库待写队列（单事务）
+    void                    cleanupRfidRawIfNeeded(bool force); // 超期清理（启动一次 + 跨天空闲拍一次）
 
     // ──── ★ 2026-09-07 波次待执行队列（当前波次执行中收到的新 H4 排队；结构体定义见 public 区）────
     QVector<PendingWave>    m_pendingWaveQueue;             // FIFO（仅主线程读写）

@@ -155,6 +155,9 @@
     <ClInclude Include="EpcCache.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="EpcCode.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="LogService.h">
       <Filter>Header Files</Filter>
     </ClInclude>

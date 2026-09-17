@@ -42,7 +42,33 @@
 #include "VerticalTabBar.h" // ★ 2026-09-13 左侧标签页：中文逐字竖排自绘标签栏
 #include <QSpinBox>        // ★ 2026-09-14 计划分配表：翻页控件
 #include <QLineEdit>       // ★ 2026-09-14 计划分配表：过滤输入
+#include <QSignalBlocker>  // ★ 2026-09-16 需求⑤：刷新失败格口下拉时阻断信号（防误触发）
+#include <QClipboard>      // ★ 2026-09-17 「查看绑定」弹窗：复制只读核对 SQL
+
+// ★ 2026-09-17 现场要求：「开始接收任务 / 结束任务」**主操作按钮放大**
+//   该按钮在 4 处会改样式（开始/停止中/结束任务/复位），字号与内边距必须**逐处一致**，
+//   否则切换状态时按钮尺寸会跳变 → 因此统一由本函数生成（只传背景色/悬停色）。
+//   尺寸口径：最小 210×54、字号 20px（原 120×36、14px）；圆角/内边距同步放大。
+static QString startStopButtonStyle(const QString& bg, const QString& hoverBg)
+{
+    return QString("QPushButton { background-color: %1; color: white; font-size: 20px; font-weight: bold;"
+                   " border-radius: 6px; padding: 10px 28px; }"
+                   "QPushButton:hover { background-color: %2; }").arg(bg, hoverBg);
+}
+static const int START_STOP_BTN_MIN_W = 210;   // 最小宽度（原 120）
+static const int START_STOP_BTN_MIN_H = 54;    // 最小高度（原 36）
+
+// ============================================================================
+// ★ 2026-09-17「波次数据历史记录」列定义
+//   第 10 列「格口绑定」= 该波次自己的绑定记录格口数（= 切回时恢复的格口数；
+//   0 → 红字「无绑定记录」）。列头/取数/弹窗口径都保留，**只是默认隐藏**（现场要求）。
+//   · 恢复显示：把 setupUI() 里 setColumnHidden(WAVE_RECORDS_BIND_COL, true) 的 true 改成 false；
+//   · 隐藏不影响「查看绑定」按钮（只读弹窗仍在，内容与切回取数同一 SQL）。
+// ============================================================================
+static const int WAVE_RECORDS_COLUMN_COUNT = 10;   // 波次记录列表列数（含隐藏列）
+static const int WAVE_RECORDS_BIND_COL     = 9;    // 「格口绑定」列索引（0-based）
 #include <QClipboard>      // ★ 2026-09-14 计划分配表：复制为文本
+#include <QTime>           // ★ 2026-09-16 需求⑨：日志页效率面板"本小时累计"（按小时归并分钟桶）
 
 // ============================================================================
 // ★ 2026-09-13 UI改版说明（第二行 = 左侧标签页多页窗口）：
@@ -67,6 +93,10 @@ static const int LIVE_TABLE_MAX_ROWS = 5000;
 // 实时面板占位行状态文本（用于识别"仍是占位、未被 PLC 反馈补全"）
 static const char* LIVE_STATUS_PENDING = "待落格";
 
+// ★ 2026-09-15 实时面板「原始报文悬停提示」缓存上限（件）：
+//   只保留最近 N 件 EPC 的整帧原文提示，长期运行内存有界；超出按 FIFO 淘汰
+static const int LIVE_FRAME_NOTE_MAX = 3000;
+
 // ============================================================================
 // ★ 2026-09-10 查询更新：格口号归一（显示与匹配统一口径）
 //   现场三种写法 → 统一内部 3 位 key（与 PLC 反馈 / 绑定 / DB 存储一致）：
@@ -78,6 +108,231 @@ static QString gridKeyOf(const QString& gridStr)
 {
     return normalizeGridKey(gridStr);
 }
+
+// ============================================================================
+// ★ 2026-09-16 需求④：运行日志页右侧的「RFID 推送效率统计（当日观察）」面板
+//
+//   显隐由「任务接收控制」区的「效率统计」按钮控制（可勾选、**默认开启**）；
+//   面板**按需懒创建**（首次显示时才 new）——那时 setupCore() 已建好 HttpServer，
+//   不会出现"面板已建但 m_srv 还是空指针"的瞬间。
+//
+//   数据源与口径**完全复用**既有实现（不新增统计逻辑，避免两套口径）：
+//     · 当前效率   = rfidPushPerMinute()   —— 滑动 60 秒窗口（实时）
+//     · 当日峰值   = peakPerMinuteToday()  —— 当日 1 分钟窗口最高件数（跨日自动重置并落库 daily_peak）
+//     · 本次累计   = rfidPushTotal()       —— 本次运行累计推送件数（跨波次不清零）
+//     · 本小时累计 = 当日分钟桶里属于当前小时的桶之和（纯函数 sumMinuteBucketsOfHour）
+//     · 趋势图     = efficiencySeries()    —— 最近30个整分钟桶 / 今日0~23时每小时峰值
+//
+//   刷新策略（避免"看效率反而拖慢主流程"）：
+//     · 由主界面 1 秒刷新定时器驱动 tick()；面板不可见（切到别的标签页/按钮弹起）时直接返回
+//     · 一次 efficiencySeries() 同时取"分钟桶 + 小时峰值"（同一次加锁，不会读到两个瞬间）
+//   两图用按钮切换而非上下堆叠：日志页右侧是窄栏，叠两张图会被压扁看不清。
+// ============================================================================
+
+// ★ 本小时累计 = 把"当日分钟桶序列"里属于**当前小时**的桶相加
+//   （序列按"旧→新"排列，最后一个桶 = 当前分钟；由 efficiencySeries(N) 给出）
+//   抽成纯函数便于单独核对：这是面板唯一的派生计算。
+static int sumMinuteBucketsOfHour(const QVector<int>& minuteBuckets, qint64 nowEpochMin, int hour)
+{
+    int sum = 0;
+    for (int i = 0; i < minuteBuckets.size(); ++i)
+    {
+        const qint64 bucket = nowEpochMin - (minuteBuckets.size() - 1 - i);   // 旧 → 新
+        if (QDateTime::fromMSecsSinceEpoch(bucket * 60000).time().hour() == hour)
+            sum += minuteBuckets[i];
+    }
+    return sum;
+}
+
+class LogEfficiencyPanel : public QWidget
+{
+public:
+    explicit LogEfficiencyPanel(HttpServer* srv, QWidget* parent = nullptr)
+        : QWidget(parent), m_srv(srv)
+    {
+        QVBoxLayout* lay = new QVBoxLayout(this);
+        lay->setContentsMargins(4, 4, 4, 4);
+        lay->setSpacing(4);
+
+        QLabel* title = new QLabel(QString::fromUtf8("RFID 推送效率统计（当日观察）"), this);
+        title->setStyleSheet("font-size: 13px; font-weight: bold; color: #333;");
+        lay->addWidget(title);
+
+        // ── 四个关键数字（2×2）──
+        QGridLayout* statGrid = new QGridLayout();
+        statGrid->setHorizontalSpacing(8);
+        statGrid->setVerticalSpacing(2);
+        m_lblCur  = makeVal();
+        m_lblPeak = makeVal();
+        m_lblHour = makeVal();
+        m_lblAll  = makeVal();
+        statGrid->addWidget(makeCap(QString::fromUtf8("当前(1分钟)")), 0, 0);
+        statGrid->addWidget(m_lblCur,  0, 1);
+        statGrid->addWidget(makeCap(QString::fromUtf8("当日峰值")),    0, 2);
+        statGrid->addWidget(m_lblPeak, 0, 3);
+        statGrid->addWidget(makeCap(QString::fromUtf8("本小时累计")),  1, 0);
+        statGrid->addWidget(m_lblHour, 1, 1);
+        statGrid->addWidget(makeCap(QString::fromUtf8("本次累计")),    1, 2);
+        statGrid->addWidget(m_lblAll,  1, 3);
+        lay->addLayout(statGrid);
+
+        // ── 图类型切换（窄栏下两图堆叠会看不清，改为切换）──
+        QHBoxLayout* btnRow = new QHBoxLayout();
+        m_btnMin = new QPushButton(QString::fromUtf8("最近30分钟"), this);
+        m_btnDay = new QPushButton(QString::fromUtf8("今日0~23点"), this);
+        for (QPushButton* b : {m_btnMin, m_btnDay})
+        {
+            b->setCheckable(true);
+            b->setMinimumHeight(26);
+            b->setStyleSheet(
+                "QPushButton { font-size: 12px; padding: 2px 10px; border: 1px solid #bbb;"
+                "  border-radius: 4px; background: #f5f5f5; color: #333; }"
+                "QPushButton:checked { background: #26A96C; color: white; border-color: #1E8A57;"
+                "  font-weight: bold; }");
+            btnRow->addWidget(b);
+        }
+        m_btnMin->setChecked(true);
+        lay->addLayout(btnRow);
+
+        m_plot = new QCustomPlot(this);
+        m_plot->setMinimumHeight(160);
+        m_bars = new QCPBars(m_plot->xAxis, m_plot->yAxis);
+        m_bars->setPen(Qt::NoPen);
+        m_bars->setBrush(QColor("#26A96C"));
+        m_line = m_plot->addGraph();
+        m_line->setPen(QPen(QColor("#F37021"), 2));
+        m_line->setAdaptiveSampling(true);
+        m_plot->yAxis->setLabel(QString());
+        m_plot->yAxis->setNumberFormat("f");
+        m_plot->yAxis->setNumberPrecision(0);
+        m_plot->xAxis->setTickLabelRotation(60);
+        m_plot->xAxis->setTickLabelFont(QFont(font().family(), 8));
+        m_plot->yAxis->setTickLabelFont(QFont(font().family(), 8));
+        lay->addWidget(m_plot, 1);
+
+        QLabel* tip = new QLabel(QString::fromUtf8(
+            "口径：当前=滑动60秒窗口；当日峰值=当日1分钟窗口最高件数；\n"
+            "本小时累计=本小时各分钟桶之和；本次累计=程序启动至今（跨波次不清零）。\n"
+            "面板不可见时不刷新，不影响分拣主流程。"), this);
+        tip->setStyleSheet("font-size: 11px; color: #888;");
+        tip->setWordWrap(true);
+        lay->addWidget(tip);
+
+        connect(m_btnMin, &QPushButton::clicked, this, [this]() {
+            m_btnDay->setChecked(false); m_btnMin->setChecked(true); refresh(); });
+        connect(m_btnDay, &QPushButton::clicked, this, [this]() {
+            m_btnMin->setChecked(false); m_btnDay->setChecked(true); refresh(); });
+
+        refresh();
+    }
+
+    // 由 MainWindow 的 1 秒刷新定时器驱动；面板不可见时直接返回（零查询开销）
+    void tick() { if (isVisible()) refresh(); }
+
+private:
+    QLabel* makeCap(const QString& text) const
+    {
+        QLabel* l = new QLabel(text, const_cast<LogEfficiencyPanel*>(this));
+        l->setStyleSheet("font-size: 12px; color: #666;");
+        return l;
+    }
+    QLabel* makeVal() const
+    {
+        QLabel* l = new QLabel("--", const_cast<LogEfficiencyPanel*>(this));
+        l->setStyleSheet("font-size: 14px; font-weight: bold; color: #1565C0;");
+        return l;
+    }
+
+    void refresh()
+    {
+        if (!m_srv || !m_plot) return;
+
+        QVector<int> lastMin, hourPeaks;
+        m_srv->efficiencySeries(30, &lastMin, &hourPeaks);   // 一次加锁取两组，避免读到两个瞬间
+
+        const int perMin  = m_srv->rfidPushPerMinute();
+        const int peakMin = m_srv->peakPerMinuteToday();
+
+        // 本小时累计
+        int hourSum = 0;
+        {
+            QVector<int> dayMin;
+            m_srv->efficiencySeries(24 * 60, &dayMin, nullptr);   // 当日分钟桶（≤1440 点）
+            hourSum = sumMinuteBucketsOfHour(dayMin, QDateTime::currentMSecsSinceEpoch() / 60000,
+                                             QTime::currentTime().hour());
+        }
+
+        m_lblCur->setText(QString::fromUtf8("%1 件（%2 件/时）").arg(perMin).arg(perMin * 60));
+        m_lblPeak->setText(QString::fromUtf8("%1 件/分（%2 件/时）").arg(peakMin).arg(peakMin * 60));
+        m_lblPeak->setStyleSheet(peakMin > 0
+            ? "font-size: 14px; font-weight: bold; color: #E65100;"
+            : "font-size: 14px; font-weight: bold; color: #1565C0;");
+        m_lblHour->setText(QString::fromUtf8("%1 件").arg(hourSum));
+        m_lblAll->setText(QString::fromUtf8("%1 件").arg(m_srv->rfidPushTotal()));
+
+        if (m_btnDay->isChecked())
+        {
+            // ── 今日 0~23 时：每小时峰值效率（件/时）折线 ──
+            m_bars->setVisible(false);
+            m_line->setVisible(true);
+            QVector<double> keys(24), vals(24);
+            QVector<double> ticks;
+            QVector<QString> tickLabels;
+            for (int h = 0; h < 24; ++h)
+            {
+                keys[h] = h;
+                vals[h] = hourPeaks[h] * 60.0;   // 该小时峰值件数 × 60 = 件/时
+                ticks << h;
+                tickLabels << QString("%1点").arg(h);
+            }
+            m_line->setData(keys, vals);
+            QSharedPointer<QCPAxisTickerText> ticker = QSharedPointer<QCPAxisTickerText>::create();
+            ticker->addTicks(ticks, tickLabels);
+            m_plot->xAxis->setTicker(ticker);
+            m_plot->xAxis->setRange(-0.5, 23.5);
+        }
+        else
+        {
+            // ── 最近 30 分钟：每分钟推送件数柱状 ──
+            m_line->setVisible(false);
+            m_bars->setVisible(true);
+            QVector<double> keys(lastMin.size()), vals(lastMin.size());
+            QVector<double> ticks;
+            QVector<QString> tickLabels;
+            const qint64 nowMin = QDateTime::currentMSecsSinceEpoch() / 60000;
+            for (int i = 0; i < lastMin.size(); ++i)
+            {
+                keys[i] = i;
+                vals[i] = lastMin[i];
+                ticks << i;
+                tickLabels << QDateTime::fromMSecsSinceEpoch((nowMin - (lastMin.size() - 1 - i)) * 60000)
+                                  .toString("HH:mm");
+            }
+            m_bars->setData(keys, vals);
+            QSharedPointer<QCPAxisTickerText> ticker = QSharedPointer<QCPAxisTickerText>::create();
+            ticker->addTicks(ticks, tickLabels);
+            m_plot->xAxis->setTicker(ticker);
+            m_plot->xAxis->setRange(-0.6, qMax(lastMin.size() - 0.4, 0.4));
+        }
+        m_plot->yAxis->rescale(true);
+        const double yMax = m_plot->yAxis->range().upper;
+        m_plot->yAxis->setRange(0, yMax > 0 ? yMax * 1.15 : 10.0);
+        m_plot->replot(QCustomPlot::rpQueuedReplot);
+
+        m_plot->setToolTip(QString::fromUtf8("当日观察 · %1").arg(QDate::currentDate().toString("yyyy-MM-dd")));
+    }
+
+    HttpServer*  m_srv   = nullptr;
+    QCustomPlot* m_plot  = nullptr;
+    QCPBars*     m_bars  = nullptr;
+    QCPGraph*    m_line  = nullptr;
+    QLabel*      m_lblCur  = nullptr;
+    QLabel*      m_lblPeak = nullptr;
+    QLabel*      m_lblHour = nullptr;
+    QLabel*      m_lblAll  = nullptr;
+    QPushButton* m_btnMin  = nullptr;
+    QPushButton* m_btnDay  = nullptr;
+};
 
 // ============================================================================
 // ★ 2026-09-13 实时面板：把一行单元格直接写到表格第 row 行（不插入新行）
@@ -308,6 +563,17 @@ public:
             << "序号" << "波次号" << "计划格口" << "格口类型" << "计划数量" << "已分拣数量" << "库位" << "容器号(WMS)");
         tabs->addTab(m_tblPlan, QString::fromUtf8("计划明细"));
 
+        // ★ 2026-09-15 需求②：该 EPC 的全部 RFID 原始推送帧（识别前后 + 整帧原文）
+        m_tblRaw = new QTableWidget();
+        styleDetailTable(m_tblRaw, QStringList()
+            << "序号" << "落库时间" << "识别后EPC" << "识别前EPC原文" << "流水号" << "设备编码"
+            << "小车号" << "字节数" << "整帧原始报文");
+        m_tblRaw->setToolTip(QString::fromUtf8(
+            "rfid_raw：该 EPC 的全部原始推送帧（可按识别前后 EPC 双通道命中）\n"
+            "同一 EPC 多行 = 双读/重扫重投；NOREAD 行 = 未读到标签（仅留痕，不进入分拣）\n"
+            "「整帧原始报文」列可选中复制，用于与推送侧逐字节核对"));
+        tabs->addTab(m_tblRaw, QString::fromUtf8("RFID原始报文"));
+
         root->addWidget(grpInfo);
         root->addWidget(tabs, 1);
 
@@ -363,7 +629,10 @@ private:
         if (!m_db) return;
 
         // ── ① 分拣/落格历史 ──
-        const QVector<SortingRecord> recs = m_db->queryByBarcode(m_epc, SORTING_QUERY_MAX_RESULTS);
+        //   ★ 2026-09-16 需求③：EPC 全信息窗展示该 EPC 的**完整历史**（不受"分拣记录查询"页的
+        //     日期区间约束），故传空 QDateTime = 不加日期条件（DB 层对该侧不做过滤）
+        const QVector<SortingRecord> recs = m_db->queryByBarcode(m_epc, QDateTime(), QDateTime(),
+                                                                 SORTING_QUERY_MAX_RESULTS);
         for (int i = 0; i < recs.size(); ++i)
         {
             const SortingRecord& r = recs[i];
@@ -477,6 +746,34 @@ private:
             m_lblExc->setText(QString::fromUtf8("无异常留痕"));
             m_lblExc->setStyleSheet("font-size: 13px; font-weight: bold; color: #2E7D32;");
         }
+
+        // ── ④ ★ 2026-09-15 RFID 原始推送帧（需求②：保留原始报文，可按识别前后 EPC 双通道回查）──
+        {
+            const QVector<RfidRawRecord> raws = m_db->queryRfidRawByEpc(m_epc, 200);
+            for (int i = 0; i < raws.size(); ++i)
+            {
+                const RfidRawRecord& r = raws[i];
+                fill(m_tblRaw, QStringList()
+                    << QString::number(i + 1)
+                    << r.time
+                    << (r.epc.isEmpty()
+                            ? (r.noread ? QString::fromUtf8("（NOREAD 未读到标签）") : "--")
+                            : r.epc)
+                    << (r.epcRaw.isEmpty() ? r.epc : r.epcRaw)
+                    << (r.seq.isEmpty() ? QStringLiteral("-") : r.seq)
+                    << (r.devCode.isEmpty() ? QStringLiteral("-") : r.devCode)
+                    << (r.carNum.isEmpty() ? QStringLiteral("-") : r.carNum)
+                    << QString::number(r.bytes)
+                    << (r.rawFrame.isEmpty() ? QString::fromUtf8("（无整帧原文：HTTP 直推入口）") : r.rawFrame));
+            }
+            if (raws.isEmpty())
+            {
+                fill(m_tblRaw, QStringList()
+                    << "--" << "--" << m_epc << "--" << "--" << "--" << "--" << "--"
+                    << QString::fromUtf8("（该 EPC 无原始报文明细：可能为改造前的历史数据，"
+                                         "或原始报文已超保留期 %1 天被清理）").arg(RFID_RAW_RETAIN_DAYS));
+            }
+        }
     }
 
 private:
@@ -495,6 +792,7 @@ private:
     QTableWidget*    m_tblSorted = nullptr;
     QTableWidget*    m_tblExc = nullptr;
     QTableWidget*    m_tblPlan = nullptr;
+    QTableWidget*    m_tblRaw  = nullptr;   // ★ 2026-09-15 RFID 原始推送帧（rfid_raw）
 };
 
 // ============================================================================
@@ -706,6 +1004,11 @@ MainWindow::MainWindow(QWidget* parent)
     setupConnections();
     setupCore();   // ★ 2026-09-06 解耦：常驻实例 + 一次性配置/信号 + 设备(PLC/RFID)自动连接
 
+    // ★ 2026-09-16 需求④：「效率统计」按钮**默认开启** —— 面板是懒创建的，而 setChecked(true)
+    //   发生在 setupUI 期间（那一刻 HttpServer 还没建），故这里在 setupCore() 之后显式应用一次，
+    //   确保"开机即在运行日志页右侧显示效率面板"
+    applyLogEffPanelVisible(m_btnEffChart && m_btnEffChart->isChecked());
+
 #if AUTO_START_RECEIVE_ON_BOOT
     appendLog("程序已启动：PLC/RFID 设备自动连接中；即将自动开始接收任务"
               "（开机自动执行一次，之后的启停仍由按钮控制）");
@@ -766,13 +1069,28 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         auto ret = QMessageBox::question(this, "确认退出",
             m_bRunning
-                ? QString("正在接收任务，确定退出吗？\n（建议先点击\"结束任务\"完成完结回传；退出后设备连接将断开）")
-                : QString("正在停止接收（完结回传未完成），确定退出吗？\n（H8 未确认消息将在下次开始接收时自动补传）"),
+                ? QString("正在接收任务，确定退出吗？\n\n"
+                          "① 当前波次将被「切出」保存：进度/明细/计划/落格记录保留在数据库，\n"
+                          "   格口绑定状态一并归档留痕（可追溯）；\n"
+                          "② 下次打开软件为「新任务状态」（格口全部未绑定）；\n"
+                          "③ 需要继续上次任务时，从「波次数据记录」选中该波次点「切换」即可恢复。\n\n"
+                          "（建议先点击\"结束任务\"完成完结回传；退出后设备连接将断开）")
+                : QString("正在停止接收（完结回传未完成），确定退出吗？\n"
+                          "（H8 未确认消息将在下次开始接收时自动补传）"),
             QMessageBox::Yes | QMessageBox::No);
         if (ret != QMessageBox::Yes)
         {
             event->ignore();
             return;
+        }
+        // ★ 2026-09-15 需求①：关闭即切出当前波次 —— 保留全部信息与格口绑定状态到数据库便于回溯；
+        //   下次开启为新任务状态（清空格口绑定关系）。放在停止收尾之前执行，
+        //   保证"归档的是关掉那一刻的绑定映射"。
+        //   异常关闭（崩溃/断电/强杀）不走此处 → 由下次启动 restoreWaveFromDB() 兜底归档。
+        if (m_pServer)
+        {
+            appendLog("[切出] 关闭软件：正在切出当前波次并归档格口绑定状态（数据保留于数据库，可回溯/可切回）");
+            m_pServer->switchOutWaveForExit();
         }
         // ★ 2026-09-02：退出前执行停止收尾（幂等），避免服务/线程随窗口析构残留
         // ★ 2026-09-06 解耦：此处仅停接收层；设备层由 ~HttpServer 收尾
@@ -838,13 +1156,11 @@ void MainWindow::setupUI()
     serverLayout->setAlignment(Qt::AlignCenter);
 
     // ★ 2026-09-06 解耦：按钮=控制「任务接收」开关；设备(PLC/RFID)连接随程序启动常驻
+    //   ★ 2026-09-17 现场要求：本按钮放大（主操作按钮）——尺寸/字号口径见 startStopButtonStyle()
     m_btnStartStop = new QPushButton(QCoreApplication::translate("MainWindow", "开始接收任务"));
-    m_btnStartStop->setMinimumWidth(120);
-    m_btnStartStop->setMinimumHeight(36);
-    m_btnStartStop->setStyleSheet(
-        "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
-        "border-radius: 4px; padding: 6px 16px; }"
-        "QPushButton:hover { background-color: #45a049; }");
+    m_btnStartStop->setMinimumWidth(START_STOP_BTN_MIN_W);
+    m_btnStartStop->setMinimumHeight(START_STOP_BTN_MIN_H);
+    m_btnStartStop->setStyleSheet(startStopButtonStyle("#4CAF50", "#45a049"));
 
     m_lblServerStatus = new QLabel(QCoreApplication::translate("MainWindow", "● 未接收任务"));
     m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
@@ -892,7 +1208,26 @@ void MainWindow::setupUI()
         "对当前所有已绑定容器逐个执行 H7 满箱回传（同一批，自动统计）\n"
         "有分拣记录的格口才发送；无记录的格口跳过\n"
         "不影响波次状态机与格口启用状态，失败报文保留在 Outbox 可重传"));
-    serverLayout->addWidget(m_btnOneKeyFullbox, 0, Qt::AlignHCenter);
+    // ★ 2026-09-16 现场需求④：按钮右侧显示三项计数（本波次满箱回传次数 / 本次一键回传次数 / 本次一键失败次数）
+    m_lblFullboxCount = new QLabel();
+    m_lblFullboxCount->setStyleSheet("font-size: 12px; color: #555; padding: 0 4px;");
+    m_lblFullboxCount->setText(QString::fromUtf8("本波次满箱回传 0 次 ｜ 本次一键 成功 0 / 失败 0"));
+    m_lblFullboxCount->setToolTip(QCoreApplication::translate("MainWindow",
+        "口径说明：\n"
+        "  本波次满箱回传 = 当前波次已生成的 H7 满箱报文总数（含自动满箱、手动满箱与一键回传），\n"
+        "                   括号内为 成功/待发/失败 拆分；实时取自 outbox_fullbox\n"
+        "  本次一键 成功   = 本次「一键满箱回传」成功生成并入 Outbox 的报文件数（无记录格口跳过，不计入）\n"
+        "  本次一键 失败   = 本次未能生成报文（Outbox 写入失败等）＋ 本次生成的报文最终失败（重试耗尽）的件数；\n"
+        "                   失败报文保留在 Outbox 可重传，分拣不受影响\n"
+        "  切换波次时「本次一键」计数自动归零，「本波次」数值随之切换到新波次"));
+    {
+        QHBoxLayout* oneKeyRow = new QHBoxLayout();
+        oneKeyRow->addStretch();
+        oneKeyRow->addWidget(m_btnOneKeyFullbox);
+        oneKeyRow->addWidget(m_lblFullboxCount);   // ★ 需求④：计数文字紧跟按钮
+        oneKeyRow->addStretch();
+        serverLayout->addLayout(oneKeyRow);
+    }
 
     // ★ 2026-09-07 布局：「未接收任务」状态 + 端口（水平同一行）
     QHBoxLayout* statusPortRow = new QHBoxLayout();
@@ -931,10 +1266,17 @@ void MainWindow::setupUI()
     m_cmbFailedH7->setStyleSheet("QComboBox { font-size: 12px; padding: 2px 4px; }");
     if (m_cmbFailedH7->lineEdit())
         m_cmbFailedH7->lineEdit()->setPlaceholderText(
-            QCoreApplication::translate("MainWindow", "选择失败格口，或手输格口号"));
+            QCoreApplication::translate("MainWindow", "选择本波次失败格口，或手输格口号"));
+    // ★ 2026-09-16 现场需求⑤：下拉只列**当前运行波次**的失败/已取消 H7（不再混入其它波次历史）
     m_cmbFailedH7->setToolTip(QCoreApplication::translate("MainWindow",
-        "下拉=全部历史失败/已取消重试的满箱报文（格口·波次·失败条数）：选中后点按钮按该格口精确重传；\n"
+        "下拉=**当前运行波次**的失败/已取消满箱报文（格口·波次·失败条数）：选中后点按钮按该格口精确重传；\n"
+        "无事例时显示「本波次暂无失败记录」（无运行波次时显示「暂无运行波次」）\n"
         "也可直接手输格口号：对当前波次该格口的分拣记录生成新的 H7 满箱回传并上传"));
+
+    // ★ 2026-09-16 现场需求①：终态行（已完成/已取消）选中时禁用「切换选中波次」并给出正确入口提示。
+    //   说明：本连接放在表控件创建之后（「切换选中波次」按钮在下一段"波次数据历史记录"页创建），
+    //   故此处用指针判空的 lambda，运行时始终读取最新指针。见下方 setupUI 末尾的补充连接。
+
     m_cmbFailedH8 = new QComboBox();
     m_cmbFailedH8->setInsertPolicy(QComboBox::NoInsert);
     m_cmbFailedH8->setMinimumWidth(200);
@@ -961,11 +1303,53 @@ void MainWindow::setupUI()
         "QPushButton:hover { background-color: #00838F; }");
     m_btnViewWaveQueue->setToolTip(QCoreApplication::translate("MainWindow",
         "查看剩余待执行波次队列（含「接收新任务」选项：不处理排队波次，直接开始新任务）"));
-    // ── 第1行：查看接收波次队列 + 设置配置（★ 2026-09-08 UI更新：两者同一水平行）──
+    // ══════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-16 需求③④：「效率统计」按钮（原在「分拣记录查询」页条件行）
+    //   · 位置：任务接收控制区，与「查看接收波次队列」「设置配置」同一水平行，
+    //           **位于「设置配置」左侧**
+    //   · 行为：**可勾选、默认开启（按下态）**；点击 = 显示/隐藏「运行日志」页右侧的
+    //           「RFID 推送效率统计（当日观察）」面板（面板按需懒创建，见日志页）
+    //   · 口径与数据源完全复用既有统计接口（rfidPushPerMinute / peakPerMinuteToday /
+    //     efficiencySeries / rfidPushTotal），不新增第二套统计逻辑
+    // ══════════════════════════════════════════════════════════════════════════
+    m_btnEffChart = new QPushButton(QCoreApplication::translate("MainWindow", "效率统计"));
+    m_btnEffChart->setCheckable(true);
+    m_btnEffChart->setChecked(true);        // ★ 默认为"开启"（按下态）
+    m_btnEffChart->setMinimumHeight(30);
+    m_btnEffChart->setStyleSheet(
+        "QPushButton { background-color: #f5f5f5; color: #333; font-size: 12px; font-weight: bold;"
+        "  border: 1px solid #26A96C; border-radius: 4px; padding: 4px 12px; }"
+        "QPushButton:hover { background-color: #e8f5ef; }"
+        "QPushButton:checked { background-color: #26A96C; color: white; }");
+    m_btnEffChart->setToolTip(QCoreApplication::translate("MainWindow",
+        "显示/隐藏「运行日志」页右侧的 RFID 推送效率统计面板（当日观察）：\n"
+        "  · 默认开启（按钮按下 = 面板显示）\n"
+        "  · 面板内容：当前(1分钟)/当日峰值/本小时累计/本次累计 + 最近30分钟柱状 / 今日0~23点折线\n"
+        "  · 关闭后日志区自动吃满宽度；面板不可见时不刷新，不影响分拣主流程"));
+    connect(m_btnEffChart, &QPushButton::toggled, this, &MainWindow::applyLogEffPanelVisible);
+
+    // ── 第1行：查看接收波次队列 + 效率统计 + 设置配置 + 新任务（同一水平行）──
+    //   ★ 2026-09-17 现场要求：「新任务」按钮从「波次数据历史记录」页**移到「设置配置」旁边**
+    //     （任务接收控制区同一行，紧邻「设置配置」右侧）——现场把"开新任务"当日常主操作，
+    //      放这里伸手可及，不用先切到波次记录页。
+    //     行为完全不变：仍调用 onStartNewWaveTask()（保存当前波次进度/数据 → 内存清空回空闲）。
+    m_btnNewTask = new QPushButton(QCoreApplication::translate("MainWindow", "新任务"));
+    m_btnNewTask->setMinimumHeight(34);
+    m_btnNewTask->setFont(QFont(font().family(), 13));
+    m_btnNewTask->setStyleSheet(
+        "QPushButton { background-color: #FF5722; color: white; font-size: 13px; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background-color: #E64A19; }");
+    m_btnNewTask->setToolTip(QCoreApplication::translate("MainWindow",
+        "开始新任务：保存当前波次的进度与全部数据（保留于数据库，可随时从「波次数据历史记录」切换回来），\n"
+        "清空内存回到空闲状态等待接收新波次；当前波次仍在作业中时会先要求点「结束任务」。"));
+
     QHBoxLayout* viewQueueRow = new QHBoxLayout();
     viewQueueRow->addStretch();
     viewQueueRow->addWidget(m_btnViewWaveQueue);
-    viewQueueRow->addWidget(btnSettings);   // ★ 2026-09-08「设置配置」移到与「查看接收波次队列」同一行
+    viewQueueRow->addWidget(m_btnEffChart);   // ★ 需求③：效率统计在「设置配置」左边
+    viewQueueRow->addWidget(btnSettings);     // ★ 2026-09-08「设置配置」
+    viewQueueRow->addWidget(m_btnNewTask);    // ★ 2026-09-17「新任务」紧邻「设置配置」
     viewQueueRow->addStretch();
     serverLayout->addLayout(viewQueueRow);
 
@@ -1125,6 +1509,9 @@ void MainWindow::setupUI()
     // ★ 2026-09-08 UI调整：字段改为两列成对排布，降低首行占用高度
     // ═══════════════════════════════════════════
     QGroupBox* grpWave = new QGroupBox("波次信息");
+    // ★ 2026-09-17 现场要求：「运行日志」页右侧的**效率统计面板宽度与「波次信息」面板相同**（上下对齐）
+    //   —— 记下波次信息面板指针，供 syncLogEffPanelWidth() 按它的实际宽度设置日志页分隔条
+    m_grpWaveInfo = grpWave;
     QGridLayout* waveLayout = new QGridLayout(grpWave);
     // ★ 2026-09-13 客户要求「波次面板字体放大一点」：13px → 15px（标签与数值同步）
     //   标签宽度也相应放宽，避免放大后文字被挤/换行
@@ -1278,24 +1665,71 @@ void MainWindow::setupUI()
         "border-radius: 4px; padding: 6px 16px; }"
         "QPushButton:hover { background-color: #C62828; }");
     btnClearBinds->setToolTip(QString::fromUtf8("清空全部格口当前容器绑定（恢复初始状态）；历史记录归档保留在数据库，可追溯/可沿用"));
-    // ★ 2026-09-11 图例补充橙色态（已解锁·待重绑）
-    QLabel* bindHint = new QLabel(QString::fromUtf8("绿色=已绑定  灰色=未绑定  黄色=满箱锁格  橙色=已解锁·待重绑"));
-    bindHint->setStyleSheet("font-size: 12px; color: #888;");
+    // ★ 2026-09-16 需求⑦：图例改为"整格底色口径"（色名按实际颜色着色，与面板一一对应）
+    //   ★ 本次更新：绿色改为 #26A96C；**未绑定不设颜色**（无色=默认状态）→ 图例不再给它色块
+    QLabel* bindHint = new QLabel(QString::fromUtf8(
+        "<span style='color:%1;'>■</span> 绿色=已绑定&nbsp;&nbsp;"
+        "<span style='color:%2;'>■</span> 橙色=满箱锁格&nbsp;&nbsp;"
+        "<span style='color:%3;'>■</span> 红色=已解锁·待重绑&nbsp;&nbsp;"
+        "未绑定=无底色（默认）")
+        .arg(BP_COLOR_BOUND).arg(BP_COLOR_LOCKED).arg(BP_COLOR_REBIND));
+    bindHint->setStyleSheet("font-size: 12px; color: #555;");
+    bindHint->setToolTip(QString::fromUtf8(
+        "整格底色 = 该格口的容器绑定状态（同格口多状态同时成立时优先级：锁格 > 待重绑 > 已绑定 > 未绑定）\n"
+        "绿=已绑定容器；橙=满箱锁格（PLC 锁格位置位）；红=已物理解锁但仍禁用（等 WMS 重发 H6）；\n"
+        "未绑定 = **不设颜色**（面板默认底色，深灰字）\n"
+        "右侧「异常口：N格口」= 配置的物理异常口（exceptionGrid）：不在此面板展示（不显示格子、不计入计数），\n"
+        "该口只收超计划件、需人工清出、不上传 WMS。"));
     bindBtnRow->addWidget(btnRefreshBind);
     bindBtnRow->addWidget(btnClearBinds);
     bindBtnRow->addWidget(bindHint);
+
+    // ★ 2026-09-17 现场要求：面板上明文标出被隐藏的异常口（表述：异常口：66格口）
+    //   格号取自配置 exceptionGrid（兼容 "66"/"066"/"22066" 写法，统一显示为十进制格口号）；
+    //   未配置（空 / "0"）→ 显示"异常口：未配置"（此时面板不隐藏任何格口）。
+    m_lblExceptionGrid = new QLabel();
+    {
+        const QString excCfg  = ConfigManager::instance()->config().exceptionGrid.trimmed();
+        const bool    excNone = (excCfg.isEmpty() || excCfg == "0");
+        const int     excNum  = excNone ? -1 : parseWmsGridCodeToInt(excCfg);
+        if (excNum > 0)
+        {
+            m_lblExceptionGrid->setText(QString::fromUtf8("异常口：%1格口").arg(excNum));
+            m_lblExceptionGrid->setToolTip(QString::fromUtf8(
+                "配置的物理异常口 = %1 号格口（<exceptionGrid>%2</exceptionGrid>）。\n"
+                "该口**不在本面板展示**：不显示格子、不计入「已绑定/已锁格/未绑定」计数。\n"
+                "它的用途：承接超计划件，需人工清出；该口的落格件不上传 WMS（不进 H7）。")
+                .arg(excNum).arg(excCfg));
+        }
+        else
+        {
+            m_lblExceptionGrid->setText(QString::fromUtf8("异常口：未配置"));
+            m_lblExceptionGrid->setToolTip(QString::fromUtf8(
+                "当前未配置物理异常口（<exceptionGrid> 为空或 0）→ 面板**不隐藏任何格口**（66 格全部展示）。"));
+        }
+        m_lblExceptionGrid->setStyleSheet("font-size: 12px; font-weight: bold; color: #555;");
+    }
+    bindBtnRow->addWidget(m_lblExceptionGrid);
+    // ★ 2026-09-17 绑定"落库失败"红字（默认隐藏）：此前失败只写 data.log，
+    //   现场表现为"面板显示已绑定、库里一行都没有"→ 切回该波次无绑定可恢复。
+    m_lblBindPersistFailed = new QLabel();
+    m_lblBindPersistFailed->setStyleSheet("font-size: 13px; font-weight: bold; color: #D32F2F;");
+    m_lblBindPersistFailed->setVisible(false);
+    bindBtnRow->addWidget(m_lblBindPersistFailed);
     bindBtnRow->addStretch();
 
-    // 已绑定/已锁格/未绑定计数
+    // 已绑定/已锁格/未绑定计数（★ 2026-09-16：口径与面板可见格口数一致，不含被隐藏的异常口）
     m_lblBoundCount = new QLabel();
-    m_lblLockedCount = new QLabel();   // ★ 2026-09-11：已锁格数量（黄色）
+    m_lblLockedCount = new QLabel();   // ★ 2026-09-11：已锁格数量
     m_lblUnboundCount = new QLabel();
-    m_lblBoundCount->setStyleSheet("font-size: 13px; font-weight: bold; color: #4CAF50; padding: 0 8px;");
-    // ★ 黄色 = 与格口"锁格"黄标（#FFC107 底、白字）同色系的计数标：底同色 + 深琥珀字（小字号可读）
+    m_lblBoundCount->setStyleSheet(
+        QString("font-size: 13px; font-weight: bold; color: %1; padding: 0 8px;").arg(BP_COLOR_BOUND));
+    // ★ 底色与"锁格"格口同色系：底同色 + 白字（小字号可读）
     m_lblLockedCount->setStyleSheet(
-        "font-size: 13px; font-weight: bold; color: #5D4000; background-color: #FFC107;"
-        " border-radius: 7px; padding: 1px 8px;");
-    m_lblUnboundCount->setStyleSheet("font-size: 13px; font-weight: bold; color: #E53935; padding: 0 8px;");
+        QString("font-size: 13px; font-weight: bold; color: #FFFFFF; background-color: %1;"
+                " border-radius: 7px; padding: 1px 8px;").arg(BP_COLOR_LOCKED));
+    m_lblUnboundCount->setStyleSheet(
+        QString("font-size: 13px; font-weight: bold; color: %1; padding: 0 8px;").arg(BP_COLOR_REBIND));
     bindBtnRow->addWidget(m_lblBoundCount);
     bindBtnRow->addWidget(m_lblLockedCount);   // 紧跟「已绑定」显示
     bindBtnRow->addWidget(m_lblUnboundCount);
@@ -1315,17 +1749,28 @@ void MainWindow::setupUI()
     m_bindingGrid->setSpacing(2);
     m_bindingGrid->setContentsMargins(4, 4, 4, 4);
 
-    // 创建66个格口绑定标签（6列×11行）
+    // ★ 2026-09-16 需求⑦：外框样式统一由 tests/BindingPanelPolicy.h::bpFrameStyle() 给出
+    //   （有色态=底色+边框；未绑定=无色，只留边框 → 面板默认底色透出）
+    //   建格时即"未绑定"态 —— 开机为新任务状态（需求④），颜色与状态天然一致
+
+    // 创建格口绑定标签（6 列；★ 需求②：异常口整格不渲染，可见格按"可见序号"重排位置不留空洞）
+    int visIdx = 0;
     for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
     {
-        int gridNum = i + 1;
-        int col = i % m_bindingCols;
-        int row = i / m_bindingCols;
+        const int gridNum = i + 1;
+        if (isGridHiddenInBindingPanel(gridNum)) continue;   // ★ 需求②：异常口不渲染
 
-        // 每个格口一个 Frame 包裹
+        const int col = visIdx % m_bindingCols;
+        const int row = visIdx / m_bindingCols;
+        ++visIdx;
+
+        // 每个格口一个 Frame 包裹（★ 需求⑦：整格底色 = 绑定状态；未绑定=无色）
         QFrame* frame = new QFrame();
         frame->setFrameShape(QFrame::Box);
-        frame->setStyleSheet("QFrame { background: #f5f5f5; border: 1px solid #ddd; border-radius: 2px; }");
+        const QString initStyle = bpFrameStyle(BP_UNBOUND);   // ★ 未绑定：不设背景（无色）
+        frame->setStyleSheet(initStyle);
+        m_bindingFrames.append(frame);
+        m_bindingInitialStyles.append(initStyle);
         frame->setMinimumHeight(36);
 
         QHBoxLayout* fLayout = new QHBoxLayout(frame);
@@ -1333,25 +1778,31 @@ void MainWindow::setupUI()
         fLayout->setSpacing(1);
 
         // ★ 格口标签：优先使用 XML 自定义名，否则零填充序号
+        //   ★ 字号调大：11px → 13px；颜色在刷新时按状态切换（有色底=白字 / 无色底=深灰字）
         QString paddedNum = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
         QString displayName = ConfigManager::instance()->config().gridNames.value(QString::number(gridNum), paddedNum);
         QLabel* lblGrid = new QLabel(displayName);
         lblGrid->setFixedWidth(80);
         lblGrid->setAlignment(Qt::AlignCenter);
-        lblGrid->setStyleSheet("font-size: 11px; font-weight: bold; color: #333; border: none; background: transparent;");
+        lblGrid->setStyleSheet("font-size: 13px; font-weight: bold; color: #333333; border: none; background: transparent;");
 
-        // 绑定状态指示器标签
+        // ★ 2026-09-16 需求⑦：状态圆点去掉（整格底色已表达状态）——对象保留但隐藏，
+        //   这样 updateBindingPanel 内对它的赋值仍然安全（无需两处循环一起改结构）
         QLabel* lblStatus = new QLabel("--");
         lblStatus->setFixedWidth(12);
         lblStatus->setFixedHeight(12);
         lblStatus->setAlignment(Qt::AlignCenter);
         lblStatus->setStyleSheet(
-            "font-size: 10px; color: white; border-radius: 6px; background-color: #bbb;");
+            "font-size: 10px; color: white; border-radius: 6px; background-color: transparent;");
         lblStatus->setToolTip(QString("格口%1: 未绑定").arg(
             QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'))));
+        lblStatus->setVisible(false);
 
+        // ★ 字号调大：11px → 13px（初始为"未绑定"态 → 深灰字）
         QLabel* lblBox = new QLabel("--");
-        lblBox->setStyleSheet("font-size: 11px; color: #888; border: none; background: transparent;");
+        lblBox->setStyleSheet(QString("font-size: 13px; color: %1; font-weight: bold;"
+                                      " border: none; background: transparent;")
+                                  .arg(BP_TEXT_COLOR_PLAIN));
         lblBox->setMinimumWidth(90);
 
         fLayout->addWidget(lblGrid);
@@ -1364,6 +1815,7 @@ void MainWindow::setupUI()
         m_bindingLabels[i]    = lblStatus;
         m_bindingBoxLabels[i] = lblBox;
     }
+    m_bindingRows = (visIdx + m_bindingCols - 1) / m_bindingCols;   // ★ 按可见格口数计算行数
 
     scrollBinding->setWidget(m_bindingWidget);
     bindOuterLayout->addLayout(bindBtnRow);
@@ -1371,7 +1823,7 @@ void MainWindow::setupUI()
 
     // ═══════════════════════════════════════════
     // ★ 2026-09-13 标签页 ③：波次数据历史记录（原「波次数据记录（全部已传输波次）」）
-    //   刷新（手动） | 切换选中波次（恢复进度继续/终态载入查看） | 新任务（保留当前波次进度，清空待接收）
+    //   刷新（手动） | 切换选中波次（恢复进度继续；★ 2026-09-16 终态波次拒绝切回） | 新任务（保留当前波次进度，清空待接收）
     //   H7/H8 重传按钮位于「任务接收控制」区（主工作流保障，不随本面板操作）
     // ═══════════════════════════════════════════
     QGroupBox* grpUnfinished = new QGroupBox(QCoreApplication::translate("MainWindow", "波次数据历史记录（全部已传输波次）"));
@@ -1380,15 +1832,18 @@ void MainWindow::setupUI()
     QHBoxLayout* unfinishedBtnRow = new QHBoxLayout();
     m_btnRefreshWaves = new QPushButton(QCoreApplication::translate("MainWindow", "刷新"));
     m_btnResumeWave   = new QPushButton(QCoreApplication::translate("MainWindow", "切换选中波次"));
-    m_btnNewTask      = new QPushButton(QCoreApplication::translate("MainWindow", "新任务"));
+    // ★ 2026-09-17 新增：只读查看选中波次「每格最后绑定的容器」
+    //   现场问题"该波次下的格口绑定状态与显示不会随切回回溯"→ 给出不依赖切回的只读入口，
+    //   切回前即可核对"这个波次当时绑的是哪些箱子"，也是历史数据留存的可视化核对手段。
+    m_btnViewWaveBinds = new QPushButton(QCoreApplication::translate("MainWindow", "查看绑定"));
     m_btnRefreshWaves->setMinimumHeight(34);
     m_btnResumeWave->setMinimumHeight(34);
-    m_btnNewTask->setMinimumHeight(34);
+    m_btnViewWaveBinds->setMinimumHeight(34);
     // ★ 2026-09-13 需求：本页控件/字体整体放大（与"分拣记录查询"页统一）
     const QFont bigBtnFont(font().family(), 13);
     m_btnRefreshWaves->setFont(bigBtnFont);
     m_btnResumeWave->setFont(bigBtnFont);
-    m_btnNewTask->setFont(bigBtnFont);
+    m_btnViewWaveBinds->setFont(bigBtnFont);
     m_btnRefreshWaves->setStyleSheet(
         "QPushButton { background-color: #2196F3; color: white; font-size: 13px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 16px; }"
@@ -1397,21 +1852,36 @@ void MainWindow::setupUI()
         "QPushButton { background-color: #4CAF50; color: white; font-size: 13px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 16px; }"
         "QPushButton:hover { background-color: #388E3C; }");
-    m_btnNewTask->setStyleSheet(
-        "QPushButton { background-color: #FF5722; color: white; font-size: 13px; font-weight: bold; "
+    m_btnViewWaveBinds->setStyleSheet(
+        "QPushButton { background-color: #607D8B; color: white; font-size: 13px; font-weight: bold; "
         "border-radius: 4px; padding: 6px 16px; }"
-        "QPushButton:hover { background-color: #E64A19; }");
+        "QPushButton:hover { background-color: #455A64; }");
+    // ★ 2026-09-17 现场要求：「查看绑定」按钮**隐藏**（列表里不再出现该入口）。
+    //   实现为"隐藏"而非删代码：只读弹窗（onViewWaveBinds）与取数口径全部保留，
+    //   恢复显示只需把下面这行的 false 改成 true。
+    //   注：隐藏的控件不占布局空间，按钮行仍为 刷新 / 切换选中波次。
+    //   该波次的格口绑定仍可在数据库侧只读核查：python docs/wave_bind_audit.py
+    m_btnViewWaveBinds->setVisible(false);
+    // ★ 2026-09-17 现场要求：「新任务」按钮**移到「设置配置」旁边**（任务接收控制区同一行）。
+    //   此处不再创建/放置该按钮，见下方任务接收控制区 viewQueueRow；按钮的 clicked 连接保持不变
+    //   （仍在 setupCore 之后的统一 connect 段里连到 onStartNewWaveTask）。
     unfinishedBtnRow->addWidget(m_btnRefreshWaves);
     unfinishedBtnRow->addWidget(m_btnResumeWave);
-    unfinishedBtnRow->addWidget(m_btnNewTask);
+    unfinishedBtnRow->addWidget(m_btnViewWaveBinds);
     unfinishedBtnRow->addStretch();
 
     m_tblWaveRecords = new QTableWidget();
-    m_tblWaveRecords->setColumnCount(9);
+    // ★ 2026-09-17 第 10 列「格口绑定」（追加在末尾 → 既有列索引 0~8 全部不变，
+    //   onResumeSelectedWave 读列 0、终态标注读列 1 均不受影响）。
+    //   ★★ 现场要求：本列**默认隐藏**（列表里不再显示）★★ —— 见下方 setColumnHidden。
+    //   列头、取数口径与「查看绑定」弹窗全部保留：恢复显示只需把那一行的 true 改成 false。
+    m_tblWaveRecords->setColumnCount(WAVE_RECORDS_COLUMN_COUNT);
     // ★ 2026-09-13 列头显式化口径（客户口径：「处理」= 仍在异常口待处理件数；异常口同值）
     m_tblWaveRecords->setHorizontalHeaderLabels(
         QStringList() << "波次号" << "状态" << "计划件数" << "已分拣(件次)" << "处理(件)"
-                      << "异常口(件)" << "H7满箱" << "H8完结" << "更新时间");
+                      << "异常口(件)" << "H7满箱" << "H8完结" << "更新时间" << "格口绑定");
+    // ★ 2026-09-17 现场要求：隐藏「格口绑定」列（做成"可一键恢复"的隐藏，而不是删代码）
+    m_tblWaveRecords->setColumnHidden(WAVE_RECORDS_BIND_COL, true);
     m_tblWaveRecords->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_tblWaveRecords->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_tblWaveRecords->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1431,6 +1901,8 @@ void MainWindow::setupUI()
         "  异常口(件)   = 与「处理」同一个量（同源同值），成功落格时同步减少\n"
         "  当前波次取内存实时值；历史波次取数据库未闭环计数\n"
         "  需要「本波次曾掉入异常口的总量」请看波次面板的「异常留痕」或异常明细弹窗\n"
+        "  格口绑定：本列表与界面**不显示**该列/入口（现场要求）；需要核对该波次绑了哪些容器时，\n"
+        "            用只读脚本 docs/wave_bind_audit.py（只读、不改数据）\n"
         "双击行 = 切换选中波次"));
     // ★ 双击行 = 切换选中波次
     connect(m_tblWaveRecords, &QTableWidget::cellDoubleClicked, this,
@@ -1441,7 +1913,40 @@ void MainWindow::setupUI()
 
     connect(m_btnRefreshWaves, &QPushButton::clicked, this, &MainWindow::onRefreshWaveRecords);
     connect(m_btnResumeWave,   &QPushButton::clicked, this, &MainWindow::onResumeSelectedWave);
+    connect(m_btnViewWaveBinds, &QPushButton::clicked, this, &MainWindow::onViewWaveBinds);
     connect(m_btnNewTask,      &QPushButton::clicked, this, &MainWindow::onStartNewWaveTask);
+
+    // ★ 2026-09-17 只读查看绑定：不依赖切回、不受终态限制（数据仍在库里，只读回溯需求）
+    if (m_btnViewWaveBinds)
+    {
+        m_btnViewWaveBinds->setToolTip(QCoreApplication::translate("MainWindow",
+            "只读查看选中波次的格口绑定（每格取该波次内最后一条绑定 = 切回时恢复的口径）。\n"
+            "不切换波次、不改任何数据；「无绑定记录」表示切回时恢复不出该波次的绑定。"));
+    }
+
+    // ★ 2026-09-16 现场需求①：选中终态行（已完成/已取消）→ 禁用「切换选中波次」并给出正确入口提示
+    if (m_btnResumeWave)
+    {
+        m_btnResumeWave->setToolTip(QCoreApplication::translate("MainWindow",
+            "切换到选中波次并按其上次进度继续（进度、明细、格口绑定一并恢复）"));
+        connect(m_tblWaveRecords, &QTableWidget::itemSelectionChanged, this, [this]() {
+            if (!m_btnResumeWave) return;
+            bool bTerminal = false;
+            const int r = m_tblWaveRecords ? m_tblWaveRecords->currentRow() : -1;
+            if (r >= 0 && m_tblWaveRecords->item(r, 1))
+            {
+                const QString st = m_tblWaveRecords->item(r, 1)->text();
+                bTerminal = st.contains(QString::fromUtf8("（不可切回）"));
+            }
+            m_btnResumeWave->setEnabled(!bTerminal);
+            m_btnResumeWave->setToolTip(bTerminal
+                ? QCoreApplication::translate("MainWindow",
+                    "该波次已完成/已取消：按需求**不允许切回**。\n"
+                    "如需补发失败报文，请点「重传满箱切换(H7)」或「重传任务完结(H8)」")
+                : QCoreApplication::translate("MainWindow",
+                    "切换到选中波次并按其上次进度继续（进度、明细、格口绑定一并恢复）"));
+        });
+    }
 
     // ═══════════════════════════════════════════
     // ★ 2026-09-13 标签页 ②：分拣记录查询（客户要求"字体/控件大小调大一些"）
@@ -1502,6 +2007,20 @@ void MainWindow::setupUI()
     m_editQueryDateTo->setFont(queryFont);
     queryCondRow->addWidget(m_editQueryDateTo);
 
+    // ★ 2026-09-16 现场需求③：日期区间是**必填条件**（没有"全部/不筛日期"选项）——
+    //   四种查询模式（按EPC/按SKU/按格口/按容器号）的结果都只包含区间内的落格记录；
+    //   「待分拣」计划行没有落格时间，不受日期筛选影响（口径见 tooltip）。
+    {
+        const QString dateTip = QString::fromUtf8(
+            "日期区间（必填，作用于落格时间 sort_time）：\n"
+            "  · 起 = 该日 00:00:00，止 = 该日 23:59:59（含首含尾）\n"
+            "  · 四种查询模式（按EPC/按SKU/按格口/按容器号）都只返回区间内的结果\n"
+            "  · 「待分拣」计划明细行没有落格时间，**不受日期筛选影响**，照常显示\n"
+            "  · 默认查最近 7 天；需要更早数据请自行调整起始日期");
+        m_editQueryDateFrom->setToolTip(dateTip);
+        m_editQueryDateTo->setToolTip(dateTip);
+    }
+
     m_btnQueryRecords = new QPushButton(QCoreApplication::translate("MainWindow", "查询"));
     m_btnQueryRecords->setMinimumHeight(queryCtlH);
     m_btnQueryRecords->setMinimumWidth(84);
@@ -1518,17 +2037,8 @@ void MainWindow::setupUI()
     m_btnQueryClear->setFont(queryFont);
     queryCondRow->addWidget(m_btnQueryClear);
 
-    // ★ 2026-09-07 效率统计按钮：弹出 RFID 推送效率统计图（独立弹窗，不影响主界面）
-    m_btnEffChart = new QPushButton(QCoreApplication::translate("MainWindow", "效率统计"));
-    m_btnEffChart->setMinimumHeight(queryCtlH);
-    m_btnEffChart->setFont(queryFont);
-    m_btnEffChart->setStyleSheet(
-        "QPushButton { background-color: #26A69A; color: white; font-size: 14px; font-weight: bold; "
-        "border-radius: 4px; padding: 6px 14px; }"
-        "QPushButton:hover { background-color: #00897B; }");
-    m_btnEffChart->setToolTip(QCoreApplication::translate("MainWindow",
-        "弹出 RFID 推送效率统计图：最近30分钟柱状（每分钟件数） + 今日0~23点峰值折线（件/时）"));
-    queryCondRow->addWidget(m_btnEffChart);
+    // ★ 2026-09-16 需求③：「效率统计」按钮已移出本页 → 挪到「任务接收控制」区，
+    //   与「查看接收波次队列」「设置配置」同一水平行、位于「设置配置」左侧（见 serverLayout）
     queryCondRow->addStretch();
 
     // ── 统计标签 ──
@@ -1584,7 +2094,8 @@ void MainWindow::setupUI()
         m_lblRecordCount->setText(QCoreApplication::translate("MainWindow", "共 0 条记录"));
         m_lblDbStats->setText("");
     });
-    connect(m_btnEffChart, &QPushButton::clicked, this, &MainWindow::onOpenEffChart);
+    // ★ 2026-09-16 需求③：本页不再有「效率统计」按钮（已移到「任务接收控制」区），
+    //   故此处不再连接 onOpenEffChart；该按钮的显隐逻辑见任务接收控制区
     // 回车触发查询
     connect(m_editQueryBarcode, &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
     connect(m_editQuerySku,     &QLineEdit::returnPressed, this, &MainWindow::onQueryRecords);
@@ -1623,6 +2134,12 @@ void MainWindow::setupUI()
 
     // ═══════════════════════════════════════════
     // ★ 2026-09-13 标签页 ⑤：运行日志
+    //   ★ 2026-09-16 需求④：右侧可显示「RFID 推送效率统计（当日观察）」面板，
+    //     由「任务接收控制」区的「效率统计」按钮控制显隐（默认开启）。
+    //     · 面板**按需懒创建**：首次显示时才 new（此时 setupCore() 已建好 HttpServer，
+    //       不会出现"面板已建但 m_pServer 还是空指针"的瞬间）；
+    //     · 布局 = 水平分隔条：左=日志+清空按钮（吃满余量），右=效率面板（约 340px）；
+    //     · 面板不可见时（按钮弹起 / 切到别的标签页）不刷新，不影响分拣主流程。
     // ═══════════════════════════════════════════
     QGroupBox* grpLog = new QGroupBox("运行日志");
     QVBoxLayout* logLayout = new QVBoxLayout(grpLog);
@@ -1636,8 +2153,34 @@ void MainWindow::setupUI()
     btnClearLog->setMinimumHeight(34);
     btnClearLog->setFont(QFont(font().family(), 13));
 
-    logLayout->addWidget(m_txtLog);
-    logLayout->addWidget(btnClearLog);
+    {
+        QWidget* logLeft = new QWidget();
+        QVBoxLayout* logLeftLay = new QVBoxLayout(logLeft);
+        logLeftLay->setContentsMargins(0, 0, 0, 0);
+        logLeftLay->addWidget(m_txtLog, 1);
+        logLeftLay->addWidget(btnClearLog);
+
+        // 右侧容器：面板懒创建后放进来（未创建时容器为空、不占宽度）
+        m_logEffHost = new QWidget(grpLog);
+        {
+            QVBoxLayout* hostLay = new QVBoxLayout(m_logEffHost);
+            hostLay->setContentsMargins(0, 0, 0, 0);
+        }
+        m_logEffHost->setVisible(false);   // 默认不占位（面板首次 tick 后由按钮状态决定）
+
+        m_logEffSplit = new QSplitter(Qt::Horizontal, grpLog);
+        m_logEffSplit->setChildrenCollapsible(false);
+        m_logEffSplit->setHandleWidth(5);
+        m_logEffSplit->addWidget(logLeft);
+        m_logEffSplit->addWidget(m_logEffHost);
+        // ★ 2026-09-17 现场要求：日志区 与 效率统计面板 **各占一半**
+        //   （原为 stretch 1/0：日志吃余量、面板固定约 340px）
+        //   两个 stretch 都置 1 → 初始尺寸一半一半（见 applyLogEffPanelVisible），
+        //   窗口缩放时两者按同比例伸缩；现场仍可拖动中间分隔条自行调整。
+        m_logEffSplit->setStretchFactor(0, 1);
+        m_logEffSplit->setStretchFactor(1, 1);
+        logLayout->addWidget(m_logEffSplit);
+    }
     connect(btnClearLog, &QPushButton::clicked, this, &MainWindow::onClearLog);
 
     // ═══════════════════════════════════════════
@@ -1648,6 +2191,15 @@ void MainWindow::setupUI()
     //   合并规则：RFID 先到 → 建一行"待落格"占位；PLC 反馈到达 → 就地补全同一行
     //   新行插第0行（最新在最上），超 LIVE_TABLE_MAX_ROWS 行自动裁掉最旧行
     // ═══════════════════════════════════════════
+    // ★★ 2026-09-17 现场要求：本页可由 XML 开关 <showLivePage> 隐藏，且**改了不立刻生效**
+    //    （只在启动时读一次配置）。关闭时**整张表都不创建**（m_tblLive 保持 nullptr）：
+    //    实时面板的全部更新路径都以 `if (!m_tblLive) return;` 为第一道守卫
+    //    → 隐藏期间 RFID/PLC 高频路径零 UI 开销（比"创建后 setVisible(false)"更省）。
+    //    恢复显示：把 config/http_server.xml 的 <showLivePage> 改成 true 并**重启程序**。
+    const bool showLivePage = ConfigManager::instance()->config().showLivePage;
+    QGroupBox* grpLive = nullptr;
+    if (showLivePage)
+    {
     auto styleLiveTable = [](QTableWidget* tbl, const QStringList& headers) {
         tbl->setColumnCount(headers.size());
         tbl->setHorizontalHeaderLabels(headers);
@@ -1667,7 +2219,7 @@ void MainWindow::setupUI()
     };
 
     // ── 落格反馈数据（实时）表：序号｜时间｜EPC｜对应SKU｜格口号｜容器号｜小车号｜状态 ──
-    QGroupBox* grpLive = new QGroupBox(QString::fromUtf8("落格反馈数据（实时）"));
+    grpLive = new QGroupBox(QString::fromUtf8("落格反馈数据（实时）"));
     QVBoxLayout* liveLayout = new QVBoxLayout(grpLive);
     liveLayout->setContentsMargins(6, 4, 6, 4);
     m_tblLive = new QTableWidget();
@@ -1688,6 +2240,12 @@ void MainWindow::setupUI()
         "数据源：RFID推送（EPC/小车号/对应SKU）+ PLC落格反馈（格口号/容器号/首尾车/状态）。\n"
         "状态：1 成功 ｜ 2 无格口 ｜ 3 信息不全 ｜ 0（3字段格式无状态）；重投件标注（重投k次）。"));
     liveLayout->addWidget(m_tblLive);
+    }
+    else
+    {
+        // 开关关闭：不建表 → 后面所有实时面板更新路径自动跳过（零开销）
+        m_tblLive = nullptr;
+    }
 
     // ═══════════════════════════════════════════
     // ★ 2026-09-13 UI改版 组装布局：
@@ -1747,9 +2305,14 @@ void MainWindow::setupUI()
     m_tabMain->setStyleSheet(
         "QTabWidget::pane { border: 1px solid #B0BEC5; background: #FFFFFF; }"
         "QTabBar { background: #ECEFF1; }"
+        // ★ 2026-09-17 现场要求：左侧页签按钮栏**加宽一些**（更好按、更好看）
+        //   宽度口径 = max(min-width, 文字高) + 左右内边距 + 边框；实测（offscreen 探针）：
+        //     旧 26px + padding 6px  → 单页签 40px
+        //     新 34px + padding 10px → 单页签 56px（+40%）
+        //   文字仍逐字竖排居中（VerticalTabBar 自绘），加宽只增加留白与点击面积。
         "QTabBar::tab { background: #ECEFF1; color: #455A64;"
         "               border: 1px solid #CFD8DC; border-left: none;"
-        "               margin: 2px 0px; padding: 10px 6px; min-width: 26px; }"
+        "               margin: 2px 0px; padding: 12px 10px; min-width: 34px; }"
         "QTabBar::tab:selected { background: #1565C0; color: #FFFFFF;"
         "                        border: 1px solid #0D47A1; }");
     // ═══════════════════════════════════════════
@@ -1860,12 +2423,34 @@ void MainWindow::setupUI()
     m_lblPlanAllocHint->setWordWrap(true);
     paLayout->addWidget(m_lblPlanAllocHint);
 
-    m_tabMain->addTab(grpBinding,   QString::fromUtf8("容器绑定状态"));
-    m_tabMain->addTab(grpQuery,     QString::fromUtf8("分拣记录查询"));
-    m_tabMain->addTab(grpUnfinished,QString::fromUtf8("波次数据历史记录"));
-    m_tabMain->addTab(grpPlanAlloc, QString::fromUtf8("计划分配表"));
-    m_tabMain->addTab(grpLive,      QString::fromUtf8("实时面板"));
-    m_tabMain->addTab(grpLog,       QString::fromUtf8("运行日志"));
+    // ═══════════════════════════════════════════
+    // ★ 2026-09-17 现场要求：**页签顺序调整**为
+    //     ① 容器绑定状态 ② 运行日志 ③ 波次数据历史记录 ④ 分拣记录查询
+    //   （原顺序：容器绑定状态 / 分拣记录查询 / 波次数据历史记录 / 计划分配表 / 实时面板 / 运行日志）
+    //   两个可选页（受 XML 开关控制，默认隐藏）统一排在**最后**，不干扰上述四个固定页的顺序：
+    //     ⑤ 计划分配表（<showPlanAllocPage>） ⑥ 实时面板（<showLivePage>）
+    //   页签文字仍逐字竖排（VerticalTabBar），仅顺序变化；`setCurrentIndex(0)` 依旧默认落在「容器绑定状态」。
+    // ═══════════════════════════════════════════
+    m_tabMain->addTab(grpBinding,   QString::fromUtf8("容器绑定状态"));   // ①
+    m_tabMain->addTab(grpLog,       QString::fromUtf8("运行日志"));       // ②
+    m_tabMain->addTab(grpUnfinished,QString::fromUtf8("波次数据历史记录")); // ③
+    m_tabMain->addTab(grpQuery,     QString::fromUtf8("分拣记录查询"));   // ④
+    // ★ 2026-09-17 现场要求：两个可选页由 XML 开关控制，且**仅启动时读取一次**
+    //   （<showPlanAllocPage> / <showLivePage>，默认 false = 隐藏；改了要重启才生效）。
+    //   隐藏时不加页签：
+    //     · 计划分配表：refreshPlanAllocPage 的"本页不在前台直接返回"判定自然恒成立 → 零开销；
+    //     · 实时面板：连表格都不创建（m_tblLive=nullptr）→ 更新路径全部跳过。
+    {
+        const AppConfig& cfgUi = ConfigManager::instance()->config();
+        if (cfgUi.showPlanAllocPage)
+            m_tabMain->addTab(grpPlanAlloc, QString::fromUtf8("计划分配表"));   // ⑤
+        else
+            WCS_LOG_INFO("启动：按配置隐藏「计划分配表」页（showPlanAllocPage=false；改 XML 需重启生效）");
+        if (grpLive)
+            m_tabMain->addTab(grpLive, QString::fromUtf8("实时面板"));          // ⑥
+        else
+            WCS_LOG_INFO("启动：按配置隐藏「实时面板」页（showLivePage=false；改 XML 需重启生效）");
+    }
     // 默认选中「容器绑定状态」（第 0 页）——现场首先看绑定
     m_tabMain->setCurrentIndex(0);
     // ★ 2026-09-14 切到「计划分配表」页时立即取一次快照（不等 2 秒节流），现场点开即见最新数据
@@ -1875,6 +2460,9 @@ void MainWindow::setupUI()
             m_planAllocVersion = -1;      // 强制重建
             refreshPlanAllocPage(true);
         }
+        // ★ 2026-09-17：切到「运行日志」页时立即把效率面板宽度对齐到「波次信息」面板
+        //   （面板刚变为可见，此时才拿得到真实几何；不等 1 秒定时器）
+        syncLogEffPanelWidth();
     });
     vsplit->addWidget(m_tabMain);
 
@@ -1935,6 +2523,31 @@ void MainWindow::livePanelRebuildPendingIndex()
     }
 }
 
+// ★ 2026-09-15 原始报文留痕（界面层）：记住每个 EPC 最近一帧的原文与识别前 EPC
+//   用途：实时面板 EPC 单元格鼠标悬停直接看到整帧原文，现场无需翻日志/查库
+//   有界缓存：只保留最近 LIVE_FRAME_NOTE_MAX 件，避免长期运行内存增长
+void MainWindow::rememberLiveFrameNote(const QString& epc, const QString& epcRaw,
+                                       const QString& rawFrame, const QString& seq,
+                                       const QString& devCode)
+{
+    if (epc.isEmpty()) return;
+    const QString note = QString::fromUtf8(
+        "EPC（参与分拣）：%1\n识别前原文：%2\n设备编码：%3  流水号：%4\n原始报文：%5")
+        .arg(epc)
+        .arg(epcRaw.isEmpty() ? QString::fromUtf8("（未发生识别/归一，与 EPC 相同）") : epcRaw)
+        .arg(devCode.isEmpty() ? QStringLiteral("-") : devCode)
+        .arg(seq.isEmpty() ? QStringLiteral("-") : seq)
+        .arg(rawFrame.isEmpty() ? QString::fromUtf8("（无整帧原文：HTTP 直推入口）") : rawFrame);
+
+    m_liveFrameNotes.insert(epc, note);
+    m_liveFrameNoteOrder.append(epc);
+    while (m_liveFrameNoteOrder.size() > LIVE_FRAME_NOTE_MAX)
+    {
+        const QString oldest = m_liveFrameNoteOrder.takeFirst();
+        m_liveFrameNotes.remove(oldest);
+    }
+}
+
 // RFID 推送先到：插入"待落格"占位行
 void MainWindow::livePanelInsertPendingRow(const QString& epc, const QStringList& cells)
 {
@@ -1951,6 +2564,13 @@ void MainWindow::livePanelInsertPendingRow(const QString& epc, const QStringList
         if ((c == 3 || c == 4 || c == 5) && cells.at(c) == QStringLiteral("--"))
             it->setForeground(QColor("#9E9E9E"));   // SKU/格口/容器尚未知 → 置灰
         if (c == 7) it->setForeground(QColor("#1976D2"));   // 待落格：蓝色
+        // ★ 2026-09-15 原始报文留痕：EPC 单元格悬停显示整帧原文与识别前 EPC
+        if (c == 2)
+        {
+            const QString note = m_liveFrameNotes.value(epc);
+            if (!note.isEmpty())
+                it->setToolTip(note + QString::fromUtf8("\n（双击行可查看该 EPC 全信息与全部原始帧）"));
+        }
         m_tblLive->setItem(0, c, it);
     }
 
@@ -2050,7 +2670,7 @@ void MainWindow::refreshLivePanelPendingRows()
             st->setForeground(QColor("#9E9E9E"));
             done.append(epc);
         }
-        else if (waitedMs > 2 * timeoutMs)
+        else if (waitedMs > 12 * timeoutMs)
         {
             st->setText(QString::fromUtf8("待落格（超时未反馈）"));
             st->setForeground(QColor("#EF6C00"));
@@ -2124,6 +2744,8 @@ void MainWindow::applyLiveConfig()
         m_pClient->setTimeout(cfg.httpTimeoutMs);
         m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);
         m_pClient->setRfidAppkey(cfg.rfidAppkey);
+        // ★ 2026-09-15 EPC 识别长度（响应侧归一与推送侧同源同参数，热生效）
+        m_pClient->setEpcTruncateLen(cfg.rfidEpcTruncateLen);
     }
     if (m_pServer)
     {
@@ -2133,6 +2755,8 @@ void MainWindow::applyLiveConfig()
             m_pServer->waveManager()->setMaxRetry(cfg.maxRetryCount);
         }
         m_pServer->setExpectedBindCount(cfg.expectedBindCount);
+        // ★ 2026-09-15 EPC 识别长度热生效（改配置点「保存并生效」即生效，无需重启）
+        m_pServer->setEpcTruncateLen(cfg.rfidEpcTruncateLen);
         if (m_pServer->rfidPush())
         {
             m_pServer->rfidPush()->setHeartbeatEnabled(cfg.rfidHeartbeatEnable != 0);
@@ -2155,9 +2779,9 @@ void MainWindow::applyLiveConfig()
             .arg(cfg.useTestEnv ? QString::fromUtf8("(测试)") : QString::fromUtf8("(正式)")));
     }
 
-    WCS_LOG_INFO("配置热生效应用完成（回传URL/AppKey/method、环境、HTTP超时、RFID查询/心跳、波次参数、期望绑定数）");
+    WCS_LOG_INFO("配置热生效应用完成（回传URL/AppKey/method、环境、HTTP超时、RFID查询/心跳、波次参数、期望绑定数、EPC识别长度）");
     appendLog("[配置] 热生效应用完成：回传 URL/AppKey/method、环境开关、HTTP超时、RFID查询/心跳、"
-              "波次超时/重试、期望绑定数 已按新配置更新（端口/IP/线程池类需重启生效）");
+              "波次超时/重试、期望绑定数、EPC识别长度 已按新配置更新（端口/IP/线程池类需重启生效）");
 }
 
 // ============================================================================
@@ -2285,12 +2909,49 @@ void MainWindow::setupCore()
 
     AppConfig& cfg = ConfigManager::instance()->config();
 
-    // ★ 从配置文件恢复容器绑定（跨会话保留；结束任务后由 WMS 新一轮波次重新下发）
-    m_pServer->loadContainerBindings(cfg.containerBindings);
-    m_bindingDirty = true;  // ★ 初始加载后标记为脏，开始接收后首次刷新时更新面板
+    // ══════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-15 需求①：每次开启软件 = 新任务状态（容器绑定面板全为"未绑定"）
+    // ★ 2026-09-16 现场需求④（根因修复）：**不再从 XML 装载任何绑定** —— 面板只反映"本会话的绑定"
+    //
+    //   现场症状：开机后格口绑定面板显示一堆箱号（历史波次"占用"了绑定显示）。
+    //   根因：`bindingUpdated` → ConfigManager::save() 会把**当时内存里的绑定**写回
+    //         config/http_server.xml 的 <binding> 节点（一直在写），而启动时这里曾用
+    //         "无未结束波次 + DB 无 active 绑定 → 采用 XML 预绑定"作为兜底 ——
+    //         于是上一会话残留的 <binding> 被当成本次任务的绑定装载进面板。
+    //         实测：本仓库 release_WcsHttpServer/config/http_server.xml 存有 43 条 <binding>，
+    //         而 DB 侧 grid_box_bind 的 active 行数为 0 —— 面板显示的箱号全部来自该残留 XML。
+    //
+    //   现行口径：**绑定的唯一来源 = 本会话收到的 H6（或切回某个未结束波次时按其记录恢复）**；
+    //     · XML 里的 <binding> 视为历史遗留镜像，**只写不读**（保留写入是为了不破坏既有落盘路径）；
+    //     · 启动一律清空内存绑定（新任务状态），随后 startReceive → restoreWaveFromDB()
+    //       把 DB 中残留的 active 行归档留痕（只归档、不改归属），因此面板必然为"未绑定"。
+    // ══════════════════════════════════════════════════════════════════════════
+    {
+        const int xmlPresetCount = cfg.containerBindings.size();
+        const int unfinishedCnt  = m_pServer->getUnfinishedWaves().size();
+        const int activeBindCnt  =
+            (m_pServer->sortingDb() && m_pServer->sortingDb()->isOpen()
+                 ? m_pServer->sortingDb()->getAllActiveBinds().size()
+                 : 0);
+
+        m_pServer->loadContainerBindings(QMap<QString, QString>());   // 显式清空 = 新任务状态
+        // ★ 同步清空内存中的配置镜像：否则旧值会在随后的 bindingUpdated 保存里被再写回 XML
+        //   （这里不主动 save()：避免干扰 ConfigManager 既有的节流保存与"自写哈希"机制）
+        cfg.containerBindings.clear();
+
+        appendLog(QString::fromUtf8(
+            "[容器绑定] 启动为新任务状态：不装载 XML 绑定（本次文件内 %1 个已忽略）；"
+            "未结束波次 %2 个 / DB active 绑定 %3 个将由「开始接收任务」时归档保留"
+            "（切回该波次时随波次一并恢复）")
+            .arg(xmlPresetCount).arg(unfinishedCnt).arg(activeBindCnt));
+        m_bindingDirty = true;  // ★ 初始加载后标记为脏，开始接收后首次刷新时更新面板
+    }
 
     // ★ 设置期望绑定数量（从配置文件加载，默认1）
     m_pServer->setExpectedBindCount(cfg.expectedBindCount);
+
+    // ★ 2026-09-15 EPC 识别长度（XML rfidEpcTruncateLen，默认 24）→ 注入 RFID 解析链路
+    m_pServer->setEpcTruncateLen(cfg.rfidEpcTruncateLen);
 
     // ★ 回传客户端配置（H7/H8 回传 + RFID SKU-EPC 绑定查询）
     m_pClient->setUrl(cfg.activeFeedbackUrl());
@@ -2301,6 +2962,8 @@ void MainWindow::setupCore()
     m_pClient->setTimeout(cfg.httpTimeoutMs);
     m_pClient->setRfidQueryUrl(cfg.rfidQueryUrl);  // ★ RFID SKU-EPC 绑定查询 URL
     m_pClient->setRfidAppkey(cfg.rfidAppkey);      // ★ RFID 查询鉴权 AppKey
+    // ★ 2026-09-15 EPC 识别长度（绑定查询响应侧归一；与推送侧同源，防缓存键不匹配）
+    m_pClient->setEpcTruncateLen(cfg.rfidEpcTruncateLen);
     m_pServer->setHttpClient(m_pClient);           // ★ 设置 HttpClient 供 RFID 查询使用
 
     // ★ 从配置文件加载 API 路由路径
@@ -2464,7 +3127,14 @@ void MainWindow::setupCore()
     // ★ 2026-09-08 UI需求2/3：失败重传记录变化（重试耗尽/手动重传成功/切出取消重试）→ 刷新两个下拉
     connect(m_pServer, &HttpServer::outboxFailedChanged, this, [this]() {
         refreshFailedCombos();
+        refreshFullboxCountLabel();   // ★ 需求④：失败/成功判定都会改变"本波次满箱回传"统计
     });
+
+    // ★ 2026-09-16 需求④：某条 H7 报文**最终失败**（重试耗尽）→ 只对"本次一键生成的 msgId"计失败
+    //   连接方式：HttpServer 在主线程发信号（onFullboxReplyFinished 走 reportResult 回主线程），
+    //   默认 AutoConnection 即为直接调用，安全；此处显式用 QueuedConnection 兜住跨线程可能。
+    connect(m_pServer, &HttpServer::fullboxMessageFailed, this, &MainWindow::onFullboxMessageFailed,
+            Qt::QueuedConnection);
 
     // ★ H8完结回传处理完毕 → 停止接收收尾
     //   ★ 2026-09-06 解耦：Outbox(H8)补传跨接收会话继续执行（设备/实例常驻），
@@ -2495,6 +3165,11 @@ void MainWindow::setupCore()
         c.containerBindings = m_pServer->getContainerBindings();
         ConfigManager::instance()->save();
     });
+
+    // ★ 2026-09-17 绑定落库失败即时告警（跨线程信号 → 主线程槽）：
+    //   H6 只更新了内存绑定、DB 行没写成 → 切回该波次时无法恢复该绑定。
+    //   现场必须当场知道（此前只有 data.log 有记录，界面完全看不出来）。
+    connect(m_pServer, &HttpServer::bindPersistFailed, this, &MainWindow::onBindPersistFailed);
 
     // ★ 连接PLC状态信号到UI（全部使用 QueuedConnection，确保跨线程安全）
     if (m_pPlcMgr)
@@ -2665,6 +3340,11 @@ void MainWindow::setupCore()
                     const QJsonObject o = v.toObject();
                     const QString epc = o.value("epc").toString();
                     if (epc.isEmpty()) continue;   // 与业务侧一致：NOREAD 等空 EPC 不展示
+                    // ★ 2026-09-15 原始报文留痕：把本帧原文与识别前 EPC 记下来，
+                    //   供 EPC 单元格鼠标悬停查看（不查库、不影响主链路）
+                    rememberLiveFrameNote(epc,
+                        o.value("epcRaw").toString(), o.value("raw").toString(),
+                        o.value("seq").toString(), o.value("devCode").toString());
                     // 对应SKU：优先 EpcCache（RFID SKU 绑定查询结果；查询未回来时显示 -- 并置灰）
                     const QString sku = m_pServer ? m_pServer->getSkuByEpc(epc) : QString();
                     // 格口号/容器号此刻未知 → 占位留空；状态标记为"待落格"
@@ -2695,6 +3375,7 @@ void MainWindow::setupCore()
     // ★ 初始化完成（设备连接状态由每秒定时器刷新显示；波次记录列表初始填充一次，后续手动刷新）
     onRefreshWaveRecords();
     refreshFailedCombos();   // ★ 2026-09-08 初始化 H7 失败格口 / H8 失败波次两个下拉
+    refreshFullboxCountLabel();   // ★ 2026-09-16 需求④：初始化「一键满箱」计数标签（无波次时显示"无运行波次"）
     appendLog("[初始化] 设备层已启动（PLC/RFID 常驻）；任务接收未开始，请点击「开始接收任务」");
 }
 
@@ -2747,9 +3428,7 @@ void MainWindow::onStartStop()
         m_bRunning = false;
         m_btnStartStop->setEnabled(true);  // ★ 保持可点 = "立即停止"（不再禁用，避免无法取消）
         m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "停止中…(点击立即停止)"));
-        m_btnStartStop->setStyleSheet(
-            "QPushButton { background-color: #FF9800; color: white; font-size: 14px; font-weight: bold; "
-            "border-radius: 4px; padding: 6px 16px; }");
+        m_btnStartStop->setStyleSheet(startStopButtonStyle("#FF9800", "#F57C00"));
         m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 停止接收中"));
         m_lblServerStatus->setStyleSheet("font-size: 14px; color: #FF9800;");
 
@@ -2771,18 +3450,32 @@ void MainWindow::onStartStop()
 
         // ★ 容器绑定不再在「结束任务」时清除——绑定由数据库持久化，波次完结（H8成功）时由 HttpServer 统一清空；
         //   此处仅做绑定面板的视觉复位（H8 成功后 bindingUpdated 信号会再次刷新）
-        // 重置绑定面板为全灰
+        // ★ 2026-09-16 需求②⑦：复位**整格底色为"未绑定=无色"** + 箱号文字回深灰 `--`（隐藏格无控件，判空跳过）；
+        //   计数口径同步改为"可见格口数"（未配置异常口时=66，配置 66 时=65）；字号保持 13px
         for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
         {
             if (m_bindingLabels[i])
                 m_bindingLabels[i]->setStyleSheet(
-                    "font-size: 10px; color: white; border-radius: 6px; background-color: #bbb;");
+                    "font-size: 10px; color: white; border-radius: 6px; background-color: transparent;");
             if (m_bindingBoxLabels[i])
+            {
+                m_bindingBoxLabels[i]->setStyleSheet(
+                    QString("font-size: 13px; color: %1; font-weight: bold;"
+                            " border: none; background: transparent;").arg(BP_TEXT_COLOR_PLAIN));
                 m_bindingBoxLabels[i]->setText("--");
+            }
+        }
+        for (int k = 0; k < m_bindingFrames.size(); ++k)
+        {
+            if (m_bindingFrames[k])
+                m_bindingFrames[k]->setStyleSheet(k < m_bindingInitialStyles.size()
+                    ? m_bindingInitialStyles[k]
+                    : bpFrameStyle(BP_UNBOUND));   // 未绑定=无色
         }
         if (m_lblBoundCount)  m_lblBoundCount->setText("已绑定: 0");
         if (m_lblLockedCount) m_lblLockedCount->setText(QString::fromUtf8("已锁格: 0"));
-        if (m_lblUnboundCount) m_lblUnboundCount->setText("未绑定: 66");
+        if (m_lblUnboundCount) m_lblUnboundCount->setText(
+            QString("未绑定: %1").arg(visibleBindingSlotCount()));
 
         // ★ 结束任务时重置"开始分拣"按钮为初始灰色禁用状态
         m_btnStartSorting->setEnabled(false);
@@ -2803,10 +3496,7 @@ void MainWindow::onStartStop()
         {
             m_bRunning = true;
             m_btnStartStop->setText("结束任务");
-            m_btnStartStop->setStyleSheet(
-                "QPushButton { background-color: #f44336; color: white; font-size: 14px; font-weight: bold; "
-                "border-radius: 4px; padding: 6px 16px; }"
-                "QPushButton:hover { background-color: #d32f2f; }");
+            m_btnStartStop->setStyleSheet(startStopButtonStyle("#f44336", "#d32f2f"));
             m_lblServerStatus->setText("● 接收中");
             m_lblServerStatus->setStyleSheet("font-size: 14px; color: #4CAF50;");
 
@@ -2826,6 +3516,9 @@ void MainWindow::onStartStop()
             updateBindingPanel();
             updatePlcPanel();
             updateRfidStatus();
+            // ★ 2026-09-16 需求④⑤：接收开始后刷新计数标签（本波次满箱回传）与 H7 失败下拉（仅本波次）
+            refreshFullboxCountLabel();
+            refreshFailedCombos();
 
             // ★ 配置摘要日志（每次开始接收时打印一次，便于排查）
             {
@@ -2869,6 +3562,17 @@ void MainWindow::onStartStop()
                 // ★ 2026-09-04 RFID 配置展示（方便现场排查 RFID 链路）
                 appendLog(QString(" RFID查询接口:    %1\n\n").arg(cfg.rfidQueryUrl));
                 appendLog(QString(" RFID推送服务端:  %1:%2 (WCS主动连接)\n\n").arg(cfg.rfidPushServerIp).arg(cfg.rfidPushServerPort));
+                // ★ 2026-09-15 EPC 识别口径与原始报文留痕（现场一眼确认当前生效规则）
+                {
+                    const QString epcRule = (cfg.rfidEpcTruncateLen < 2)
+                        ? QString::fromUtf8("不识别（rfidEpcTruncateLen<2：RFID 推送串原样使用）")
+                        : QString::fromUtf8("只识别『A + %1 位数字』共 %2 位（rfidEpcTruncateLen；"
+                                            "与开头是不是 A101 无关）")
+                              .arg(cfg.rfidEpcTruncateLen - 1).arg(cfg.rfidEpcTruncateLen);
+                    appendLog(QString(" EPC识别:         %1\n\n").arg(epcRule));
+                    appendLog(QString::fromUtf8(" 原始报文留痕:    日志(log/Run/run.log) + 界面(实时面板悬停/EPC全信息弹窗) "
+                                                "+ 数据库(rfid_raw 表，保留 %1 天)\n\n").arg(RFID_RAW_RETAIN_DAYS));
+                }
                 appendLog(QString(" 日志:            保留%1天\n").arg(cfg.logRetainDays));
                 // ★ 2026-09-11 重扫重投口径（拿起已落格的件重新上料 → 仍按原格口下发）
                 appendLog(QString(" 重扫重投:        %1 (冷却%2ms / 每波次上限%3次 / 在途超时%4ms)\n\n")
@@ -2927,6 +3631,12 @@ void MainWindow::onRefreshTimer()
     // ★ 2026-09-13 实时面板：给长期未补全的"待落格"行打标（只遍历占位集合，规模小）
     refreshLivePanelPendingRows();
 
+    // ★ 2026-09-16 需求④：日志页右侧效率面板每秒一拍
+    //   （面板懒创建前回调为空；面板不可见时 tick() 内部直接返回 → 开销为零）
+    if (m_logEffTick) m_logEffTick();
+    // ★ 2026-09-17 现场要求：效率统计面板宽度跟随「波次信息」面板（宽度未变时内部直接返回）
+    syncLogEffPanelWidth();
+
     // ★ 2026-09-13 异常留痕计数：10 秒一次同步查询后缓存（面板每秒渲染只读缓存）
     //   这样"异常留痕(条)"既能实时更新，又不会让主线程每秒阻塞在 DB 查询上（分拣关键路径同线程）
     //   波次切换时立即刷新一次（下面的 orderCode 比较），保证换波次后数字不滞后
@@ -2950,7 +3660,13 @@ void MainWindow::onRefreshTimer()
                 m_cachedExcTraceCount = -1;   // 无波次 → 面板显示 --
             }
             if (orderChanged)
+            {
                 onRefreshWaveRecords();       // 换波次/新波次：历史列表同步一次
+                // ★ 2026-09-16 需求④⑤：换波次时同步刷新「一键满箱」计数（本次一键归零 + 本波次数值）
+                //   与「H7 失败格口」下拉（内容只含本波次，换波次必须重建）
+                refreshFullboxCountLabel();
+                refreshFailedCombos();
+            }
         }
     }
 
@@ -3148,13 +3864,12 @@ void MainWindow::updateWavePanel()
     }
     m_lblLastWave->setText(snap.lastWaveCode.isEmpty() ? QString::fromUtf8("--") : snap.lastWaveCode);
 
-    // 颜色提示
-    if (snap.waveStatus == WAVE_SORTING)
-        m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #FF9800;");
-    else if (snap.waveStatus >= WAVE_COMPLETING)
-        m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #4CAF50;");
-    else
-        m_lblWaveStatus->setStyleSheet("font-size: 13px; font-weight: bold; color: #2196F3;");
+    // ★ 2026-09-16 现场需求：状态显示改为**对应底色 + 白色文字**（做成色块标签）
+    //   口径统一实现在 tests/BindingPanelPolicy.h::bpWaveStatusStyle（与自测同源）：
+    //     蓝=已下发 / 绿=已绑定 / 橙=分拣中·满箱同步中 / 红=完结中·取消处理中·异常挂起 / 灰=空闲·终态
+    //   ★ 标签需要 setText 之后再套样式（Qt 的 QLabel 背景只覆盖文字所在区域，宽度随文字变化）
+    m_lblWaveStatus->setStyleSheet(bpWaveStatusStyle(snap.waveStatus));
+    m_lblWaveStatus->setToolTip(bpWaveStatusLegend());
 
     // ★ 开始分拣按钮：接收中且 BOUND 或 SORTING 状态时橙色激活，否则灰色禁用
     //   （★ 2026-09-06 解耦：停止接收/等待完结时不可再开始分拣）
@@ -3344,10 +4059,7 @@ void MainWindow::doActualStop()
 
     m_btnStartStop->setEnabled(true);
     m_btnStartStop->setText(QCoreApplication::translate("MainWindow", "开始接收任务"));
-    m_btnStartStop->setStyleSheet(
-        "QPushButton { background-color: #4CAF50; color: white; font-size: 14px; font-weight: bold; "
-        "border-radius: 4px; padding: 6px 16px; }"
-        "QPushButton:hover { background-color: #45a049; }");
+    m_btnStartStop->setStyleSheet(startStopButtonStyle("#4CAF50", "#45a049"));
     m_lblServerStatus->setText(QCoreApplication::translate("MainWindow", "● 未接收任务"));
     m_lblServerStatus->setStyleSheet("font-size: 14px; color: #f44336;");
 
@@ -3363,6 +4075,177 @@ void MainWindow::onRefreshBindings()
 {
     updateBindingPanel();
     appendLog("容器绑定状态已刷新");
+}
+
+// ============================================================================
+// ★ 2026-09-17 只读查看选中波次的格口绑定（现场问题："该波次下的格口绑定状态与显示不会随切回回溯"）
+//
+//   为什么单独做入口（而不是只靠切回）：切回是有副作用的动作（切出当前波次），
+//   而现场需要的只是"看一眼这个波次当时绑的是哪些箱子"。本入口：
+//     · 不切换波次、不动绑定、不写任何数据；
+//     · 取数 = 每格取**该波次内**最后一条绑定（SortingDatabase::getLastBindsByOrder），
+//       与切回恢复口径、与列表「格口绑定」列**同一 SQL**（不会出现两套口径打架）；
+//     · 终态波次也可查（数据不删除，"不允许切回"≠"不能回溯"）。
+// ============================================================================
+void MainWindow::onViewWaveBinds()
+{
+    if (!m_pServer || !m_tblWaveRecords) return;
+
+    const int row = m_tblWaveRecords->currentRow();
+    if (row < 0)
+    {
+        appendLog("[查看绑定] 请先在「波次数据历史记录」中选中一行波次", true);
+        return;
+    }
+    QTableWidgetItem* it = m_tblWaveRecords->item(row, 0);
+    if (!it) return;
+    const QString orderCode = it->text().trimmed();
+    if (orderCode.isEmpty()) return;
+
+    const QVector<GridBoxBindRecord> rows = m_pServer->getWaveBindDetail(orderCode);
+
+    // 明细摘要用真实性口径（不猜）：confirmed = 该格全表最后一条仍属本波次；active = 现场当前活跃绑定
+    QJsonObject bs = m_pServer->getUnfinishedWaveSummary(orderCode);
+    const int confirmedCnt = bs.contains("bindConfirmed") ? bs["bindConfirmed"].toInt() : rows.size();
+    const int activeCnt    = bs.contains("bindActive")    ? bs["bindActive"].toInt()
+                                                          : m_pServer->boundCount();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QString::fromUtf8("波次 %1 的格口绑定（只读）").arg(orderCode));
+    // ★ 2026-09-17 现场反馈「查看绑定弹窗里看不到下面的 SQL / 表格被挤掉」：
+    //   根因是**布局抢空间** —— 长 SQL 用 QLabel+wordWrap 会被折成十几行，
+    //   与表格在同一列里互相挤压，620px 高的对话框容不下两者的最小高度，总有一块被裁掉。
+    //   修法：① 对话框默认放大 + 给最小尺寸；② 表格给 stretch（它才是主体，可滚动）；
+    //        ③ SQL 改用**固定高度只读文本框**（不换行、可横向滚动、可全选复制）→ 两块必然同时可见。
+    dlg.resize(820, 760);
+    dlg.setMinimumSize(560, 460);
+    QVBoxLayout* lay = new QVBoxLayout(&dlg);
+
+    // 头部摘要：本波次记录的格口数 / 其中已被更晚波次重新绑定 / 现场当前物理绑定
+    QLabel* head = new QLabel(QString::fromUtf8(
+        "波次 %1：本波次记录 %2 个格口（每格取该波次内最后一条绑定 = **切回时恢复的口径**）\n"
+        "　　　　其中该格最后一条仍属本波次 %3 个，已被更晚波次重新绑定 %4 个\n"
+        "当前运行波次的物理绑定：%5 个（与上面数字无关，仅供对照）")
+        .arg(orderCode).arg(rows.size()).arg(confirmedCnt)
+        .arg(qMax(0, rows.size() - confirmedCnt)).arg(activeCnt));
+    head->setStyleSheet("font-size: 13px; color: #333;");
+    head->setWordWrap(true);
+    head->setToolTip(bpWaveBindDetailTooltip(rows.size(), confirmedCnt, activeCnt));
+    lay->addWidget(head);
+
+    if (rows.isEmpty())
+    {
+        // 无绑定记录：给一个**显眼的红框**（而不是一行小字），现场一眼就知道"这里本来就查不到东西"
+        QLabel* empty = new QLabel(QString::fromUtf8(
+            "本波次**没有绑定记录**（该波次可查的格口绑定 = 0 个）。\n\n"
+            "含义：该波次从未收到带本波次号的 H6 绑定（H6 报文本身不含波次号，归属靠运行时判定），\n"
+            "因此切回该波次时**恢复不出**该波次的绑定；若库中仍有当前活跃绑定，\n"
+            "切回时只会按「物理当前绑定」显示（**不是本波次记录**），等 WMS 重发 H6 才会落到本波次名下。\n\n"
+            "历史数据核查（只读、不改数据）：python docs\\wave_bind_audit.py"));
+        empty->setStyleSheet("font-size: 13px; color: #B3261E; background: #FFF3F2;"
+                             "border: 1px solid #E6B3AE; border-radius: 4px; padding: 10px;");
+        empty->setWordWrap(true);
+        empty->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+        empty->setMinimumHeight(150);
+        lay->addWidget(empty, 1);   // 无表格时由它吃满余量
+    }
+    else
+    {
+        QTableWidget* tbl = new QTableWidget(rows.size(), 5);
+        tbl->setHorizontalHeaderLabels(QStringList()
+            << QString::fromUtf8("格口") << QString::fromUtf8("容器号")
+            << QString::fromUtf8("绑定时间") << QString::fromUtf8("解绑时间")
+            << QString::fromUtf8("是否仍活跃"));
+        tbl->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        tbl->setSelectionBehavior(QAbstractItemView::SelectRows);
+        tbl->horizontalHeader()->setStretchLastSection(true);
+        tbl->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        tbl->setStyleSheet("QTableWidget { font-size: 13px; }");
+        tbl->setMinimumHeight(160);   // ★ 保证表格至少能看到表头 + 数行（此前会被 SQL 标签挤掉）
+        for (int r = 0; r < rows.size(); ++r)
+        {
+            const GridBoxBindRecord& b = rows[r];
+            auto set = [&](int c, const QString& t) {
+                QTableWidgetItem* cell = new QTableWidgetItem(t);
+                cell->setFlags(cell->flags() & ~Qt::ItemIsEditable);
+                tbl->setItem(r, c, cell);
+            };
+            set(0, b.gridNum);
+            set(1, b.boxcode);
+            set(2, b.bindTime.isEmpty() ? QString("--") : b.bindTime);
+            set(3, b.unbindTime.isEmpty() ? QString("--") : b.unbindTime);
+            set(4, b.active ? QString::fromUtf8("活跃") : QString::fromUtf8("已归档"));
+        }
+        lay->addWidget(tbl, 1);   // ★ 表格吃满余量（可滚动）
+    }
+
+    // 现场自查用的只读 SQL（与取数口径逐字一致，可直接在 sqlite 工具里执行）
+    const QString sqlText = QString::fromUtf8(
+        "-- 只读核对 SQL（= 本弹窗口径；把 X 换成上面的波次号）\n"
+        "SELECT g1.grid_num, g1.boxcode, g1.active, g1.bind_time, g1.unbind_time\n"
+        "  FROM grid_box_bind g1\n"
+        " WHERE g1.order_code = 'X' AND g1.boxcode <> ''\n"
+        "   AND g1.rowid = (SELECT MAX(g2.rowid) FROM grid_box_bind g2\n"
+        "                    WHERE g2.grid_num = g1.grid_num AND g2.order_code = 'X')\n"
+        " ORDER BY CAST(g1.grid_num AS INTEGER);");
+    QLabel* sqlTitle = new QLabel(QString::fromUtf8("只读核对 SQL（与上方明细同一取数口径）："));
+    sqlTitle->setStyleSheet("font-size: 12px; color: #555; margin-top: 4px;");
+    lay->addWidget(sqlTitle);
+
+    // ★ 固定高度只读文本框：不换行（横向滚动）、可全选复制 → 无论表格多少行都必然可见
+    QPlainTextEdit* sqlBox = new QPlainTextEdit(sqlText);
+    sqlBox->setReadOnly(true);
+    sqlBox->setLineWrapMode(QPlainTextEdit::NoWrap);
+    sqlBox->setFixedHeight(140);
+    sqlBox->setStyleSheet("QPlainTextEdit { font-family: Consolas, 'Courier New', monospace;"
+                          " font-size: 12px; color: #333; background: #F7F7F7;"
+                          " border: 1px solid #DDDDDD; border-radius: 3px; }");
+    lay->addWidget(sqlBox);
+
+    QPushButton* btnCopySql = new QPushButton(QString::fromUtf8("复制 SQL"));
+    btnCopySql->setMinimumHeight(28);
+    connect(btnCopySql, &QPushButton::clicked, this, [this, sqlText]() {
+        QApplication::clipboard()->setText(sqlText);
+        appendLog("[查看绑定] 只读核对 SQL 已复制到剪贴板");
+    });
+    QPushButton* btnClose = new QPushButton(QString::fromUtf8("关闭"));
+    btnClose->setMinimumHeight(28);
+    connect(btnClose, &QPushButton::clicked, &dlg, &QDialog::accept);
+    QHBoxLayout* btnRow = new QHBoxLayout();
+    btnRow->addWidget(btnCopySql);
+    btnRow->addStretch();
+    btnRow->addWidget(btnClose);
+    lay->addLayout(btnRow);
+
+    appendLog(QString("[查看绑定] 波次 %1：本波次绑定记录 %2 个格口（只读，未切换波次、未改数据）")
+        .arg(orderCode).arg(rows.size()));
+    dlg.exec();
+}
+
+// ★ 2026-09-17 绑定落库失败即时告警：H6 只改了内存、DB 行没写成
+//   → 该绑定在"切回该波次"时恢复不出来（现场历史现象："面板显示已绑定、库里一行都没有"）。
+//   此处红字 + 计数，运维可当场重发 H6 或排查磁盘/权限。
+void MainWindow::onBindPersistFailed(const QString& grid, const QString& box, const QString& orderCode)
+{
+    ++m_bindPersistFailedCount;
+    m_lastBindPersistFailed = QString::fromUtf8("格口%1→容器%2（波次:%3）")
+        .arg(grid).arg(box).arg(orderCode.isEmpty() ? QString::fromUtf8("(归属待补齐)") : orderCode);
+
+    appendLog(QString::fromUtf8(
+        "[容器绑定] **落库失败** %1 —— 面板已显示该绑定，但数据库没有写入；"
+        "切回该波次时**无法恢复**该绑定。请检查磁盘/权限，并让 WMS 重发 H6。")
+        .arg(m_lastBindPersistFailed), true);
+
+    if (m_lblBindPersistFailed)
+    {
+        m_lblBindPersistFailed->setText(QString::fromUtf8("⚠ 绑定未落库 %1 个（最近 %2）")
+            .arg(m_bindPersistFailedCount).arg(m_lastBindPersistFailed));
+        m_lblBindPersistFailed->setToolTip(QString::fromUtf8(
+            "H6 绑定只更新了内存、数据库写入失败（详见 DataBase/data.log）。\n"
+            "影响：切回该波次时按波次取不到这些绑定；现场表现为「面板已绑定、库里一行都没有」。\n"
+            "处置：① 排查磁盘空间/文件权限；② 让 WMS 重发 H6；③ 用「查看绑定」核对库中记录。"));
+        m_lblBindPersistFailed->setVisible(true);
+    }
 }
 
 // ★ 2026-09-07 清空格口容器绑定（人工重置按钮）
@@ -3393,14 +4276,49 @@ void MainWindow::onClearAllGridBinds()
         QString::fromUtf8("已清空全部格口容器绑定，格口恢复初始状态。\n历史绑定记录已归档保存在数据库中，可追溯。"));
 }
 
+// ★ 2026-09-16 需求②：该格口是否在「容器绑定状态」面板中隐藏
+//   口径（纯逻辑实现在 tests/BindingPanelPolicy.h::bpIsGridHidden）：
+//     隐藏对象 = 配置的物理异常口（exceptionGrid，现场=66）——异常口只收超计划件、
+//     不上传 WMS、也不参与产品计划，其绑定状态对操作员没有意义，故整格不渲染。
+//     exceptionGrid 为空 / "0"（未配置）→ 不隐藏任何格口（与改造前一致，零回归）。
+bool MainWindow::isGridHiddenInBindingPanel(int gridNum) const
+{
+    return bpIsGridHidden(gridNum, ConfigManager::instance()->config().exceptionGrid);
+}
+
+// ★ 2026-09-16 需求②：面板可见格口数（计数口径与之保持一致，避免"65 格却显示未绑定 66"）
+int MainWindow::visibleBindingSlotCount() const
+{
+    return bpVisibleSlotCount(BINDING_SLOT_COUNT, ConfigManager::instance()->config().exceptionGrid);
+}
+
 void MainWindow::updateBindingPanel()
 {
     if (!m_pServer) return;
 
     QMap<QString, QString> bindings = m_pServer->getContainerBindings();
     int boundCount = 0;
-    int lockedCount = 0;          // ★ 2026-09-11：已锁格数量（黄色，PLC 物理锁格中/满箱锁格）
+    int lockedCount = 0;          // ★ 2026-09-11：已锁格数量（满箱锁格）
     int pendingRebindCount = 0;   // ★ 2026-09-09：已物理解锁但仍等待 WMS 重绑(H6)的格口数
+
+    // ★ 2026-09-16 需求⑦：整格底色 = 状态（配色/优先级取自 BindingPanelPolicy.h，与自测同源）；
+    //   圆点已隐藏，故此处只设外框底色 + 箱号/状态文字
+    //   ★ 本次更新：字号 11px → 13px（客户要求"格口绑定状态内的字体调大"）；
+    //     文字色按状态取 —— 有色底（绿/橙/红）=白字；未绑定（无色底）=深灰字
+    // slot = 格口数组下标（gridNum-1）；state = 四态；boxText = 箱号或状态文案
+    auto paintGrid = [&](int slot, BindingPanelState state, const QString& boxText) {
+        if (slot < 0 || slot >= BINDING_SLOT_COUNT) return;
+        if (slot < m_bindingFrames.size() && m_bindingFrames[slot])
+            m_bindingFrames[slot]->setStyleSheet(bpFrameStyle(state));   // 整格底色（未绑定=无色）
+        QLabel* lblBox = m_bindingBoxLabels[slot];
+        if (lblBox)
+        {
+            lblBox->setStyleSheet(QString("font-size: 13px; color: %1; font-weight: bold;"
+                                          " border: none; background: transparent;")
+                                      .arg(bpBoxTextColorOf(state)));
+            lblBox->setText(boxText);
+        }
+    };
 
     for (int i = 0; i < BINDING_SLOT_COUNT; ++i)
     {
@@ -3408,60 +4326,52 @@ void MainWindow::updateBindingPanel()
         QString gridKey = QString("%1").arg(gridNum, GRID_KEY_PADDING, 10, QChar('0'));
         QString boxCode = bindings.value(gridKey, "");
 
+        // ★ 需求②：隐藏格口（异常口）不渲染、不计数 —— 双保险（建格时已跳过）
+        if (isGridHiddenInBindingPanel(gridNum)) continue;
+
         QLabel* lblStatus = m_bindingLabels[i];
         QLabel* lblBox    = m_bindingBoxLabels[i];
         if (!lblStatus || !lblBox) continue;
 
-        // ★ 2026-09-09 四态显示（客户现场：物理解锁后仍显示"锁格"）：
-        //   ① 物理锁格中（S7 DB77 锁格位）           → 黄 "锁格"
-        //   ② 已物理解锁但 WCS 仍禁用（等 H6 重绑）  → 橙 "已解锁·待重绑"
+        // ★ 2026-09-09 四态显示（客户现场：物理解锁后仍显示"锁格"）；★ 需求⑦：颜色落在整格底色上
+        //   ① 物理锁格中（S7 DB77 锁格位）           → 橙 "锁格"
+        //   ② 已物理解锁但 WCS 仍禁用（等 H6 重绑）  → 红 "已解锁·待重绑"
         //   ③ 未禁用且有容器绑定                     → 绿 箱号
         //   ④ 其余                                   → 灰 "未绑定"
-        bool bPhysLocked = m_pPlcMgr && m_pPlcMgr->isGridLocked(gridNum);
-        bool bDisabled   = m_pPlcMgr && m_pPlcMgr->isGridDisabled(gridNum);
+        //   优先级由 bpStateOf 统一给出：锁格 > 待重绑 > 已绑定 > 未绑定
+        const bool bPhysLocked = m_pPlcMgr && m_pPlcMgr->isGridLocked(gridNum);
+        const bool bDisabled   = m_pPlcMgr && m_pPlcMgr->isGridDisabled(gridNum);
+        const BindingPanelState state = bpStateOf(boxCode, bPhysLocked, bDisabled);
 
-        if (bPhysLocked)
+        if (state == BP_LOCKED)
         {
             boundCount++;
-            lockedCount++;   // ★ 2026-09-11：黄色"锁格"格口计数
-            lblStatus->setStyleSheet(
-                "font-size: 10px; color: white; border-radius: 6px; background-color: #FFC107;");
-            lblStatus->setToolTip(QString("格口%1 物理锁格中（黄色）：PLC 已锁定该格口（S7 锁格位置位）").arg(gridKey));
-            lblBox->setText(boxCode.isEmpty() ? QString::fromUtf8("锁格") : boxCode);
-            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
+            lockedCount++;   // ★ 2026-09-11：满箱锁格格口计数
+            lblStatus->setToolTip(QString("格口%1 物理锁格中（橙色整格）：PLC 已锁定该格口（S7 锁格位置位）").arg(gridKey));
         }
-        else if (bDisabled)
+        else if (state == BP_REBIND)
         {
             // ★ 现场已解锁，但满箱后尚未收到 WMS 重发 H6 绑定 → 暂不参与分配（等待重绑）
             boundCount++;
             pendingRebindCount++;
-            lblStatus->setStyleSheet(
-                "font-size: 10px; color: white; border-radius: 6px; background-color: #FF9800;");
-            lblStatus->setToolTip(QString("格口%1 已解锁·待重绑（橙色）：现场已物理解锁；"
+            lblStatus->setToolTip(QString("格口%1 已解锁·待重绑（红色整格）：现场已物理解锁；"
                                           "满箱后旧容器已归档，等待 WMS 重新下发容器绑定(H6)后恢复分配").arg(gridKey));
-            lblBox->setText(boxCode.isEmpty() ? QString::fromUtf8("待重绑") : boxCode);
-            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
         }
-        else if (!boxCode.isEmpty())
+        else if (state == BP_BOUND)
         {
             boundCount++;
-            lblStatus->setStyleSheet(
-                "font-size: 10px; color: white; border-radius: 6px; background-color: #4CAF50;");
             lblStatus->setToolTip(QString("格口%1 ←→ %2 (已绑定)").arg(gridKey).arg(boxCode));
-            lblBox->setText(boxCode);
-            lblBox->setStyleSheet("font-size: 11px; color: #333; font-weight: bold; border: none; background: transparent;");
         }
         else
         {
-            lblStatus->setStyleSheet(
-                "font-size: 10px; color: white; border-radius: 6px; background-color: #bbb;");
-            lblStatus->setToolTip(QString("格口%1: 未绑定").arg(gridKey));
-            lblBox->setText("--");
-            lblBox->setStyleSheet("font-size: 11px; color: #bbb; border: none; background: transparent;");
+            lblStatus->setToolTip(QString("格口%1: 未绑定（无底色=默认状态）").arg(gridKey));
         }
+        paintGrid(i, state, bpBoxTextOf(state, boxCode));
     }
 
-    int unboundCount = BINDING_SLOT_COUNT - boundCount;
+    // ★ 需求②：未绑定基数 = **可见格口数**（隐藏异常口后为 65；未配置异常口时为 66）
+    const int visibleSlots = visibleBindingSlotCount();
+    int unboundCount = visibleSlots - boundCount;
     m_lblBoundCount->setText(QString("已绑定: %1").arg(boundCount));
     // ★ 2026-09-11 已锁格计数（黄色，紧跟"已绑定"）：PLC 物理锁格中（S7 锁格位=1，满箱锁格）
     //   口径：黄色"锁格"格口数；橙色"已解锁·待重绑"单独在 tooltip 中给出（未计入本数）
@@ -3479,10 +4389,13 @@ void MainWindow::updateBindingPanel()
     // ★ 2026-09-09：待重绑格口数量提示（橙色格口，已解锁但等 H6 重绑）
     if (m_lblUnboundCount)
     {
-        m_lblUnboundCount->setToolTip(pendingRebindCount > 0
-            ? QString::fromUtf8("未绑定: %1（其中 %2 个为「已解锁·待重绑」：等待 WMS 重发 H6 容器绑定）")
-                  .arg(unboundCount).arg(pendingRebindCount)
-            : QString::fromUtf8("未绑定: %1").arg(unboundCount));
+        m_lblUnboundCount->setToolTip(
+            QString::fromUtf8("未绑定: %1（面板可见格口共 %2 个；配置的物理异常口不计入本面板）%3")
+                .arg(unboundCount).arg(visibleSlots)
+                .arg(pendingRebindCount > 0
+                     ? QString::fromUtf8("\n其中 %1 个为「已解锁·待重绑」：等待 WMS 重发 H6 容器绑定")
+                           .arg(pendingRebindCount)
+                     : QString()));
     }
 }
 
@@ -3509,54 +4422,65 @@ void MainWindow::onRefreshWaveRecords()
     int liveStatus    = wm ? wm->status() : -1;
 
     m_tblWaveRecords->setRowCount(waves.size());
+
+    // ★ 2026-09-15 性能修复：H7/H8 状态计数 + 未闭环异常件数改为**3 条批量查询**覆盖全部波次
+    //   原实现"每个波次 3 次同步 DB 查询"，上百波次时主线程数秒冻结（点「切换波次」最明显）。
+    //   口径与原逐波次逻辑严格一致（已在 tests/test_wave_records_batch.cpp 用金标准逐条比对锁定）。
+    QMap<QString, OutboxStatusCount> h7All, h8All;
+    QMap<QString, int>               excAll;
+    // ★ 2026-09-17 「格口绑定」列（**默认隐藏**，见 setupUI 的 setColumnHidden）：
+    //   该波次绑定过的格口数（= 切回时恢复的格口数）。查询**保留且照常执行** ——
+    //   一次 GROUP BY 覆盖全部波次（与上面 3 条批量统计同批），代价可忽略，
+    //   换来"把隐藏改成显示"就立刻有数据，不用再改第二处代码。
+    QMap<QString, int>               bindCntAll;
+    bool batchOk = false;
+    if (m_pQueryDb && m_pQueryDb->isOpen())
+    {
+        bool ok7 = false, ok8 = false, okE = false, okB = false;
+        h7All = m_pQueryDb->getFullboxStatusCountAll(&ok7);
+        h8All = m_pQueryDb->getEndStatusCountAll(&ok8);
+        excAll = m_pQueryDb->getPendingExceptionCountAll(&okE);
+        bindCntAll = m_pQueryDb->getBindCountsByOrder(&okB);   // ★ 2026-09-17 一次 GROUP BY 覆盖全部波次
+        batchOk = (ok7 && ok8 && okE && okB);
+        if (!batchOk)
+            appendLog("[波次列表] 批量统计查询失败，本行状态按「无」显示（详见 DataBase 日志）", true);
+    }
+
     for (int row = 0; row < waves.size(); ++row)
     {
         const WaveRecordProgress& w = waves[row];
 
-        // H7 满箱状态汇总
+        // H7 满箱状态汇总（批量结果；无键 = 该波次无报文 → 显示"无"）
         QString h7Status = QString::fromUtf8("无");
+        if (h7All.contains(w.orderCode))
         {
-            QVector<OutboxRecord> fb = m_pServer->getWaveFullboxOutbox(w.orderCode);
-            if (!fb.isEmpty())
-            {
-                int pend = 0, succ = 0, fail = 0;
-                for (const OutboxRecord& r : fb)
-                {
-                    if (r.status == "success") ++succ;
-                    else if (r.status == "failed") ++fail;
-                    else ++pend;
-                }
-                h7Status = QString("成功%1/待发%2/失败%3").arg(succ).arg(pend).arg(fail);
-            }
+            const OutboxStatusCount c = h7All.value(w.orderCode);
+            h7Status = QString("成功%1/待发%2/失败%3").arg(c.success).arg(c.pending).arg(c.failed);
         }
 
-        // H8 完结状态汇总
+        // H8 完结状态汇总（批量结果）
         QString h8Status = QString::fromUtf8("无");
         bool    h8Failed = false;   // ★ 2026-09-08 是否存在失败/已取消的完结报文（状态列标注用）
+        if (h8All.contains(w.orderCode))
         {
-            QVector<OutboxRecord> eb = m_pServer->getWaveEndOutbox(w.orderCode);
-            if (!eb.isEmpty())
-            {
-                int pend = 0, succ = 0, fail = 0;
-                for (const OutboxRecord& r : eb)
-                {
-                    if (r.status == "success") ++succ;
-                    else if (r.status == "failed") ++fail;
-                    else ++pend;
-                }
-                h8Status = QString("成功%1/待发%2/失败%3").arg(succ).arg(pend).arg(fail);
-                h8Failed = (fail > 0);
-            }
+            const OutboxStatusCount c = h8All.value(w.orderCode);
+            h8Status = QString("成功%1/待发%2/失败%3").arg(c.success).arg(c.pending).arg(c.failed);
+            h8Failed = (c.failed > 0);
         }
 
         // 状态列：当前运行波次显示实时状态 + 「（当前）」标记
         // ★ 2026-09-08：处于待执行队列的波次显示「排队待执行」；H8 存在失败报文时追加「（回传失败·待重传）」
+        // ★ 2026-09-16 需求①：终态（已完成/已取消）波次追加「（不可切回）」——按需求不允许切回，
+        //   报文补发请用「重传满箱切换(H7) / 重传任务完结(H8)」（两者读本表选中行，不依赖切回）
         QString statusText;
         bool inPendingQueue = false;
         for (const HttpServer::PendingWaveInfo& pw : pendingWaves)
         {
             if (pw.orderCode == w.orderCode) { inPendingQueue = true; break; }
         }
+        // 终态判定：以内存实时状态为准（当前波次刚完结时 DB 状态可能滞后一拍）
+        const int rowStatus = (!liveOrder.isEmpty() && w.orderCode == liveOrder) ? liveStatus : w.status;
+        const bool bTerminalRow = (rowStatus == WAVE_FINISHED || rowStatus == WAVE_CANCELLED);
         if (!liveOrder.isEmpty() && w.orderCode == liveOrder)
             statusText = WaveSnapshot::statusToString(liveStatus) + QString::fromUtf8("（当前）");
         else if (inPendingQueue)
@@ -3566,6 +4490,8 @@ void MainWindow::onRefreshWaveRecords()
 
         if (h8Failed && w.status != WAVE_FINISHED)
             statusText += QString::fromUtf8("（回传失败·待重传）");
+        if (bTerminalRow)
+            statusText += QString::fromUtf8("（不可切回）");
 
         auto setCell = [&](int col, const QString& text) {
             QTableWidgetItem* item = new QTableWidgetItem(text);
@@ -3590,17 +4516,10 @@ void MainWindow::onRefreshWaveRecords()
         }
         if (needDbCalc && m_pQueryDb && m_pQueryDb->isOpen())
         {
-            // 历史波次：处理/异常口 = exception_record 中 PLC 判定失败（2/3）两类记录里
-            //   **在 sorting_records 中没有成功落格** 的去重 EPC（成功落格即已处理，不再计入）
-            QSet<QString> binEpcs;
-            for (const ExceptionRecord& e : m_pQueryDb->queryExceptions(w.orderCode, QString(), QString(),
-                                                                        QString(), QString(), SORTING_QUERY_MAX_RESULTS))
-            {
-                if ((e.type == "plc_no_grid" || e.type == "plc_info_incomplete")
-                    && !e.epc.isEmpty() && !e.handled)
-                    binEpcs.insert(e.epc);
-            }
-            excCnt = binEpcs.size();
+            // 历史波次：处理/异常口 = exception_record 中 PLC 判定失败两类记录里
+            //   **未闭环(handled=0)** 的去重 EPC 数（成功落格即已处理，不再计入）
+            //   ★ 2026-09-15：改用批量结果（3 条查询覆盖全部波次），口径与逐波次查询完全一致
+            excCnt = excAll.value(w.orderCode, 0);
         }
         setCell(0, w.orderCode);
         setCell(1, statusText);
@@ -3636,6 +4555,29 @@ void MainWindow::onRefreshWaveRecords()
         setCell(6, h7Status);
         setCell(7, h8Status);
         setCell(8, formatTimeFirst(w.updatedAt));   // ★ 2026-09-08 时间在前、年月在后
+        // ★ 2026-09-17 第 10 列「格口绑定」：**默认隐藏**（现场要求），但列/口径保留 ——
+        //   仍照常填充（一次批量查询早已取回，代价可忽略），这样"改一行 false 即可恢复显示"，
+        //   恢复后立刻有数据、不会出现空列。文案/配色口径见 tests/BindingPanelPolicy.h。
+        if (!m_tblWaveRecords->isColumnHidden(WAVE_RECORDS_BIND_COL))
+        {
+            const int ownCnt = bindCntAll.value(w.orderCode, 0);
+            QTableWidgetItem* it = setCell(WAVE_RECORDS_BIND_COL, bpWaveBindColumnText(ownCnt));
+            it->setTextAlignment(Qt::AlignCenter);
+            it->setForeground(QColor(bpWaveBindColumnColor(ownCnt)));
+            it->setToolTip(bpWaveBindColumnTooltip(ownCnt));
+        }
+
+        // ★ 2026-09-16 需求①：终态行整行提示"不可切回"（状态列已标注），并说明正确入口
+        if (bTerminalRow)
+        {
+            for (int c = 0; c < m_tblWaveRecords->columnCount(); ++c)
+            {
+                if (QTableWidgetItem* cell = m_tblWaveRecords->item(row, c))
+                    cell->setToolTip(QString::fromUtf8(
+                        "该波次为终态（已完成/已取消）：按需求**不允许切回**。\n"
+                        "如需补发失败报文，请选中本行后点「重传满箱切换(H7)」或「重传任务完结(H8)」。"));
+            }
+        }
     }
 }
 
@@ -3668,11 +4610,15 @@ void MainWindow::onResendSelectedH7()
     // ★ 2026-09-08 UI需求2：H7 按钮读取「失败格口下拉」
     //   ① 选中失败记录 → 按该(波次,格口)精确重传失败/已取消的 H7 报文（不影响主流程）
     //   ② 未选中但手输了格口号 → 对当前波次该格口的分拣记录生成新的 H7 手动满箱上传
-    //   ③ 下拉为"暂无失败记录"/空 → 沿用原行为（按选中波次/当前波次重发全部未成功 H7）
+    //   ③ 下拉为提示项（暂无运行波次/本波次暂无失败记录）→ 沿用原行为（按选中波次/当前波次重发全部未成功 H7）
+    //   ★ 2026-09-16 需求⑤：下拉内容已收窄为本波次，故①只可能命中本波次的失败报文
     if (m_cmbFailedH7)
     {
         const QString text = m_cmbFailedH7->currentText().trimmed();
-        const bool noFailItem = text.isEmpty() || text == QString::fromUtf8("暂无失败记录");
+        const bool noFailItem = text.isEmpty()
+                             || text == QString::fromUtf8("暂无失败记录")
+                             || text == QString::fromUtf8("暂无运行波次")
+                             || text == QString::fromUtf8("本波次暂无失败记录");
 
         if (!noFailItem)
         {
@@ -3693,7 +4639,7 @@ void MainWindow::onResendSelectedH7()
             if (!grid.isEmpty())
             {
                 appendLog(QString("[手动满箱] 格口%1 开始满箱切换上传 ...").arg(text));
-                m_pServer->manualFullbox(grid);
+                m_pServer->manualFullbox(grid);   // ★ 需求④：返回值(msgId)此处不需要
                 onRefreshWaveRecords();
                 return;
             }
@@ -3745,22 +4691,83 @@ void MainWindow::onResendSelectedH8()
 }
 
 // ============================================================================
+// ★ 2026-09-16 现场需求④：「一键满箱回传」三项计数的**唯一取数与渲染入口**
+//   ① 本波次满箱回传 = 当前波次已生成的 H7 报文总数（outbox_fullbox 行数，含自动满箱/
+//      手动满箱/一键回传）+ 成功·待发·失败拆分；数据源 getFullboxStatusCountAll()（已有批量接口）
+//   ② 本次一键 成功   = m_oneKeyBatches（本次一键成功生成并入 Outbox 的报文件数）
+//   ③ 本次一键 失败   = m_oneKeyFails（未生成报文 + 生成后最终重试耗尽失败）
+//   ★ 波次变化时"本次"计数归零、msgId 集合清空（迟到的失败回执不会误计到新波次）
+//   ★ 本函数只在"波次变化 / 一键前后 / 失败回执 / 启停接收"时调用，**不每秒查库**
+// ============================================================================
+void MainWindow::refreshFullboxCountLabel()
+{
+    if (!m_lblFullboxCount || !m_pServer) return;
+
+    const QString order = (m_pServer->waveManager() ? m_pServer->waveManager()->orderCode() : QString());
+
+    // 波次变化 → "本次一键"归零（口径：本次 = 当前波次内的本次会话一键操作）
+    if (order != m_fullboxCountOrder)
+    {
+        m_fullboxCountOrder = order;
+        m_oneKeyBatches      = 0;
+        m_oneKeyFails        = 0;
+        m_oneKeyMsgIds.clear();
+    }
+
+    if (order.isEmpty())
+    {
+        m_lblFullboxCount->setText(QString::fromUtf8("无运行波次 ｜ 本次一键 成功 0 / 失败 0"));
+        m_lblFullboxCount->setStyleSheet("font-size: 12px; color: #888; padding: 0 4px;");
+        return;
+    }
+
+    int total = 0, succ = 0, pend = 0, fail = 0;
+    if (SortingDatabase* db = m_pServer->sortingDb(); db && db->isOpen())
+    {
+        const OutboxStatusCount c = db->getFullboxStatusCountAll().value(order);
+        succ = c.success; pend = c.pending; fail = c.failed; total = c.total();
+    }
+
+    QString text = QString::fromUtf8("本波次满箱回传 %1 次（成功%2/待发%3/失败%4） ｜ 本次一键 成功 %5 / 失败 %6")
+        .arg(total).arg(succ).arg(pend).arg(fail).arg(m_oneKeyBatches).arg(m_oneKeyFails);
+    m_lblFullboxCount->setText(text);
+    // 本次一键失败数 > 0 时整条标红，现场一眼可见
+    m_lblFullboxCount->setStyleSheet(m_oneKeyFails > 0
+        ? "font-size: 12px; color: #D32F2F; font-weight: bold; padding: 0 4px;"
+        : "font-size: 12px; color: #555; padding: 0 4px;");
+}
+
+// ★ 2026-09-16 需求④：H7 报文最终失败（重试耗尽）回执 → 仅对"本次一键生成的 msgId"累加失败数
+void MainWindow::onFullboxMessageFailed(const QString& msgId, const QString& orderCode, const QString& grid)
+{
+    Q_UNUSED(orderCode);
+    Q_UNUSED(grid);
+    if (!m_oneKeyMsgIds.contains(msgId)) return;   // 非本次一键来源（自动满箱/手动重传）→ 不计入本次
+    m_oneKeyMsgIds.remove(msgId);                  // 已归因，避免后续重复累计
+    ++m_oneKeyFails;
+    appendLog(QString::fromUtf8("[一键满箱] 其中 1 条报文最终失败（重试耗尽）——本次一键失败数 +1"), true);
+    refreshFullboxCountLabel();
+}
+
+// ============================================================================
 // ★ 2026-09-08 UI需求2/3：刷新「H7 失败格口 / H8 失败波次」两个下拉
-//   数据源 = outbox 表中 status IN ('failed','cancelled') 的历史报文（上限200条）
-//   无记录时显示「暂无失败记录」（灰色提示项），并清空可编辑框方便直接手输格口
+//   ★ 2026-09-16 需求⑤：H7 下拉改为**只显示当前运行波次的**失败/已取消报文
+//   H8 下拉保持"全部历史失败波次"（否则"已完成波次补发 H8"的入口会断）
+//   无记录时显示灰色提示项，并清空可编辑框方便直接手输格口
 // ============================================================================
 void MainWindow::refreshFailedCombos()
 {
     if (!m_pServer) return;
 
-    // ── H7 失败格口下拉 ──
+    // ── H7 失败格口下拉（★ 需求⑤：只取当前运行波次）──
     if (m_cmbFailedH7)
     {
         const QString keepText = m_cmbFailedH7->currentText().trimmed();
+        const QString curOrder = (m_pServer->waveManager() ? m_pServer->waveManager()->orderCode() : QString());
         {
             QSignalBlocker blocker(m_cmbFailedH7);
             m_cmbFailedH7->clear();
-            m_failedH7Items = m_pServer->getFailedFullboxItems(200);
+            m_failedH7Items = m_pServer->getFailedFullboxItemsByOrder(curOrder, 200);
             for (const HttpServer::FailedFullboxItem& it : m_failedH7Items)
             {
                 const QString st = (it.status == "failed")    ? QString::fromUtf8("失败")
@@ -3773,7 +4780,10 @@ void MainWindow::refreshFailedCombos()
             if (m_cmbFailedH7->count() == 0)
             {
                 m_failedH7Items.clear();
-                m_cmbFailedH7->addItem(QString::fromUtf8("暂无失败记录"));
+                // ★ 需求⑤：区分"无运行波次"与"本波次无失败"，避免现场误以为下拉坏了
+                m_cmbFailedH7->addItem(curOrder.isEmpty()
+                    ? QString::fromUtf8("暂无运行波次")
+                    : QString::fromUtf8("本波次暂无失败记录"));
                 m_cmbFailedH7->setCurrentIndex(0);
                 if (m_cmbFailedH7->lineEdit()) m_cmbFailedH7->lineEdit()->clear();   // 便于直接手输格口
             }
@@ -3976,15 +4986,11 @@ void MainWindow::onViewWaveQueue()
         onStartNewWaveTask();
 }
 
-// ★ 切换选中波次：未完成→按 DB 进度恢复到内存继续；已完成/已取消→载入查看
-//   ★ 2026-09-06 状态隔离：任意状态都可切出；若正在等待 H8 完结，自动取消等待再切换（报文留 outbox 补发）
+// ★ 切换选中波次：未完成→按 DB 进度恢复到内存继续
+//   ★ 2026-09-16 现场需求①：**已完成/已取消（终态）波次一律拒绝切回**（不再提供"载入查看"）
+//   ★ 2026-09-06 状态隔离：任意非终态状态都可切出；若正在等待 H8 完结，自动取消等待再切换（报文留 outbox 补发）
 void MainWindow::onResumeSelectedWave()
 {
-    if (m_stopPhase == StopEnding)
-    {
-        appendLog("[切换] 正在等待完结回传(H8)——自动取消等待（H8报文保留outbox继续补发），继续切换", true);
-        doActualStop();   // 幂等收尾：停止接收 + UI 复位；H8 未确认报文保留
-    }
     if (!m_pServer || !m_tblWaveRecords) return;
 
     int row = m_tblWaveRecords->currentRow();
@@ -3999,6 +5005,33 @@ void MainWindow::onResumeSelectedWave()
     QString orderCode = it->text().trimmed();
     if (orderCode.isEmpty()) return;
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-16 现场需求①：终态波次（已完成/已取消）**不允许切回** —— UI 侧守卫
+    //
+    //   必须放在**摘要弹窗之前**、且在任何"切出当前波次"的动作之前：
+    //     · 一旦放行，HttpServer::resumeUnfinishedWave 的校验1 会先把当前运行波次切出去，
+    //       即使随后拒绝载入，当前任务也已经被切出（"拒绝"这个动作产生了副作用）；
+    //     · 因此这里先拦，拒绝路径只打日志 + 刷新列表，**什么状态都不改**。
+    //   报文补发入口不受影响：用「重传满箱切换(H7) / 重传任务完结(H8)」（读的是波次表选中行）。
+    // ══════════════════════════════════════════════════════════════════════════
+    if (m_pServer->isWaveTerminal(orderCode))
+    {
+        const int st = m_pServer->waveDbStatus(orderCode);
+        appendLog(QString::fromUtf8(
+            "[切换] 波次 %1（%2）已完成/已取消：按需求**不允许切回**（当前运行任务未受影响）；"
+            "如需补发报文请用「重传满箱切换(H7) / 重传任务完结(H8)」")
+            .arg(orderCode)
+            .arg(st > 0 ? WaveSnapshot::statusToString(st) : QString::fromUtf8("终态")), true);
+        onRefreshWaveRecords();   // 列表标注同步刷新
+        return;
+    }
+
+    if (m_stopPhase == StopEnding)
+    {
+        appendLog("[切换] 正在等待完结回传(H8)——自动取消等待（H8报文保留outbox继续补发），继续切换", true);
+        doActualStop();   // 幂等收尾：停止接收 + UI 复位；H8 未确认报文保留
+    }
+
     // 摘要弹窗（含数据快照）
     QJsonObject s = m_pServer->getUnfinishedWaveSummary(orderCode);
     if (s.isEmpty())
@@ -4008,7 +5041,21 @@ void MainWindow::onResumeSelectedWave()
     }
 
     int dbStatus = s["status"].toInt();
-    bool bViewOnly = (dbStatus == WAVE_FINISHED || dbStatus == WAVE_CANCELLED);
+    // ★ 2026-09-17 格口绑定摘要进入确认弹窗：现场"切回后绑定没回来/被清空"的关键前提是
+    //   切回前根本看不到该波次有没有绑定记录 —— 此处先给数字，让操作员自己判断要不要切。
+    const int bindOwn      = s.contains("bindOwn")       ? s["bindOwn"].toInt()       : -1;
+    const int bindConfirmed = s.contains("bindConfirmed") ? s["bindConfirmed"].toInt() : -1;
+    const int bindActive   = s.contains("bindActive")    ? s["bindActive"].toInt()    : -1;
+    QString bindLine;
+    if (bindOwn < 0)
+        bindLine = QString::fromUtf8("格口绑定: （未取得统计）");
+    else if (bindOwn == 0)
+        bindLine = QString::fromUtf8("格口绑定: **无绑定记录**（切回恢复不出该波次的绑定；库中当前物理绑定 %1 个仅供显示）")
+                       .arg(bindActive < 0 ? 0 : bindActive);
+    else
+        bindLine = QString::fromUtf8("格口绑定: 本波次记录 %1 格（切回将恢复这 %1 个；其中已被更晚波次重新绑定 %2 个）")
+                       .arg(bindOwn).arg(qMax(0, bindOwn - qMax(0, bindConfirmed)));
+
     QString msg = QString(
         "波次号: %1\n"
         "状态: %2\n"
@@ -4016,8 +5063,9 @@ void MainWindow::onResumeSelectedWave()
         "已分拣: %4    异常: %5\n"
         "H7满箱: %6\n"
         "H8完结: %7\n"
-        "更新时间: %8\n\n"
-        "%9")
+        "%8\n"
+        "更新时间: %9\n\n"
+        "%10")
         .arg(s["orderCode"].toString())
         .arg(s["statusText"].toString())
         .arg(s["orderQty"].toInt())
@@ -4025,14 +5073,13 @@ void MainWindow::onResumeSelectedWave()
         .arg(s["exceptionCount"].toInt())
         .arg(s["h7"].toString())
         .arg(s["h8"].toString())
+        .arg(bindLine)
         .arg(s["updatedAt"].toString())
-        .arg(bViewOnly
-             ? QString::fromUtf8("该波次已完结/取消：将以「查看模式」载入其数据\n（不参与分拣/回传；可重传H7/H8核对）")
-             : QString::fromUtf8("切换到该波次并按其上次进度继续？\n（切换后若当前有其它任务会先保留其进度与数据）"));
+        .arg(QString::fromUtf8("切换到该波次并按其上次进度继续？\n（切换后若当前有其它任务会先保留其进度与数据）"));
 
     QMessageBox box(QMessageBox::Question, QString::fromUtf8("切换波次"), msg,
                     QMessageBox::Yes | QMessageBox::Cancel, this);
-    box.button(QMessageBox::Yes)->setText(bViewOnly ? QString::fromUtf8("载入查看") : QString::fromUtf8("切换到该波次"));
+    box.button(QMessageBox::Yes)->setText(QString::fromUtf8("切换到该波次"));
     box.button(QMessageBox::Cancel)->setText(QString::fromUtf8("取消"));
     if (box.exec() != QMessageBox::Yes)
         return;
@@ -4042,6 +5089,14 @@ void MainWindow::onResumeSelectedWave()
     if (ok)
     {
         int status = m_pServer->waveManager() ? m_pServer->waveManager()->status() : -1;
+        // ★ 2026-09-17 切回后回报"格口绑定到底恢复成什么样"（来源+数量），
+        //   不再让"切过去发现绑定没恢复"只能靠翻日志才知道。
+        const int restoredCnt = m_pServer->boundCount();
+        const QString bindResult = (bindOwn > 0)
+            ? QString::fromUtf8("格口绑定：已恢复 %1 个（来源：本波次记录）").arg(restoredCnt)
+            : ((bindActive > 0)
+                ? QString::fromUtf8("格口绑定：**该波次无绑定记录**，已按现场物理绑定显示 %1 个（非本波次记录，等 WMS 重发 H6）").arg(restoredCnt)
+                : QString::fromUtf8("格口绑定：无任何绑定可恢复（该波次无记录且现场无活跃绑定）——请等 WMS 下发 H6"));
         if (status == WAVE_CREATED || status == WAVE_BOUND)
         {
             QString hint;
@@ -4054,15 +5109,14 @@ void MainWindow::onResumeSelectedWave()
             else
                 hint = QString::fromUtf8("当前状态：已下发，请等待 WMS 下发容器绑定（H6）推进到已绑定后，再点击「开始分拣」。");
             QMessageBox::information(this, QString::fromUtf8("已切换"),
-                QString::fromUtf8("已切换波次：%1\n%2").arg(orderCode).arg(hint));
+                QString::fromUtf8("已切换波次：%1\n%2\n%3").arg(orderCode).arg(bindResult).arg(hint));
         }
-        else if (status == WAVE_FINISHED || status == WAVE_CANCELLED)
+        else
         {
-            // ★ 历史终态波次「载入查看」
-            QMessageBox::information(this, QString::fromUtf8("已载入"),
-                QString::fromUtf8("已载入历史波次（查看模式）：%1（%2）\n"
-                                  "当前为查看态，不参与分拣/回传；可查看数据，或点击「重传满箱切换/重传任务完结」补发核对。")
-                    .arg(orderCode).arg(WaveSnapshot::statusToString(status)));
+            // ★ 2026-09-16 需求①：终态波次已不允许切回（入口守卫），此处仅作兜底提示
+            QMessageBox::information(this, QString::fromUtf8("已切换"),
+                QString::fromUtf8("已切换波次：%1（当前状态 %2）\n%3")
+                    .arg(orderCode).arg(WaveSnapshot::statusToString(status)).arg(bindResult));
         }
         updateWavePanel();
         updateBindingPanel();
@@ -4071,6 +5125,7 @@ void MainWindow::onResumeSelectedWave()
     else
     {
         appendLog(QString("[切换] 切换失败 order=%1（详见上方原因）").arg(orderCode), true);
+        onRefreshWaveRecords();   // ★ 需求①：被拒绝的终态行需同步刷新列表标注
     }
 }
 
@@ -4102,14 +5157,18 @@ void MainWindow::onStartNewWaveTask()
             QString("当前波次：%1（%2）\n\n"
                     "点击「开始新任务」后：\n"
                     "  ① 当前波次进度与全部数据保留（可从「波次数据记录」切换回来继续）；\n"
-                    "  ② 界面回到空闲、容器绑定与格口状态复位为初始全新状态，等待 WMS 下发新波次；\n"
-                    "  ③ 未成功的 H7/H8 回传可在切回该波次时自动补发，或用「重传」按钮。\n\n"
+                    "  ② **清空格口容器绑定**：面板全部格口复位为「未绑定」（② 的绑定记录归档保留在数据库中，\n"
+                    "     切回该波次时会逐格自动恢复，不会丢失）；\n"
+                    "  ③ 界面回到空闲、格口状态复位为初始全新状态，等待 WMS 下发新波次（届时由 WMS 重新下发 H6 绑定）；\n"
+                    "  ④ 未成功的 H7/H8 回传可在切回该波次时自动补发，或用「重传」按钮。\n\n"
                     "确定开始新任务吗？")
                 .arg(curOrder).arg(WaveSnapshot::statusToString(curStatus)),
             QMessageBox::Yes | QMessageBox::Cancel);
         if (ret != QMessageBox::Yes)
             return;
-        appendLog(QString("[新任务] 开始新任务，当前波次进度已保留 order=%1（%2）").arg(curOrder).arg(WaveSnapshot::statusToString(curStatus)));
+    appendLog(QString("[新任务] 开始新任务，当前波次进度已保留 order=%1（%2）；格口容器绑定将一并清空"
+                      "（面板全部「未绑定」，记录归档保留、切回该波次时自动恢复）")
+        .arg(curOrder).arg(WaveSnapshot::statusToString(curStatus)));
     }
     else
     {
@@ -4127,6 +5186,61 @@ void MainWindow::onStartNewWaveTask()
                           "（不自动执行，可点「查看接收波次队列」查看）").arg(pendingCnt));
     else
         appendLog("[新任务] 已回到空闲（初始全新状态）：等待 WMS 下发新波次；旧波次可随时从「波次数据记录」切换回来");
+}
+
+// ============================================================================
+// ★ 2026-09-16 需求④：按「效率统计」按钮的勾选状态显隐「运行日志」页右侧的效率面板
+//   · on=true  → 首次调用时才**懒创建**面板（那时 HttpServer 已就绪，数据即刻可用），
+//                并立即刷新一次（不等 1 秒定时器，点开就有数）
+//   · on=false → 隐藏面板（与其承载容器一起），日志区自动吃满宽度
+//   调用点：①「效率统计」按钮 toggled 信号；② 构造函数在 setupCore() 后按默认勾选状态应用一次
+// ============================================================================
+void MainWindow::applyLogEffPanelVisible(bool on)
+{
+    if (!m_logEffHost) return;   // 日志页尚未构建（构造期防御）
+
+    if (on && !m_logEffPanel)
+    {
+        auto* panel = new LogEfficiencyPanel(m_pServer, m_logEffHost);
+        panel->setMinimumWidth(280);
+        if (auto* hostLay = qobject_cast<QVBoxLayout*>(m_logEffHost->layout()))
+            hostLay->addWidget(panel);
+        m_logEffPanel = panel;
+        m_logEffTick  = [this]() {
+            if (m_logEffPanel) static_cast<LogEfficiencyPanel*>(m_logEffPanel)->tick();
+        };
+        // ★ 2026-09-17 现场要求：面板宽度 = 「波次信息」面板宽度（上下两栏对齐），
+        //   （原为"日志区与面板各占一半"；现改为跟随波次信息面板的实际宽度，随窗口缩放同步）
+        m_logEffSyncedW = -1;          // 强制本次按当前宽度对齐一次
+        syncLogEffPanelWidth();
+    }
+
+    m_logEffHost->setVisible(on);
+    if (on && m_logEffTick) m_logEffTick();          // 立即出数
+    if (on) syncLogEffPanelWidth();                  // 显示时再对齐一次（首次创建时宽度可能尚未确定）
+}
+
+// ============================================================================
+// ★ 2026-09-17 现场要求：效率统计面板宽度 = 「波次信息」面板宽度
+//   · 波次信息面板在第一行右侧（占整行一半，可拖动分隔条改变）；
+//   · 效率统计面板在「运行日志」页右侧 → 两者同宽即可上下对齐，视觉成列。
+//   · 实现：把日志页分隔条的右栏宽度设为波次信息面板的当前宽度（左栏吃余量）。
+//   · 频率：由 1 秒刷新定时器调用，但**记住上次对齐值**，宽度未变时直接返回（零布局开销）；
+//     用户手动拖动日志分隔条后不被秒级覆盖，只有窗口尺寸/波次信息面板宽度变化时才重新对齐。
+// ============================================================================
+void MainWindow::syncLogEffPanelWidth()
+{
+    if (!m_logEffSplit || !m_logEffHost || !m_logEffPanel || !m_grpWaveInfo) return;
+    if (!m_logEffHost->isVisible()) return;                 // 面板隐藏/不在前台：不动分隔条
+    const int target = m_grpWaveInfo->width();
+    const int total  = m_logEffSplit->width();
+    if (target <= 0 || total <= 0 || target >= total) return;   // 几何未就绪：下次再对
+    if (target == m_logEffSyncedW) return;                      // 已对齐过且宽度未变 → 直接返回
+
+    QList<int> sizes;
+    sizes << (total - target) << target;
+    m_logEffSplit->setSizes(sizes);
+    m_logEffSyncedW = target;
 }
 
 void MainWindow::onClearLog()
@@ -4714,7 +5828,14 @@ void MainWindow::renderContainerQuery()
         return;
     }
 
-    QVector<SortingRecord> recs = db->queryByBoxcode(box, SORTING_QUERY_MAX_RESULTS);
+    // ★ 2026-09-16 需求③：按容器号查询同样受"日期区间（必填）"约束
+    const QDateTime qFrom(m_editQueryDateFrom->date(), QTime(0, 0, 0));
+    const QDateTime qTo(m_editQueryDateTo->date(), QTime(23, 59, 59));
+    const QString   rangeText = QString::fromUtf8("%1 ~ %2")
+        .arg(m_editQueryDateFrom->date().toString("yyyy-MM-dd"))
+        .arg(m_editQueryDateTo->date().toString("yyyy-MM-dd"));
+
+    QVector<SortingRecord> recs = db->queryByBoxcode(box, qFrom, qTo, SORTING_QUERY_MAX_RESULTS);
 
     // ── ① 计划信息缓存：波次+SKU → 计划件数 / 计划格口 / 格口类型 / 库位 ──
     //   ★ 按 (波次,SKU) 缓存，避免逐行查库（一个容器可能有上百个 SKU）
@@ -4770,7 +5891,7 @@ void MainWindow::renderContainerQuery()
     // ── ③ 跨容器检测：只查本容器时看不出某件是否也落到过别的容器，需按 EPC 批量反查 ──
     QStringList epcList;
     for (const QString& e : uniqEpcs) if (!e.isEmpty()) epcList << e;
-    const QMap<QString, QStringList> otherBoxes = db->queryOtherBoxcodesByEpc(epcList, box);
+    const QMap<QString, QStringList> otherBoxes = db->queryOtherBoxcodesByEpc(epcList, box, qFrom, qTo);
 
     // ── ④ 组装行 ──
     struct BoxRow
@@ -4956,9 +6077,9 @@ void MainWindow::renderContainerQuery()
         }
     }
 
-    seg << QString::fromUtf8("本容器 [%1]：EPC 去重 %2 件（明细 %3 条）｜SKU %4 个｜波次 %5 个｜格口 %6 个")
+    seg << QString::fromUtf8("本容器 [%1]：EPC 去重 %2 件（明细 %3 条）｜SKU %4 个｜波次 %5 个｜格口 %6 个｜日期 %7")
             .arg(box).arg(uniqEpcs.size()).arg(recs.size())
-            .arg(uniqSkus.size()).arg(uniqWaves.size()).arg(gridsInBox.size());
+            .arg(uniqSkus.size()).arg(uniqWaves.size()).arg(gridsInBox.size()).arg(rangeText);
     seg << QString::fromUtf8("异常：同EPC多容器 %1 条｜超计划 %2 件（%3 个SKU）｜计划外落格 %4 条")
             .arg(driftCount).arg(overflowRowCount).arg(overSkuCount).arg(outsideCount);
 
@@ -4969,6 +6090,7 @@ void MainWindow::renderContainerQuery()
     m_lblRecordCount->setText(label);
     m_lblRecordCount->setToolTip(QString::fromUtf8(
         "按容器号查询口径：\n"
+        "  ★ 日期区间（必填）作用于落格时间 sort_time：只统计区间内的落格明细\n"
         "  行 = 该容器号下的一条落格明细（每条明细对应 1 个 EPC）\n"
         "  EPC 去重 = 该容器内不重复实物件数（同一 EPC 重复反馈/重投只算 1 件）\n"
         "  计划数量/计划格口 = 该波次该 SKU 的 WMS 计划（来自波次明细 return_wave_item）\n"
@@ -4985,15 +6107,16 @@ void MainWindow::renderContainerQuery()
             : "font-size: 13px; color: #555; font-weight: bold;");
 
     // ── ⑦ 运行日志留痕 ──
-    appendLog(QString::fromUtf8("[查询] 容器 [%1]：EPC 去重 %2 件（明细 %3 条）、SKU %4 个、波次 %5 个")
-        .arg(box).arg(uniqEpcs.size()).arg(recs.size()).arg(uniqSkus.size()).arg(uniqWaves.size()));
+    appendLog(QString::fromUtf8("[查询] 容器 [%1]（日期 %2）：EPC 去重 %3 件（明细 %4 条）、SKU %5 个、波次 %6 个")
+        .arg(box).arg(rangeText).arg(uniqEpcs.size()).arg(recs.size()).arg(uniqSkus.size()).arg(uniqWaves.size()));
     if (driftCount > 0 || overflowRowCount > 0 || outsideCount > 0)
     {
         appendLog(QString::fromUtf8("[查询] 容器 [%1] 发现异常：同EPC多容器 %2 条、超计划 %3 件（%4 个SKU）、计划外落格 %5 条")
             .arg(box).arg(driftCount).arg(overflowRowCount).arg(overSkuCount).arg(outsideCount), true);
     }
     if (recs.isEmpty())
-        appendLog(QString::fromUtf8("[查询] 容器 [%1] 无落格记录（请确认容器号，或该容器尚未有物件落入）").arg(box), true);
+        appendLog(QString::fromUtf8("[查询] 容器 [%1] 在日期 %2 内无落格记录（请确认容器号/日期区间，或该容器尚未有物件落入）")
+            .arg(box).arg(rangeText), true);
 }
 
 
@@ -5016,6 +6139,25 @@ void MainWindow::onQueryRecords()
 
     int queryMode = m_cmbQueryMode->currentIndex();  // 0=按EPC查询, 1=按SKU查询格口, 2=按格口查询
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-16 现场需求③：**日期区间（必填）** —— 四个查询模式统一口径
+    //   · 起 = 起始日 00:00:00，止 = 结束日 23:59:59（含首含尾），命中列 = sort_time（落格时间）
+    //   · 「待分拣」计划行（return_wave_item）没有落格时间，**不受日期筛选影响**（由 DB 层保证）
+    //   · 起 > 止 时自动对调并告警（不静默返回空结果）
+    // ══════════════════════════════════════════════════════════════════════════
+    QDate dateFrom = m_editQueryDateFrom->date();
+    QDate dateTo   = m_editQueryDateTo->date();
+    if (dateFrom > dateTo)
+    {
+        appendLog(QString::fromUtf8("[查询] 日期区间无效（起 %1 > 止 %2），已自动对调后查询")
+            .arg(dateFrom.toString("yyyy-MM-dd")).arg(dateTo.toString("yyyy-MM-dd")), true);
+        qSwap(dateFrom, dateTo);
+    }
+    const QDateTime qFrom(dateFrom, QTime(0, 0, 0));
+    const QDateTime qTo(dateTo, QTime(23, 59, 59));
+    const QString   rangeText = QString::fromUtf8("%1 ~ %2")
+        .arg(dateFrom.toString("yyyy-MM-dd")).arg(dateTo.toString("yyyy-MM-dd"));
+
     if (queryMode == 2)
     {
         // ★ 2026-09-09 需求2：按格口查询分拣数量（留空=全格口汇总，输入格口号=该格明细）
@@ -5024,7 +6166,8 @@ void MainWindow::onQueryRecords()
         if (grid.isEmpty())
         {
             // ── 全格口汇总：每格一行（格口号/分拣数量/SKU数/容器号/最近分拣时间）──
-            QVector<GridSummaryRecord> sums = db->queryGridSummary();
+            //   ★ 需求③：计数/SKU数/最近容器号/最近时间都只反映所选日期区间内的落格
+            QVector<GridSummaryRecord> sums = db->queryGridSummary(qFrom, qTo);
             m_tblRecords->setColumnCount(6);
             m_tblRecords->setHorizontalHeaderLabels({
                 QString::fromUtf8("序号"),
@@ -5055,9 +6198,10 @@ void MainWindow::onQueryRecords()
                 m_tblRecords->setItem(i, 5, new QTableWidgetItem(g.lastSortTime));
             }
             m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
-            m_lblRecordCount->setText(QString::fromUtf8("全格口汇总：%1 个格口，共 %2 件")
-                .arg(sums.size()).arg(totalItems));
-            appendLog(QString::fromUtf8("[查询] 按格口汇总：%1 个格口，共 %2 件").arg(sums.size()).arg(totalItems));
+            m_lblRecordCount->setText(QString::fromUtf8("全格口汇总（日期 %1）：%2 个格口，共 %3 件")
+                .arg(rangeText).arg(sums.size()).arg(totalItems));
+            appendLog(QString::fromUtf8("[查询] 按格口汇总（日期 %1）：%2 个格口，共 %3 件")
+                .arg(rangeText).arg(sums.size()).arg(totalItems));
         }
         else
         {
@@ -5067,7 +6211,8 @@ void MainWindow::onQueryRecords()
             const QString gridKey = gridKeyOf(grid);
             const QString wmsCode = gridToWmsCode(gridKey);   // 内部 key → WMS 编码（"007" → "22007"）
 
-            QVector<SortingRecord> recs = db->queryByGrid(gridKey, SORTING_QUERY_MAX_RESULTS);
+            // ★ 需求③：按格口查询同样只取所选日期区间内的落格明细
+            QVector<SortingRecord> recs = db->queryByGrid(gridKey, qFrom, qTo, SORTING_QUERY_MAX_RESULTS);
             m_tblRecords->setColumnCount(10);
             m_tblRecords->setHorizontalHeaderLabels({
                 QString::fromUtf8("序号"),
@@ -5108,15 +6253,15 @@ void MainWindow::onQueryRecords()
                 m_tblRecords->setItem(i, 9, statusItem);
             }
             m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
-            m_lblRecordCount->setText(QString::fromUtf8("格口 [%1]（WMS编码 %2）分拣数量：%3 件")
-                .arg(gridKey).arg(wmsCode).arg(recs.size()));
+            m_lblRecordCount->setText(QString::fromUtf8("格口 [%1]（WMS编码 %2）分拣数量：%3 件（日期 %4）")
+                .arg(gridKey).arg(wmsCode).arg(recs.size()).arg(rangeText));
             // ★ 2026-09-11：日志不体现原始输入写法（"7"/"007"/"22007" 完全一致，UI 无差异）
-            appendLog(QString::fromUtf8("[查询] 格口 [%1]（WMS编码 %2）分拣数量：%3 件")
-                .arg(gridKey).arg(wmsCode).arg(recs.size()));
+            appendLog(QString::fromUtf8("[查询] 格口 [%1]（WMS编码 %2）分拣数量：%3 件（日期 %4）")
+                .arg(gridKey).arg(wmsCode).arg(recs.size()).arg(rangeText));
             if (recs.isEmpty())
             {
-                appendLog(QString::fromUtf8("[查询] 格口 [%1] 无分拣记录")
-                    .arg(gridKey), true);
+                appendLog(QString::fromUtf8("[查询] 格口 [%1] 在日期 %2 内无分拣记录")
+                    .arg(gridKey).arg(rangeText), true);
             }
         }
 
@@ -5147,11 +6292,12 @@ void MainWindow::onQueryRecords()
         }
 
         // ★ 2026-09-10 需求1：按 SKU 查询格口分配 + 该 SKU 下所有 EPC 及其实际落格号
-        //   ① querySkuGridMapping：WMS 下发的计划格口（计划视角）
+        //   ① querySkuGridMapping：WMS 下发的计划格口（计划视角）——★ 计划与波次绑定，不受日期筛选
         //   ② queryBySku：sorting_records 落格明细，每条=1 个 EPC，grid_num 即实际落格号（实绩视角）
+        //      ★ 2026-09-16 需求③：**只取所选日期区间内的落格明细**（区间外的 EPC 不出现）
         //   一行 = 一个 EPC ↔ 其实际落格号（无落格的计划格口单独出一行"待分拣"）
         QVector<ReturnWaveItemRecord> items = db->querySkuGridMapping(sku);
-        QVector<SortingRecord> details = db->queryBySku(sku, SORTING_QUERY_MAX_RESULTS);
+        QVector<SortingRecord> details = db->queryBySku(sku, qFrom, qTo, SORTING_QUERY_MAX_RESULTS);
 
         // 波次 → 该 SKU 的计划格口列表（判断"实际落格号是否计划外"）
         QMap<QString, QStringList> planGridsByWave;
@@ -5357,19 +6503,22 @@ void MainWindow::onQueryRecords()
         m_tblRecords->verticalHeader()->setDefaultSectionSize(32);
 
         // ── 统计标签（★ 2026-09-13 口径分三段：计划 / 落格 EPC / 去重 EPC / 计划外）──
+        //   ★ 2026-09-16 需求③：落格/去重/计划外 只统计所选日期区间；计划明细与日期无关
         QString label = QString::fromUtf8(
-            "SKU编码 [%1]：计划 %2 条明细（%3 个格口）｜EPC 落格 %4 条 ｜ 去重 %5 个 EPC（实际落在 %6 个格口）｜ 计划外 %7 条")
+            "SKU编码 [%1]：计划 %2 条明细（%3 个格口）｜EPC 落格 %4 条 ｜ 去重 %5 个 EPC（实际落在 %6 个格口）｜ 计划外 %7 条 ｜ 日期 %8")
             .arg(sku).arg(planRowCount).arg(planGridSet.size())
             .arg(epcRowCount).arg(uniqEpcs.size()).arg(actualGridSet.size())
-            .arg(mismatchCount);
+            .arg(mismatchCount).arg(rangeText);
         if (details.size() >= SORTING_QUERY_MAX_RESULTS)
             label += QString::fromUtf8("（已达单次查询上限 %1 条，可能截断）").arg(SORTING_QUERY_MAX_RESULTS);
         m_lblRecordCount->setText(label);
         m_lblRecordCount->setToolTip(QString::fromUtf8(
             "按 SKU 查询口径：\n"
-            "  计划 = WMS 下发的该 SKU 格口分配明细（一条=一个格口分配）\n"
+            "  ★ 日期区间（必填）作用于落格时间 sort_time：EPC 落格/去重/计划外只统计区间内的明细\n"
+            "  计划 = WMS 下发的该 SKU 格口分配明细（一条=一个格口分配）——计划与波次绑定，不受日期筛选\n"
             "  EPC 落格 = 该 SKU 下每个 EPC 的实际落格记录（一行 = 一个 EPC）\n"
             "  去重 EPC = 不重复实物件数；计划外 = 实际落格号不在计划格口内的条目\n"
+            "  「待分拣」行 = 有计划但（该日期区间内）无落格 EPC，照常显示\n"
             "双击任意行可查看该 EPC 的全信息（分拣历史/异常历史/计划明细）"));
         // 同品多格口：高亮显示（沿用原口径）
         m_lblRecordCount->setStyleSheet(planGridSet.size() > 1
@@ -5384,8 +6533,8 @@ void MainWindow::onQueryRecords()
             .arg(stats.totalWaves)
             .arg(stats.totalGrids));
 
-        appendLog(QString::fromUtf8("[查询] SKU编码 [%1]：计划 %2 条明细（%3 个格口），EPC落格 %4 条，去重 %5 个 EPC（实际落在 %6 个格口）")
-            .arg(sku).arg(planRowCount).arg(planGridSet.size())
+        appendLog(QString::fromUtf8("[查询] SKU编码 [%1]（日期 %2）：计划 %3 条明细（%4 个格口），EPC落格 %5 条，去重 %6 个 EPC（实际落在 %7 个格口）")
+            .arg(sku).arg(rangeText).arg(planRowCount).arg(planGridSet.size())
             .arg(epcRowCount).arg(uniqEpcs.size()).arg(actualGridSet.size()));
         return;
     }
@@ -5410,20 +6559,19 @@ void MainWindow::onQueryRecords()
         m_lblRecordCount->setStyleSheet("font-size: 12px; color: #555;");
 
     QString barcode = m_editQueryBarcode->text().trimmed();
-    QDateTime from(m_editQueryDateFrom->date(), QTime(0, 0, 0));
-    QDateTime to(m_editQueryDateTo->date(), QTime(23, 59, 59, 999));
 
     QVector<SortingRecord> records;
 
     if (!barcode.isEmpty())
     {
         // 按EPC编码查询（已分拣 + 待分拣，用 NOT EXISTS 去重）
-        records = db->queryByBarcode(barcode, SORTING_QUERY_MAX_RESULTS);
+        // ★ 需求③：已分拣部分只取日期区间内；「待分拣」计划行不受日期影响（DB 层保证）
+        records = db->queryByBarcode(barcode, qFrom, qTo, SORTING_QUERY_MAX_RESULTS);
     }
     else
     {
         // 留空查全部：已分拣 + 待分拣（queryAllWithPending 自动用 NOT EXISTS 去重）
-        records = db->queryAllWithPending(SORTING_QUERY_MAX_RESULTS);
+        records = db->queryAllWithPending(qFrom, qTo, SORTING_QUERY_MAX_RESULTS);
     }
 
     // ★ 2026-09-09 需求3：批量取异常原因（epc → "type: reason"），状态列对异常件显示原因
@@ -5485,19 +6633,23 @@ void MainWindow::onQueryRecords()
         m_tblRecords->setItem(i, 10, statusItem);
     }
 
-    // 更新统计标签
+    // 更新统计标签（★ 需求③：文案统一带日期区间，便于现场核对"查的是哪一段"）
     if (!barcode.isEmpty())
     {
-        m_lblRecordCount->setText(QString("共 %1 条记录（EPC编码: %2）")
-            .arg(records.size()).arg(barcode));
+        m_lblRecordCount->setText(QString::fromUtf8("共 %1 条记录（EPC编码: %2 ｜ 日期 %3）")
+            .arg(records.size()).arg(barcode).arg(rangeText));
     }
     else
     {
-        m_lblRecordCount->setText(QString("共 %1 条记录（%2 ~ %3）")
-            .arg(records.size())
-            .arg(from.toString("yyyy-MM-dd"))
-            .arg(to.toString("yyyy-MM-dd")));
+        m_lblRecordCount->setText(QString::fromUtf8("共 %1 条记录（日期 %2）")
+            .arg(records.size()).arg(rangeText));
     }
+    m_lblRecordCount->setToolTip(QString::fromUtf8(
+        "按 EPC 查询口径：\n"
+        "  ★ 日期区间（必填）作用于落格时间 sort_time：已分拣记录只显示区间内的\n"
+        "  ★「待分拣」计划行没有落格时间，**不受日期筛选影响**，照常显示（状态列标橙）\n"
+        "  状态列对异常件显示异常原因（红色）\n"
+        "双击任意行可查看该 EPC 的全信息（分拣历史/异常历史/计划明细）"));
 
     // 更新数据库统计
     SortingStatistics stats = db->statistics();
@@ -5507,7 +6659,7 @@ void MainWindow::onQueryRecords()
         .arg(stats.totalWaves)
         .arg(stats.totalGrids));
 
-    appendLog(QString("[查询] 返回 %1 条记录").arg(records.size()));
+    appendLog(QString::fromUtf8("[查询] 返回 %1 条记录（日期 %2）").arg(records.size()).arg(rangeText));
     }
 }
 
@@ -5538,7 +6690,7 @@ void MainWindow::onStartSortingClicked()
     if (wm->startSorting())
     {
         appendLog(QString("[分拣] 手动开始分拣 orderCode=%1").arg(wm->orderCode()));
-        // ★ 2026-09-14 开工前「计划格口 vs 容器绑定」预检：
+        // ★ 2026-09-15 开工前「计划格口 vs 容器绑定」预检：
         //   每个格口（正常分拣/发货）各有自己的计划件数，按数量分配的前提是这些格口都有容器可落。
         //   这里把"计划里有件但未绑定容器/已禁用"的格口一次性列出来（只告警不阻塞）。
         if (m_pServer)
@@ -5604,38 +6756,55 @@ void MainWindow::onOneKeyFullbox()
     appendLog(QString("[一键满箱] 开始执行：已绑定容器 %1 个，波次 %2").arg(total).arg(orderCode));
 
     int sent = 0, empty = 0, failed = 0;
-    QStringList sentGrids, emptyGrids;
+    QStringList sentGrids, emptyGrids, failedGrids;
     for (auto it = binds.constBegin(); it != binds.constEnd(); ++it)
     {
         const QString grid = it.key();
         const QString box  = it.value();
 
-        // manualFullbox：有记录 → 按 H7 立即上传（进入 Outbox + 发送）；无记录/无波次 → false
-        const bool ok = m_pServer->manualFullbox(grid);
-        if (ok)
+        // manualFullbox（★ 需求④）：成功返回本次生成的 H7 msgId（已入 Outbox）；失败返回空串 + 原因
+        //   原因区分："无待上传的分拣记录" = 正常跳过（该格已满箱或未落格）；
+        //             其余（无容器绑定/缺SKU/Outbox 写入失败/异常口…）= 真失败，计入失败数
+        QString reason;
+        const QString msgId = m_pServer->manualFullbox(grid, &reason);
+        if (!msgId.isEmpty())
         {
             ++sent;
+            m_oneKeyMsgIds.insert(msgId);   // ★ 需求④：登记本次一键生成的报文，供失败回执归因
             sentGrids << QString::fromUtf8("%1(%2)").arg(grid, box);
+        }
+        else if (reason == QString::fromUtf8("无待上传的分拣记录"))
+        {
+            ++empty;                        // 正常跳过（不算失败，沿用既有日志口径）
+            emptyGrids << grid;
         }
         else
         {
-            // 失败原因只可能是"该格无待上传记录"（波次/容器前置校验已在上面通过）；
-            // 这里统一按"无记录跳过"计数，明细留痕便于现场核对
-            ++empty;
-            emptyGrids << grid;
+            ++failed;                       // ★ 需求④：真失败（未能生成报文）
+            ++m_oneKeyFails;
+            failedGrids << QString::fromUtf8("%1(%2)").arg(grid).arg(
+                reason.isEmpty() ? QString::fromUtf8("未知原因") : reason);
         }
     }
+    m_oneKeyBatches += sent;                // ★ 需求④：本次一键成功生成报文数（会话累计）
 
     QString msg = QString::fromUtf8(
-        "[一键满箱] 执行完成：已发送 %1 个格口（%2）｜跳过无记录 %3 个（%4）｜失败 %5 个")
+        "[一键满箱] 执行完成：已发送 %1 个格口（%2）｜跳过无记录 %3 个（%4）｜失败 %5 个（%6）")
         .arg(sent)
         .arg(sentGrids.isEmpty() ? QString::fromUtf8("无") : sentGrids.join(","))
         .arg(empty)
         .arg(emptyGrids.isEmpty() ? QString::fromUtf8("无") : emptyGrids.join(","))
-        .arg(failed);
-    appendLog(msg, sent == 0);
+        .arg(failed)
+        .arg(failedGrids.isEmpty() ? QString::fromUtf8("无") : failedGrids.join(","));
+    appendLog(msg, sent == 0 && failed > 0);
     appendLog(QString::fromUtf8(
         "[一键满箱] 提示：报文已入 Outbox 异步发送；失败/超时的报文可在「重传满箱切换(H7)」下拉中选择重传"));
+
+    // ★ 需求④：刷新按钮旁的计数文字（本波次总数 + 本次一键成功/失败），并追加同源计数日志
+    refreshFullboxCountLabel();
+    appendLog(QString::fromUtf8(
+        "[一键满箱] 计数：%1")
+        .arg(m_lblFullboxCount ? m_lblFullboxCount->text() : QString()));
 
     if (m_btnOneKeyFullbox) m_btnOneKeyFullbox->setEnabled(true);
 }

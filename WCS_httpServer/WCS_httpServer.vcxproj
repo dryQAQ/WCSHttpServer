@@ -99,7 +99,7 @@
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <Optimization>MaxSpeed</Optimization>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-      <AdditionalIncludeDirectories>D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\WCS\WCSApp\WCS_httpServer\include\hlog;D:\WCS\WCSApp\WCS_httpServer\include\HPSocket;$(ProjectDir)..\tests;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -143,6 +143,8 @@
     <QtMoc Include="log_center.h" />
     <ClInclude Include="define.h" />
     <ClInclude Include="EpcCache.h" />
+    <!-- ★ 2026-09-15 EPC 码识别（A + N-1 位数字；推送侧与绑定查询响应侧共用） -->
+    <ClInclude Include="EpcCode.h" />
     <QtMoc Include="OutboxManager.h" />
     <ClInclude Include="SortingDatabase.h" />
     <ClInclude Include="sqlite3.h" />

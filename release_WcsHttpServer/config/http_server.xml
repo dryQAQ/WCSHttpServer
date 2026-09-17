@@ -33,6 +33,8 @@
     <rfidHeartbeatEnable>1</rfidHeartbeatEnable>
     <!-- 心跳发送间隔（毫秒，默认2000=2秒） -->
     <rfidHeartbeatIntervalMs>2000</rfidHeartbeatIntervalMs>
+    <!-- ★ EPC 码识别长度（字符数，默认24）：只识别『A + (长度-1) 位数字』形态，与开头是不是 A101 无关；<2 = 不识别（整串原样使用）。原始报文另在日志/界面/rfid_raw 表留痕 -->
+    <rfidEpcTruncateLen>25</rfidEpcTruncateLen>
     <!-- 仓库编码 -->
     <warehouseCode>H</warehouseCode>
     <!-- 货主编码 -->
@@ -91,6 +93,10 @@
     <allocPlanLogTail>30</allocPlanLogTail>
     <!-- 之后每 N 条输出一条（异常/超计划/搬迁/兜底日志一律逐条保留） -->
     <allocPlanLogStep>500</allocPlanLogStep>
+    <!-- ★ 实时面板页是否显示（false=隐藏该页，默认 false）。★★ 仅启动时读取一次：改这里要重启程序才生效 ★★ -->
+    <showLivePage>false</showLivePage>
+    <!-- ★ 计划分配表页是否显示（false=隐藏该页，默认 false）。★★ 仅启动时读取一次：改这里要重启程序才生效 ★★ -->
+    <showPlanAllocPage>false</showPlanAllocPage>
     <!-- EPC 任务内防重（true/false） -->
     <sortingEpcDedup>true</sortingEpcDedup>
     <!-- 【已废弃】格口上限策略（历史遗留，程序只读写不使用） -->
@@ -108,9 +114,9 @@
     <!-- 重扫重投开关（true=已落格件重新上料仍按原格口下发；false=旧行为不再下发） -->
     <rescanResendEnabled>true</rescanResendEnabled>
     <!-- 同一 EPC 两次下发最小间隔(ms)，防 RFID 连读 -->
-    <rescanResendCooldownMs>0</rescanResendCooldownMs>
+    <rescanResendCooldownMs>1000</rescanResendCooldownMs>
     <!-- 同一 EPC 每波次最多重投次数（超限写异常表；首投不计入） -->
-    <rescanResendMaxTimes>0</rescanResendMaxTimes>
+    <rescanResendMaxTimes>3</rescanResendMaxTimes>
     <!-- PLC 在途超时(ms)：未收到落格反馈超时后允许重投（防永久锁死） -->
     <plcInFlightTimeoutMs>30000</plcInFlightTimeoutMs>
     <!-- ① 波次下发（WMS → WCS，H4 推送波次数据） -->
@@ -119,12 +125,6 @@
     <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
     <!-- ③ 波次取消（WMS → WCS，H5 退货任务取消） -->
     <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
-    <binding grid="034">H-T0037</binding>
-    <binding grid="035">H-0035</binding>
-    <binding grid="036">H-0036</binding>
-    <binding grid="037">H-0037</binding>
-    <binding grid="048">H-T0099</binding>
-    <binding grid="066">H-T0278</binding>
     <gridName num="1">1号格口</gridName>
     <gridName num="10">10号格口</gridName>
     <gridName num="11">11号格口</gridName>

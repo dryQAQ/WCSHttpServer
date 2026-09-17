@@ -43,7 +43,10 @@ bool WaveManager::restoreWave(const QString& orderCode, int orderQty, int skuCou
                               bool hasFullboxRecord)
 {
     // 前置校验：仅 IDLE 可恢复；目标状态允许业务态 CREATED/BOUND/SORTING/ENDING，
-    // ★ 2026-09-06 另支持终态查看 FINISHED/CANCELLED（历史波次“载入查看”，不参与分拣/回传）
+    // ★ 2026-09-06 另支持终态 FINISHED/CANCELLED（原"载入查看"模式）。
+    //   ★ 2026-09-16 现场需求①：终态波次**不再允许切回**（HttpServer::resumeUnfinishedWave
+    //     入口守卫直接拒绝），因此调用方不会再传终态进来；本分支与其 bViewOnly 处理
+    //     作为状态机能力保留（不参与分拣/回传），仅用于防御。
     if (m_waveStatus.load() != WAVE_IDLE)
     {
         WCS_WARN("[WaveMgr] 恢复拒绝 当前状态非IDLE status=%d(%s)",

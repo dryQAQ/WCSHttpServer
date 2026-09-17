@@ -1,4 +1,5 @@
 #include "HttpClient.h"
+#include "EpcCode.h"     // ★ 2026-09-15 绑定查询响应侧 EPC 归一（与推送侧同源）
 #include "LogService.h"
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -487,10 +488,30 @@ void HttpClient::onRfidBindingReplyFinished()
             continue;
         }
 
+        // ★ 2026-09-15 响应侧 EPC 归一（与推送侧同源同参数，见 EpcCode.h）：
+        //   缓存键来自推送侧"识别归一后"的 EPC，若响应回的是整串（如 32 位），
+        //   直接入库会变成"缓存里有两个键、按归一 EPC 查不到绑定" → 该件永远查不到 SKU。
+        //   归一后入缓存即两边口径一致；未识别（形态不符）则原样保留，不臆造。
+        const QString epcRawResp = epc;
+        if (m_epcTruncateLen >= 2)
+        {
+            QString cut;
+            if (EpcCode::extract(epc, m_epcTruncateLen, cut) && cut != epc)
+            {
+                HTTP_LOG_WARN("RFID绑定查询响应 EPC已识别归一 原文(%d位)=%s → EPC(%d位)=%s",
+                    epc.size(), epc.toLocal8Bit().data(), cut.size(), cut.toLocal8Bit().data());
+                epc = cut;
+            }
+        }
+
         epcBarcodeMap[epc] = barcode;
-        HTTP_LOG_INFO("RFID绑定查询 解析[%d] epc=%s barcode=%s tid=%s uniqueCode=%s metal=%d",
+        const QByteArray respRawNote = (epc != epcRawResp)
+            ? QString("（响应原文 %1）").arg(epcRawResp).toLocal8Bit()
+            : QByteArray();
+        HTTP_LOG_INFO("RFID绑定查询 解析[%d] epc=%s barcode=%s tid=%s uniqueCode=%s metal=%d%s",
             i, epc.toLocal8Bit().data(), barcode.toLocal8Bit().data(),
-            tid.toLocal8Bit().data(), uniqueCode.toLocal8Bit().data(), hasMetal);
+            tid.toLocal8Bit().data(), uniqueCode.toLocal8Bit().data(), hasMetal,
+            respRawNote.constData());
     }
 
     HTTP_LOG_INFO("RFID绑定查询完成 查询数=%d 匹配=%d 跳过空=%d status=%d",

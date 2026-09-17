@@ -34,6 +34,10 @@ struct EpcCacheEntry
 {
     QString   barcode;
     QString   carNum;       // ★ 来自 RFID 的小车号，默认 DEFAULT_CAR_STR("001")
+    // ★ 2026-09-16 本轮首次推送的 carNum：用于"carNum 变化 = 不是同一件"判据。
+    //   与 carNum 的区别：carNum 每次推送都被覆盖（见 setBatchWithCar），
+    //   firstCarNum 只在一轮开始时写入，双读时保持不变。
+    QString   firstCarNum;  // ★ 本轮首次推送的小车号（双读/新件判据）
     bool      skuBound = false;  // ★ SKU-EPC 绑定是否完成（通过 RFID 查询获取）
     QDateTime expireTime;         // TTL 过期时间
     QDateTime receivedAt;         // ★ RFID 推送首次到达时间（用于 1s 超时判断，PLC_SEND_TIMEOUT_MS）
@@ -214,7 +218,11 @@ public:
             if (!it.key().isEmpty())
             {
                 auto existing = m_cache.find(it.key());
-                bool hasExisting = (existing != m_cache.end() && !existing->isExpired());
+                // ★ 2026-09-16 hasExisting 的语义 = "存在一个**本轮有效**的条目"：
+                //   resetCycle 会把 receivedAt 置为无效以作废本轮（条目仍保留 SKU 信息），
+                //   此类条目必须按"无有效本轮"处理 → 走新件分支重新起算，否则会沿用空起点。
+                bool hasExisting = (existing != m_cache.end() && !existing->isExpired()
+                                    && existing->receivedAt.isValid());
 
                 EpcCacheEntry entry;
                 // ★ 保留已有的 SKU 绑定数据（barcode + skuBound），不覆盖
@@ -234,25 +242,62 @@ public:
                 entry.carNum = it.value().second.isEmpty() ? DEFAULT_CAR_STR : it.value().second;
                 entry.expireTime = expire;
                 // ★ 记录 RFID 推送到达时间（1s 超时判断起点，PLC_SEND_TIMEOUT_MS）
-                //   重复推送分两类处理（★ 2026-09-09 需求7 按用户方案在"计时起点"处管理）：
-                //   ① 双读（同一件仍在轨道上、尚未发出指令 sentAt 空）→ 保留首次到达时间，
+                //   重复推送分三类处理（★ 2026-09-09 需求7 起在"计时起点"处管理；
+                //   ★ 2026-09-16 增加 carNum 判据与双读时间窗口）：
+                //   ① 双读（同一件仍在轨道上、尚未发出指令 sentAt 空，**且 carNum 相同、
+                //      距首次到达未超过 DOUBLE_READ_WINDOW_MS**）→ 保留首次到达时间，
                 //      防止同一EPC多次读到被延后计时起点（超时永不触发）
                 //   ② 二次上传（上次已发出 PLC 指令 sentAt 有效，件回线重扫/再次推送）
                 //      → 计时起点归 0 重新单独计时：同一件的多次尝试各自计时、不叠加
+                //   ③ ★ 新件/新一轮（carNum 变化 或 超出双读窗口）
+                //      → 计时起点归 0 重新起算。为什么必须这样：
+                //        发送失败（如格口满箱未重绑）的件，其缓存条目会长时间留存（TTL 300s），
+                //        若沿用旧的 receivedAt，下一次推送会把"两次推送的间隔"累加进 1s 窗口
+                //        （实测 142457ms 被误报为"发送超时"），掩盖真实根因（无可用格口）。
+                const QDateTime nowTs = QDateTime::currentDateTime();
+                const QString& newCar = entry.carNum;   // 已含空值回退 DEFAULT_CAR_STR
+                const bool sameCar = hasExisting
+                    && !existing->carNum.isEmpty() && !newCar.isEmpty()
+                    && (existing->firstCarNum.isEmpty() ? existing->carNum : existing->firstCarNum) == newCar;
+                const bool withinWindow = hasExisting
+                    && existing->receivedAt.msecsTo(nowTs) <= DOUBLE_READ_WINDOW_MS;
+
                 if (!hasExisting)
                 {
-                    entry.receivedAt = QDateTime::currentDateTime();
+                    entry.receivedAt  = nowTs;
+                    entry.firstCarNum = newCar;                        // 新一轮：记下本轮身份
                 }
                 else if (existing->sentAt.isValid())
                 {
-                    entry.receivedAt = QDateTime::currentDateTime();  // 二次上传：重新起算（归0）
+                    entry.receivedAt = nowTs;                          // 二次上传：重新起算（归0）
                     entry.sentAt     = QDateTime();                    // 清上次发送时间，getHandleSendMs 重新起算
+                    entry.firstCarNum = newCar;                        // 新一轮
                     EPC_WARN("setBatchWithCar 二次上传重新计时 epc=%s（上次已发送过，单独计时）",
                         it.key().toLocal8Bit().data());
                 }
+                else if (sameCar && withinWindow)
+                {
+                    entry.receivedAt  = existing->receivedAt;          // 双读：保留首次到达时间
+                    entry.firstCarNum = existing->firstCarNum.isEmpty()
+                                        ? existing->carNum : existing->firstCarNum;   // 保持本轮身份
+                }
                 else
                 {
-                    entry.receivedAt = existing->receivedAt;   // 双读：保留首次到达时间
+                    // ★ carNum 变化 或 超出双读窗口 → 不是同一件/不是同一轮 → 重新起算
+                    entry.receivedAt  = nowTs;
+                    entry.firstCarNum = newCar;
+                    // 预取为具名对象：避免临时 QByteArray 析构后 %s 悬空
+                    const QByteArray epcB   = it.key().toLocal8Bit();
+                    const QByteArray prevB  = (existing->firstCarNum.isEmpty()
+                                              ? existing->carNum
+                                              : existing->firstCarNum).toLocal8Bit();
+                    const QByteArray newB   = newCar.toLocal8Bit();
+                    const qint64 sinceFirst = existing->receivedAt.isValid()
+                        ? existing->receivedAt.msecsTo(nowTs) : -1;
+                    EPC_WARN("setBatchWithCar 视为新件重新计时 epc=%s carNum=%s→%s 距首次%lldms 窗口=%dms%s",
+                        epcB.constData(), prevB.constData(), newB.constData(),
+                        (long long)sinceFirst, DOUBLE_READ_WINDOW_MS,
+                        sameCar ? "（同车但超窗口）" : "（carNum变化）");
                 }
                 m_cache[it.key()] = entry;
                 writeCount++;
@@ -351,6 +396,27 @@ public:
         it->receivedAt = QDateTime::currentDateTime();
         it->sentAt     = QDateTime();
         EPC_WARN("resetTiming 异常件计时归0 epc=%s", epc.toLocal8Bit().data());
+    }
+
+    // ★ 2026-09-16 本轮投递终结 → 作废本轮时间状态（发送失败/入异常口时调用）
+    //   与 resetTiming 的区别（关键）：
+    //     · resetTiming 把起点设为"失败那一刻"（receivedAt=now）——若该 EPC 迟迟不再上线，
+    //       条目留存期间旧起点仍在，"下一次推送"的 elapsed 会从失败时刻开始累积。
+    //     · resetCycle **作废本轮**（receivedAt/sentAt/firstCarNum 全部置无效）——
+    //       下一次推送必然按"新件/新一轮"起算，不存在跨推送累积。
+    //   保留 barcode / skuBound / carNum / expireTime：避免二次推送时重查 SKU（多一次网络往返）。
+    //   用例：格口满箱未重绑 → 发送失败 → 142s 后同一 EPC 再被读到，
+    //         旧实现 elapsed=142457ms 误报"发送超时"，掩盖真实根因"无可用格口"。
+    void resetCycle(const QString& epc)
+    {
+        QMutexLocker locker(&m_mutex);
+        auto it = m_cache.find(epc);
+        if (it == m_cache.end()) return;
+        it->receivedAt  = QDateTime();
+        it->sentAt      = QDateTime();
+        it->firstCarNum.clear();
+        EPC_WARN("resetCycle 本轮投递终结、计时作废 epc=%s（下次推送按新件起算）",
+            epc.toLocal8Bit().data());
     }
 
     // ★ 获取 开始处理(RFID首次到达) → PLC发送 的耗时；未发送返回 -1
