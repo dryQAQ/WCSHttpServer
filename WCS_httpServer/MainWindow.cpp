@@ -4851,8 +4851,13 @@ QString MainWindow::formatTimeFirst(const QString& dbTime)
 //     ① 首行操作项「接收新任务」——点击即**不处理排队波次，直接开始新任务**
 //        （当前波次仍在作业中时拒绝并提示先点「结束任务」，避免打断现场分拣）
 //     ② 其余行 = 剩余待执行波次（FIFO：序号/波次号/件数/接收时间）
-//   队列执行入口说明：当前波次结束后自动开始 / 点「开始接收任务」时执行队首 /
-//   在「波次数据记录」中用「切换选中波次」立即接管
+//   ★ 2026-09-17 出队时机（现场缺陷"跳过一个波次"修复后口径，见 PendingWaveQueuePolicy.h）：
+//     **只有点了「开始接收任务」才开始执行队列里的任务**——
+//       · 点「结束任务」→ 队列**冻结保留**（不再有"当前波次结束后自动开始"，
+//         否则界面显示开始接收任务却已接收下一波，再点开始又执行下一波 → 跳波次）；
+//       · 点「开始接收任务」→ 执行队首（本弹窗顶部据此提示冻结/放行状态）；
+//       · 接收中波次被 WMS 取消(H5) → 仍自动接替下一波（既有能力保留）；
+//       · 「波次数据记录」中「切换选中波次」可随时人工接管（该波次同时从队列移除）。
 // ============================================================================
 void MainWindow::onViewWaveQueue()
 {
@@ -4860,17 +4865,25 @@ void MainWindow::onViewWaveQueue()
 
     QDialog dlg(this);
     dlg.setWindowTitle(QString::fromUtf8("接收波次队列（剩余待执行波次）"));
-    dlg.resize(780, 440);
+    dlg.resize(780, 470);
 
     QVBoxLayout* lay = new QVBoxLayout(&dlg);
 
     QLabel* tip = new QLabel(QString::fromUtf8(
-        "列表首行「接收新任务」= 不处理排队波次，直接开始新任务（切出当前波次并等待 WMS 下发新波次）。\n"
-        "排队波次的执行：当前波次结束后自动开始；点「开始接收任务」时自动执行队首；"
-        "也可在「波次数据记录」中用「切换选中波次」立即接管。"), &dlg);
+        "排队波次的执行时机：只有点「开始接收任务」时才执行队首（点「结束任务」后队列保留、不自动执行，"
+        "避免跳过波次）；接收中波次被 WMS 取消(H5)时会自动接替下一波；"
+        "也可在「波次数据记录」中用「切换选中波次」立即接管。\n"
+        "列表首行「接收新任务」= 不处理排队波次，直接开始新任务（切出当前波次并等待 WMS 下发新波次）。"), &dlg);
     tip->setStyleSheet("font-size: 12px; color: #555;");
     tip->setWordWrap(true);
     lay->addWidget(tip);
+
+    // ★ 2026-09-17 冻结状态提示（队列此刻会不会被执行，一眼可见）：
+    //   未接收 / 已点「结束任务」→ 冻结（点「开始接收任务」后按队首顺序执行）
+    QLabel* freezeTip = new QLabel(&dlg);
+    freezeTip->setWordWrap(true);
+    freezeTip->setStyleSheet("font-size: 12px; font-weight: bold;");
+    lay->addWidget(freezeTip);
 
     QTableWidget* tbl = new QTableWidget(&dlg);
     tbl->setColumnCount(4);
@@ -4901,9 +4914,35 @@ void MainWindow::onViewWaveQueue()
 
     bool startNewTask = false;   // 「接收新任务」被点击（关闭弹窗后执行，避免在弹窗回调里切 UI）
 
-    auto rebuild = [this, tbl, &startNewTask, &dlg, isWaveWorking]() {
+    auto rebuild = [this, tbl, freezeTip, &startNewTask, &dlg, isWaveWorking]() {
         const QVector<HttpServer::PendingWaveInfo> list =
             m_pServer ? m_pServer->pendingWaves() : QVector<HttpServer::PendingWaveInfo>();
+
+        // ★ 2026-09-17 冻结提示：队列此刻"会不会被执行"一眼可见
+        //   冻结 = 未接收任务 或 本次会话已点「结束任务」（判据同 PendingWaveQueuePolicy.h，
+        //   产品侧统一走 HttpServer::isPendingQueueFrozen()）。
+        const bool frozen = (m_pServer == nullptr) || m_pServer->isPendingQueueFrozen();
+        if (list.isEmpty())
+        {
+            freezeTip->setText(QString());
+            freezeTip->setVisible(false);
+        }
+        else
+        {
+            freezeTip->setVisible(true);
+            freezeTip->setStyleSheet(frozen
+                ? "font-size: 12px; font-weight: bold; color: #E65100;"
+                : "font-size: 12px; font-weight: bold; color: #2E7D32;");
+            freezeTip->setText(frozen
+                ? QString::fromUtf8("● 队列已冻结（%1）：这 %2 个波次不会被自动执行，"
+                                    "点「开始接收任务」后才按队首顺序依次执行")
+                      .arg(!m_pServer->isReceiving() ? QString::fromUtf8("当前未接收任务")
+                                                     : QString::fromUtf8("已点「结束任务」"))
+                      .arg(list.size())
+                : QString::fromUtf8("● 接收中：队列可执行——点「开始接收任务」时已执行队首，"
+                                    "当前 %1 个待执行（点「结束任务」后队列保留，不会自动执行）")
+                      .arg(list.size()));
+        }
 
         tbl->setRowCount(0);
 

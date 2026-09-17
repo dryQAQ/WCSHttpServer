@@ -145,6 +145,8 @@
     <ClInclude Include="EpcCache.h" />
     <!-- ★ 2026-09-15 EPC 码识别（A + N-1 位数字；推送侧与绑定查询响应侧共用） -->
     <ClInclude Include="EpcCode.h" />
+    <!-- ★ 2026-09-17 待执行波次队列「出队时机」口径（现场：点结束后不得自动接收下一波） -->
+    <ClInclude Include="PendingWaveQueuePolicy.h" />
     <QtMoc Include="OutboxManager.h" />
     <ClInclude Include="SortingDatabase.h" />
     <ClInclude Include="sqlite3.h" />

@@ -33,6 +33,7 @@
 #include "EpcCache.h"
 #include "define.h"
 #include "PlanAllocTable.h"   // ★ 2026-09-14 波次级计划分配表
+#include "PendingWaveQueuePolicy.h"   // ★ 2026-09-17 待执行波次队列「出队时机」纯逻辑口径
 
 class HttpClient;  // 前向声明（避免循环依赖）
 
@@ -118,6 +119,17 @@ public:
     void stopDevices();           // 设备层：PLC/S7/RFID/ParseWorker 全停（程序退出时调用）
     bool isReceiving() const { return m_receiving.load(); }   // 当前是否在接收任务
     bool isRunning() const { return m_pServer && m_pServer->HasStarted(); }   // 兼容：=接收中
+
+    // ★ 2026-09-17 现场要求（"跳过一个波次"缺陷）：**只有点了「开始接收任务」，才开始接收
+    //   待执行队列里的任务**。本组接口把"队列是否冻结"暴露给 UI（查看接收波次队列弹窗提示）。
+    //   · m_endRequested = 本次接收会话内已点过「结束任务」（sendEnd 置位，startReceive 清除）；
+    //   · 冻结 = 未接收 或 本次会话已点结束 —— 冻结期间队首不出队、原样保留。
+    //   判定口径集中在 PendingWaveQueuePolicy.h（纯逻辑，tests/test_pending_queue_gate.cpp 锁定）。
+    bool isEndRequested() const { return m_endRequested.load(); }
+    bool isPendingQueueFrozen() const
+    {
+        return pendingQueueFrozen(m_receiving.load(), m_endRequested.load());
+    }
 
     RfidPushClient* rfidPush() { return m_pRfidPush; }   // ★ 2026-09-06 设备状态查询（UI 用）
 
@@ -691,8 +703,27 @@ private:
 
     // ──── ★ 2026-09-07 波次待执行队列（当前波次执行中收到的新 H4 排队；结构体定义见 public 区）────
     QVector<PendingWave>    m_pendingWaveQueue;             // FIFO（仅主线程读写）
-    std::atomic<bool>       m_replayingPending{false};      // 队列重放标志（放行接收闸门）
-    void                    maybeStartPendingWave();        // 空闲时取队首重放（由 ParseWorker 重新解析注册）
+    // ★ 2026-09-17 现场要求（"跳过一个波次"缺陷）：出队**只允许**发生在"接收中且本次会话
+    //   没点过结束任务"时（判据见 PendingWaveQueuePolicy.h / pendingDequeueDecision）。
+    //   · m_endRequested：点过「结束任务」标志。sendEnd() 置位、startReceive() 清除。
+    //     为什么必须有它：点「结束任务」后接收层要等 H8 回传结果才收尾（stopReceive 在
+    //     endReportFinished 之后执行），这段时间 m_receiving 仍为 true；旧实现让终态回调
+    //     在此时把队首重放注册 → 界面已显示「开始接收任务」却已接收下一波 → 再点开始又
+    //     执行下一个队首 → **中间那一波被切出跳过**（现场 16:48 日志实录，详见策略头注释）。
+    //   · m_pendingReplayInFlight：待执行队列"已交给 ParseWorker 重放、结果尚未回来"的条数。
+    //     用于区分解析结果来自**队列重放**（若此时会话已冻结，必须放回**队首**，绝不跳号）
+    //     还是来自 HTTP 新到达（冻结时放**队尾**排队）。
+    std::atomic<bool>       m_endRequested{false};          // 本次接收会话是否已点「结束任务」
+    std::atomic<int>        m_pendingReplayInFlight{0};     // 队列重放中条数（重放→解析回调配对减 1）
+    void                    maybeStartPendingWave();        // 取队首重放（仅"接收中且未点结束任务"时）
+    // ★ 2026-09-17 入队唯一入口（FIFO 排队/冻结回滚/队首回滚共用）：
+    //   front=true 插队首（重放被拦下的回滚），false 追加队尾（新到达的波次）。
+    //   负责：重复波次去重、SKU 集合提取（波次隔离用）、DB 波次头落库、UI 刷新信号、留痕日志。
+    //   返回 true=本次确实入队；false=队列中已有同单（忽略，不重复排队）。
+    bool                    enqueuePendingWave(const QString& orderCode, int orderQty,
+                                              const QByteArray& rawBody, qint64 recvTimeMs,
+                                              bool front, const QString& reason);
+    static QSet<QString>    extractPendingWaveSkuSet(const QByteArray& rawBody);
     void                    restoreBindsIfEmpty(const QString& orderCode);  // ★ 2026-09-07 无 active 绑定则沿用最近绑定
 
     // ★ 2026-09-02 防崩溃（停止与在途请求竞态）：服务停止标志

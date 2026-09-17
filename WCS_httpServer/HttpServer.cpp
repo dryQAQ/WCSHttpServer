@@ -161,8 +161,12 @@ HttpServer::HttpServer(QObject* parent)
             else
                 m_pSortingDb->updateWaveStatus(orderCode, newStatus);
 
-            // ★ 2026-09-07 波次到达终态（已完结/已取消）且有待执行波次 → 自动开始下一波次
+            // ★ 2026-09-07 波次到达终态（已完结/已取消）且有待执行波次 → 尝试接替下一波次
             //   （H8 成功/失败耗尽/会话超时兜底、H5 取消 全部经由此处触发，主线程串行安全）
+            //   ★ 2026-09-17 现场要求：**能否真的接替由会话状态决定**——
+            //     接收中且本次会话未点过「结束任务」才出队；否则队列冻结保留
+            //     （见 maybeStartPendingWave / PendingWaveQueuePolicy.h）。
+            //     点「结束任务」后本波次变已完结（H8 成功）正是**不允许**接替的典型场景。
             if (newStatus == WAVE_FINISHED || newStatus == WAVE_CANCELLED)
                 maybeStartPendingWave();
 
@@ -180,15 +184,36 @@ HttpServer::HttpServer(QObject* parent)
         [this](const QString& orderCode, int skuCount, int orderQty, qint64, const QSet<QString>& recvSet,
                const QByteArray& rawBody,
                const QVector<QPair<QString, QVector<PlanGridInput>>>& skuPlans, int planSum) {
-            // ★ 2026-09-06 接收闸门：停止接收后到达的队列残余任务不注册波次，仅记录
-            //   ★ 2026-09-07 待执行队列重放（自动开始下一波次）放行
-            if (!m_receiving.load() && !m_replayingPending.load())
+            // ════════════════════════════════════════════════════════════════
+            // ★ 2026-09-17 会话闸门（现场缺陷"跳过一个波次"修复，见 PendingWaveQueuePolicy.h）
+            //   旧实现：`!m_receiving && !m_replayingPending` → 直接 **丢弃** 该波次
+            //     （重放标志只为"自动开始下一波次"开路，冻结态下还会把重放波次注册进内存）。
+            //   新口径：**注册当前波次的前提 = 接收中 且 本次会话没点过「结束任务」**；
+            //     不满足时**绝不丢弃**——按来源放回待执行队列，等下次「开始接收任务」执行：
+            //       · 来自队列重放 → 放回**队首**（它就是队首，放回后不跳号）；
+            //       · 来自 HTTP 新到达 → 追加**队尾**（它比队列里的都新）。
+            //     这样"H4 已被 WMS 下发（界面已回 200 successed）"的波次要么成为当前波次、
+            //     要么留在队列里可见可执行，**不会静默消失**（现场"波次数据被跳过"的另一来源）。
+            // ════════════════════════════════════════════════════════════════
+            const bool bFromReplay = (m_pendingReplayInFlight.load() > 0);
+            if (bFromReplay)
+                m_pendingReplayInFlight.fetch_sub(1);   // 本次解析结果已到达，配对出队
+
+            if (!m_receiving.load() || m_endRequested.load())
             {
-                HTTP_LOG_WARN("未接收任务，跳过波次注册 orderCode=%s（停止接收后到达的残留任务）",
-                    orderCode.toLocal8Bit().data());
+                const QString why = !m_receiving.load()
+                    ? QString::fromUtf8("当前未接收任务")
+                    : QString::fromUtf8("本次会话已点「结束任务」");
+                HTTP_LOG_WARN("会话已冻结（%s），不注册波次 orderCode=%s 来源=%s → 放回待执行队列%s",
+                    why.toLocal8Bit().data(), orderCode.toLocal8Bit().data(),
+                    bFromReplay ? "队列重放" : "HTTP新到达", bFromReplay ? "队首" : "队尾");
+                enqueuePendingWave(orderCode, orderQty, rawBody,
+                                   QDateTime::currentMSecsSinceEpoch(), bFromReplay,
+                                   QString::fromUtf8("会话已冻结（%1）%2")
+                                       .arg(why, bFromReplay ? QString::fromUtf8("·重放回滚")
+                                                             : QString::fromUtf8("·WMS 已下发")));
                 return;
             }
-            m_replayingPending.store(false);   // ★ 重放任务已到达注册点，清除放行标志
 
             // ── ★ 2026-09-07 波次执行中收到新波次 → 排队，不覆盖当前任务 ──
             {
@@ -201,52 +226,25 @@ HttpServer::HttpServer(QObject* parent)
                         || curSt == WAVE_CANCEL_PENDING || curSt == WAVE_ENDING);
                 if (busy)
                 {
-                    // 防重复排队：队列中已有同单 → 忽略本次
-                    for (const PendingWave& p : m_pendingWaveQueue)
+                    // 入队（去重/SKU 提取/落库/UI 刷新/留痕统一在 enqueuePendingWave 内）
+                    const bool queued = enqueuePendingWave(orderCode, orderQty, rawBody,
+                                                           QDateTime::currentMSecsSinceEpoch(), false,
+                                                           QString::fromUtf8("当前波次作业中"));
+                    if (!queued)
                     {
-                        if (p.orderCode == orderCode)
-                        {
-                            HTTP_LOG_WARN("波次已在待执行队列，忽略重复 orderCode=%s", orderCode.toLocal8Bit().data());
-                            emit logMessage(QString("[波次] %1 已在待执行队列，忽略重复下发").arg(orderCode), true);
-                            return;
-                        }
+                        HTTP_LOG_WARN("波次已在待执行队列，忽略重复 orderCode=%s", orderCode.toLocal8Bit().data());
+                        emit logMessage(QString("[波次] %1 已在待执行队列，忽略重复下发").arg(orderCode), true);
+                        return;
                     }
-                    PendingWave pw;
-                    pw.orderCode = orderCode;
-                    pw.orderQty  = orderQty;      // ★ 2026-09-08 队列弹窗展示件数
-                    pw.rawBody   = rawBody;
-                    pw.recvTime  = QDateTime::currentMSecsSinceEpoch();
-                    // ★ 2026-09-14 波次隔离：从 H4 轻量提取本波次涉及的 SKU（只需 inco 字段）
-                    //   用途：上一波次仍在分拣时，若到货件的 SKU 属于本排队波次，
-                    //   则该件必须挂起等本波次（不得按上一波次计划投异常口）。
-                    //   只读 JSON 的 items[].inco，不做映射/校验，开销可忽略且不影响后续重放解析。
-                    {
-                        QJsonParseError perr;
-                        const QJsonDocument pdoc = QJsonDocument::fromJson(rawBody, &perr);
-                        if (!perr.error)
-                        {
-                            const QJsonArray pitems = pdoc.object().value("items").toArray();
-                            for (const QJsonValue& v : pitems)
-                            {
-                                const QString inco = v.toObject().value("inco").toString().trimmed();
-                                if (!inco.isEmpty()) pw.skuSet.insert(inco);
-                            }
-                        }
-                        if (pw.skuSet.isEmpty())
-                        {
-                            HTTP_LOG_WARN("新波次排队：SKU 集合提取为空 orderCode=%s（不影响执行，仅波次隔离判定退化为按状态判定）",
-                                orderCode.toLocal8Bit().data());
-                        }
-                    }
-                    m_pendingWaveQueue.append(pw);
-                    emit pendingWavesChanged();   // ★ 2026-09-08 UI 队列/波次列表刷新
-                    // ★ 落波次头（波次记录列表可见，状态=已下发/待执行）；明细待执行时随格口映射一起落库
-                    if (m_pSortingDb)
-                        m_pSortingDb->upsertReturnWave(orderCode, orderQty, WAVE_CREATED);
+                    // ★ 2026-09-17 提示语修正：旧文案承诺"当前波次结束后自动开始"，
+                    //   而实际口径是"队列只在**点了「开始接收任务」**时才出队"（本次现场要求）。
+                    //   点「结束任务」结束当前波次后，队列**冻结保留**，不会被自动消费。
                     HTTP_LOG_INFO("新波次排队 orderCode=%s qty=%d 当前波次=%s 队列=%d",
                         orderCode.toLocal8Bit().data(), orderQty, curOrder.toLocal8Bit().data(),
                         m_pendingWaveQueue.size());
-                    emit logMessage(QString("[波次] 新波次 %1 已排队（待执行 %2 个）——当前波次 %3 结束后自动开始；"
+                    emit logMessage(QString("[波次] 新波次 %1 已排队（待执行 %2 个，当前波次 %3 作业中）——"
+                                            "点「结束任务」后队列保留不自动执行，"
+                                            "再点「开始接收任务」时按顺序执行队首；"
                                             "可用「查看接收波次队列」查看")
                         .arg(orderCode).arg(m_pendingWaveQueue.size()).arg(curOrder));
                     return;
@@ -1459,6 +1457,10 @@ bool HttpServer::startReceive(int port)
         m_pServer = HP_Create_HttpServer(this);
 
     m_receiving.store(true);   // ★ 先置接收标志（HTTP Start 成功后即收 WMS 推送）
+    // ★ 2026-09-17 现场要求（"跳过一个波次"缺陷）：点「开始接收任务」= 解开「结束任务」
+    //   造成的队列冻结；本函数下方的 maybeStartPendingWave() 因而成为**唯一的出队时机**。
+    //   （冻结置位点：sendEnd()——见那里的注释与 PendingWaveQueuePolicy.h）
+    m_endRequested.store(false);
 
     // ──── HP-Socket 性能调优（参考WCSApp线程池架构）────
     {
@@ -1491,7 +1493,12 @@ bool HttpServer::startReceive(int port)
     //   注意顺序：必须在 restoreWaveFromDB() 之后调用（先清绑定，再切波次），并早于下面的队列执行逻辑。
     resetWavePanelToIdle(QString::fromUtf8("开始接收任务"));
 
-    // ★ 2026-09-07 若存在"执行中排队"的待执行波次，开启接收后自动执行
+    // ★ 2026-09-07 若存在"执行中排队"的待执行波次，开启接收后执行队首
+    //   ★ 2026-09-17 现场要求：**这里是待执行队列唯一的出队时机**——
+    //     "只有点了「开始接收任务」才开始接收队列里的任务"（点「结束任务」后队列冻结保留，
+    //     不会再有终态回调把队首偷偷执行掉；判据见 PendingWaveQueuePolicy.h）。
+    //     上面的 m_endRequested.store(false) 已解开冻结，因此本行的 maybeStartPendingWave()
+    //     会真正取队首执行。
     // ★ 2026-09-08：若内存波次处于"分拣已结束但回传未完成"（完结中/异常挂起），先切出——
     //   数据与失败报文保留在 DB（可随时从列表切回或在下拉中重传），避免旧波次阻塞队列执行
     if (!m_pendingWaveQueue.isEmpty() && m_pWaveMgr)
@@ -3906,35 +3913,134 @@ bool HttpServer::startNewWaveTask()
 }
 
 // ============================================================================
-// ★ 2026-09-07 自动开始下一波次：从待执行队列取队首重放给 ParseWorker 解析注册。
-//   仅当内存空闲（IDLE/终态）时执行；解析完成回到 waveParsed（重放标志放行接收闸门）。
+// ★ 2026-09-17 待执行队列「入队唯一入口」：新到达排队 / 冻结回滚 / 队首回滚共用一条链路，
+//   保证去重、SKU 集合、落库、UI 刷新、留痕日志在任何一条路径上都不遗漏。
+//   front=true 插队首（"重放结果被拦下"的回滚：它本就是队首，放回后不跳号）。
+//   返回 true=本次确实入队；false=队列中已有同单（忽略重复下发，未改动队列）。
+// ============================================================================
+bool HttpServer::enqueuePendingWave(const QString& orderCode, int orderQty,
+                                   const QByteArray& rawBody, qint64 recvTimeMs,
+                                   bool front, const QString& reason)
+{
+    if (orderCode.isEmpty()) return false;
+
+    // 防重复排队：队列中已有同单 → 忽略本次（重放回滚同理：已在队列里的就是它自己）
+    for (const PendingWave& p : m_pendingWaveQueue)
+    {
+        if (p.orderCode == orderCode)
+        {
+            HTTP_LOG_WARN("波次已在待执行队列，忽略重复 orderCode=%s 原因=%s",
+                orderCode.toLocal8Bit().data(), reason.toLocal8Bit().data());
+            return false;
+        }
+    }
+
+    PendingWave pw;
+    pw.orderCode = orderCode;
+    pw.orderQty  = orderQty;      // ★ 2026-09-08 队列弹窗展示件数
+    pw.rawBody   = rawBody;
+    pw.recvTime  = (recvTimeMs > 0) ? recvTimeMs : QDateTime::currentMSecsSinceEpoch();
+    // ★ 2026-09-14 波次隔离：SKU 集合从 H4 轻量提取（只读 items[].inco，不做映射/校验）
+    pw.skuSet    = extractPendingWaveSkuSet(rawBody);
+    if (pw.skuSet.isEmpty())
+    {
+        HTTP_LOG_WARN("待执行波次排队：SKU 集合提取为空 orderCode=%s（不影响执行，仅波次隔离判定退化为按状态判定）",
+            orderCode.toLocal8Bit().data());
+    }
+
+    if (front) m_pendingWaveQueue.prepend(pw);
+    else       m_pendingWaveQueue.append(pw);
+    emit pendingWavesChanged();   // ★ 2026-09-08 UI 队列/波次列表刷新
+    // ★ 落波次头（波次记录列表可见，状态=已下发/待执行）；明细待执行时随格口映射一起落库
+    if (m_pSortingDb)
+        m_pSortingDb->upsertReturnWave(orderCode, orderQty, WAVE_CREATED);
+    HTTP_LOG_INFO("待执行波次入队 orderCode=%s qty=%d %s 队列=%d 原因=%s",
+        orderCode.toLocal8Bit().data(), orderQty, front ? "(队首)" : "(队尾)",
+        m_pendingWaveQueue.size(), reason.toLocal8Bit().data());
+    return true;
+}
+
+// ★ 2026-09-14 波次隔离：从 H4 原始报文提取本波次涉及的 SKU（仅 inco 字段，不做校验）
+QSet<QString> HttpServer::extractPendingWaveSkuSet(const QByteArray& rawBody)
+{
+    QSet<QString> skus;
+    QJsonParseError perr;
+    const QJsonDocument pdoc = QJsonDocument::fromJson(rawBody, &perr);
+    if (perr.error) return skus;
+    const QJsonArray pitems = pdoc.object().value("items").toArray();
+    for (const QJsonValue& v : pitems)
+    {
+        const QString inco = v.toObject().value("inco").toString().trimmed();
+        if (!inco.isEmpty()) skus.insert(inco);
+    }
+    return skus;
+}
+
+// ============================================================================
+// ★ 2026-09-07 待执行队列出队：取队首重放给 ParseWorker 解析注册。
+//
+// ★★ 2026-09-17 现场缺陷"跳过一个波次"修复（详见 PendingWaveQueuePolicy.h）：
+//   出队**只允许**发生在"接收中(本次会话已开启) 且 本次会话没点过「结束任务」"时。
+//   旧实现只要波次走到终态就出队，但点「结束任务」后 H8 回调里波次就变已完结，
+//   而接收层要等 H8 回调走完才收尾（stopReceive 在 endReportFinished 之后），
+//   于是**界面已显示「开始接收任务」，队首却已被重放注册**；操作员再点「开始接收任务」
+//   时 startReceive() 又把这一波切出并执行下一个队首 → 中间那一波被跳过。
+//   现在：冻结态下**只记日志、原样保留队列**，等点「开始接收任务」时再按队首顺序执行。
+//
+//   仍保留：接收中波次被 WMS 取消（H5 终态）后自动接替下一波（test/e2e_pending_replay.py 依赖）。
+//   仅当内存空闲（IDLE/终态）时执行。
 // ============================================================================
 void HttpServer::maybeStartPendingWave()
 {
     if (m_pendingWaveQueue.isEmpty()) return;
     if (!m_pWaveMgr || !m_pQueue) return;
 
+    // ── 出队时机闸门（现场要求：只有点「开始接收任务」才开始接收队列里的任务）──
+    const PendingDequeueDecision decision =
+        pendingDequeueDecision(m_receiving.load(), m_endRequested.load(), m_pendingWaveQueue.size());
+    if (decision != PDQ_ALLOW)
+    {
+        if (decision != PDQ_QUEUE_EMPTY)
+        {
+            HTTP_LOG_INFO("待执行波次不出队：%s（队列 %d 个原样保留，点「开始接收任务」后按队首顺序执行）",
+                pendingDequeueDecisionText(decision), m_pendingWaveQueue.size());
+            emit logMessage(QString::fromUtf8(
+                "[波次] 待执行队列 %1 个已保留：%2——点「开始接收任务」后才会依次执行队首")
+                .arg(m_pendingWaveQueue.size())
+                .arg(QString::fromUtf8(pendingDequeueDecisionText(decision))));
+        }
+        return;
+    }
+
     int st = m_pWaveMgr->status();
     if (!(st == WAVE_IDLE || st == WAVE_CANCELLED || st == WAVE_FINISHED))
         return;   // 当前波次仍进行中，不插队
 
-    // 队首重放（push 成功才出队；水位满则下次触发再试）
-    const PendingWave& pw = m_pendingWaveQueue.first();
+    // ★★ 2026-09-17 悬垂引用修复（既有缺陷）：
+    //   旧实现 `const PendingWave& pw = first(); ...; removeFirst(); ... pw.orderCode ...`
+    //   —— removeFirst() 后 `pw` 引用的是**已被搬移/释放的元素**：日志里打印的是"队首之后
+    //   那一波的波次号"（现场据此误判"跳了一个波次"），且属 use-after-free（UB）。
+    //   现场实录：16:48:22.308 实放 test-002，日志却打 `orderCode=test-003`。
+    //   现在先整体取出（值拷贝），push 失败再放回队首，日志一律用副本。
+    const PendingWave pw = m_pendingWaveQueue.takeFirst();
+
+    // 队首重放（push 成功才真正出队；水位满则放回队首，下次触发再试）
     WaveTask task;
     task.rawBody  = pw.rawBody;
     task.fullUrl  = pw.fullUrl.isEmpty() ? QString("queue://replay") : pw.fullUrl;
     task.recvTime = pw.recvTime;
     if (!m_pQueue->push(task))
     {
-        HTTP_LOG_WARN("待执行波次入队失败(队列满) orderCode=%s，稍后自动重试", pw.orderCode.toLocal8Bit().data());
+        m_pendingWaveQueue.prepend(pw);   // 回滚：仍在队首，不跳号
+        HTTP_LOG_WARN("待执行波次入队失败(队列满) orderCode=%s，已放回队首，稍后自动重试",
+            pw.orderCode.toLocal8Bit().data());
         return;
     }
-    m_replayingPending.store(true);
-    m_pendingWaveQueue.removeFirst();
+    m_pendingReplayInFlight.fetch_add(1);   // 重放已交给 ParseWorker，等解析回调配对出队
     emit pendingWavesChanged();   // ★ 2026-09-08 UI 队列/波次列表刷新
-    HTTP_LOG_INFO("自动开始待执行波次 orderCode=%s 队列剩余=%d", pw.orderCode.toLocal8Bit().data(),
-        m_pendingWaveQueue.size());
-    emit logMessage(QString("[波次] 自动开始下一波次 %1（待执行剩 %2 个）——解析完成后自动进入该任务")
+    HTTP_LOG_INFO("开始执行待执行波次 orderCode=%s 来源=待执行队列 队列剩余=%d",
+        pw.orderCode.toLocal8Bit().data(), m_pendingWaveQueue.size());
+    emit logMessage(QString("[波次] 开始执行队首波次 %1（待执行剩 %2 个）——解析完成后进入该任务")
         .arg(pw.orderCode).arg(m_pendingWaveQueue.size()));
 }
 
@@ -5298,9 +5404,11 @@ QJsonObject HttpServer::handleCancelWave(const QJsonObject& req)
     //   再清 GridBuffer。
     //
     //   为什么必须这个顺序：
-    //     `m_pWaveMgr->clearWave()` 会把状态置为 IDLE 并发出 `waveStatusChanged`，
-    //     该回调里会调用 `maybeStartPendingWave()` —— 也就是**立刻把排队中的下一波次
-    //     交给 ParseWorker 重放解析**（异步线程）。
+    //     本函数前面的 `tryCancelWave()` 已把状态原子迁移到 CANCELLED 并发出 `waveStatusChanged`，
+    //     该回调里会调用 `maybeStartPendingWave()` —— 也就是**把排队中的下一波次交给
+    //     ParseWorker 重放解析**（异步线程）。
+    //     （`clearWave()`（→IDLE）本身**不**触发出队：★ 2026-09-17 起只有"接收中且本次会话
+    //       未点过「结束任务」"的终态才出队，口径见 PendingWaveQueuePolicy.h。）
     //     若先清 GridBuffer，则下一波次解析完成后、其落库回调 `buildWaveItems()` 去读
     //     `m_pBuffer->activeMap()` 时映射已被清空 → **落库 items=0** →
     //     该波次在 DB 里没有任何明细 → 之后"恢复波次"会因明细为空被拒绝（只能重下发）。
@@ -6943,6 +7051,23 @@ bool HttpServer::sendEnd()
         HTTP_LOG_WARN("完结回传触发失败（H8） WaveManager未初始化");
         emit logMessage("[完结回传] 触发失败: WaveManager未初始化", true);
         return false;
+    }
+
+    // ★ 2026-09-17 现场要求（"跳过一个波次"缺陷）：点「结束任务」= 本次接收会话开始收尾，
+    //   在此**立即冻结待执行队列**——从这一刻起队首不再出队。必须在这里置位，因为接收层
+    //   还要等 H8 回传结果才 stopReceive()（此间 m_receiving 仍为 true），而 H8 成功回调里
+    //   本波次就会变**已完结**；旧实现正是借此把队首重放注册，造成"界面显示开始接收任务、
+    //   系统却已自动接收下一波"，操作员再点开始又执行下一个队首 → 中间那一波被跳过。
+    //   解冻的唯一入口：下一次 startReceive()（点「开始接收任务」）。
+    //   判据实现见 PendingWaveQueuePolicy.h / HttpServer::maybeStartPendingWave。
+    m_endRequested.store(true);
+    if (!m_pendingWaveQueue.isEmpty())
+    {
+        HTTP_LOG_INFO("点「结束任务」：待执行队列 %d 个已冻结（本次会话不再出队；点「开始接收任务」后按队首顺序执行）",
+            m_pendingWaveQueue.size());
+        emit logMessage(QString::fromUtf8(
+            "[波次] 待执行队列 %1 个已冻结——点「结束任务」后不再自动执行，"
+            "点「开始接收任务」才会依次执行队首").arg(m_pendingWaveQueue.size()));
     }
 
     // ★ 终态幂等判断：已取消（CANCELLED）、已完成（FINISHED）、异常挂起（HELD）拒绝操作
