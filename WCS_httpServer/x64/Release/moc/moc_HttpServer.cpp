@@ -22,8 +22,8 @@ QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_HttpServer_t {
-    QByteArrayData data[30];
-    char stringdata0[377];
+    QByteArrayData data[36];
+    char stringdata0[441];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -54,14 +54,20 @@ QT_MOC_LITERAL(18, 214, 17), // "endReportFinished"
 QT_MOC_LITERAL(19, 232, 23), // "wavePersistenceFinished"
 QT_MOC_LITERAL(20, 256, 2), // "ok"
 QT_MOC_LITERAL(21, 259, 8), // "skuCount"
-QT_MOC_LITERAL(22, 268, 17), // "outboxResendReady"
-QT_MOC_LITERAL(23, 286, 4), // "kind"
-QT_MOC_LITERAL(24, 291, 18), // "outboxResendResult"
-QT_MOC_LITERAL(25, 310, 7), // "success"
-QT_MOC_LITERAL(26, 318, 11), // "waveResumed"
-QT_MOC_LITERAL(27, 330, 6), // "status"
-QT_MOC_LITERAL(28, 337, 19), // "pendingWavesChanged"
-QT_MOC_LITERAL(29, 357, 19) // "outboxFailedChanged"
+QT_MOC_LITERAL(22, 268, 10), // "epcsLanded"
+QT_MOC_LITERAL(23, 279, 4), // "epcs"
+QT_MOC_LITERAL(24, 284, 17), // "outboxResendReady"
+QT_MOC_LITERAL(25, 302, 4), // "kind"
+QT_MOC_LITERAL(26, 307, 18), // "outboxResendResult"
+QT_MOC_LITERAL(27, 326, 7), // "success"
+QT_MOC_LITERAL(28, 334, 11), // "waveResumed"
+QT_MOC_LITERAL(29, 346, 6), // "status"
+QT_MOC_LITERAL(30, 353, 19), // "pendingWavesChanged"
+QT_MOC_LITERAL(31, 373, 19), // "outboxFailedChanged"
+QT_MOC_LITERAL(32, 393, 20), // "fullboxMessageFailed"
+QT_MOC_LITERAL(33, 414, 4), // "grid"
+QT_MOC_LITERAL(34, 419, 17), // "bindPersistFailed"
+QT_MOC_LITERAL(35, 437, 3) // "box"
 
     },
     "HttpServer\0serverStarted\0\0port\0"
@@ -72,9 +78,11 @@ QT_MOC_LITERAL(29, 357, 19) // "outboxFailedChanged"
     "fullboxReportReady\0payload\0msgId\0"
     "endReportReady\0endReportFinished\0"
     "wavePersistenceFinished\0ok\0skuCount\0"
-    "outboxResendReady\0kind\0outboxResendResult\0"
-    "success\0waveResumed\0status\0"
-    "pendingWavesChanged\0outboxFailedChanged"
+    "epcsLanded\0epcs\0outboxResendReady\0"
+    "kind\0outboxResendResult\0success\0"
+    "waveResumed\0status\0pendingWavesChanged\0"
+    "outboxFailedChanged\0fullboxMessageFailed\0"
+    "grid\0bindPersistFailed\0box"
 };
 #undef QT_MOC_LITERAL
 
@@ -84,31 +92,34 @@ static const uint qt_meta_data_HttpServer[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-      17,   14, // methods
+      20,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
        0,       // flags
-      17,       // signalCount
+      20,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    1,   99,    2, 0x06 /* Public */,
-       4,    0,  102,    2, 0x06 /* Public */,
-       5,    1,  103,    2, 0x06 /* Public */,
-       7,    2,  106,    2, 0x06 /* Public */,
-       7,    1,  111,    2, 0x26 /* Public | MethodCloned */,
-      10,    0,  114,    2, 0x06 /* Public */,
-      11,    1,  115,    2, 0x06 /* Public */,
-      13,    1,  118,    2, 0x06 /* Public */,
-      14,    2,  121,    2, 0x06 /* Public */,
-      17,    2,  126,    2, 0x06 /* Public */,
-      18,    0,  131,    2, 0x06 /* Public */,
-      19,    3,  132,    2, 0x06 /* Public */,
-      22,    3,  139,    2, 0x06 /* Public */,
-      24,    4,  146,    2, 0x06 /* Public */,
-      26,    2,  155,    2, 0x06 /* Public */,
-      28,    0,  160,    2, 0x06 /* Public */,
-      29,    0,  161,    2, 0x06 /* Public */,
+       1,    1,  114,    2, 0x06 /* Public */,
+       4,    0,  117,    2, 0x06 /* Public */,
+       5,    1,  118,    2, 0x06 /* Public */,
+       7,    2,  121,    2, 0x06 /* Public */,
+       7,    1,  126,    2, 0x26 /* Public | MethodCloned */,
+      10,    0,  129,    2, 0x06 /* Public */,
+      11,    1,  130,    2, 0x06 /* Public */,
+      13,    1,  133,    2, 0x06 /* Public */,
+      14,    2,  136,    2, 0x06 /* Public */,
+      17,    2,  141,    2, 0x06 /* Public */,
+      18,    0,  146,    2, 0x06 /* Public */,
+      19,    3,  147,    2, 0x06 /* Public */,
+      22,    1,  154,    2, 0x06 /* Public */,
+      24,    3,  157,    2, 0x06 /* Public */,
+      26,    4,  164,    2, 0x06 /* Public */,
+      28,    2,  173,    2, 0x06 /* Public */,
+      30,    0,  178,    2, 0x06 /* Public */,
+      31,    0,  179,    2, 0x06 /* Public */,
+      32,    3,  180,    2, 0x06 /* Public */,
+      34,    3,  187,    2, 0x06 /* Public */,
 
  // signals: parameters
     QMetaType::Void, QMetaType::Int,    3,
@@ -123,11 +134,14 @@ static const uint qt_meta_data_HttpServer[] = {
     QMetaType::Void, QMetaType::QJsonObject, QMetaType::QString,   15,   16,
     QMetaType::Void,
     QMetaType::Void, QMetaType::QString, QMetaType::Bool, QMetaType::Int,    6,   20,   21,
-    QMetaType::Void, QMetaType::QString, QMetaType::QJsonObject, QMetaType::QString,   23,   15,   16,
-    QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::QString, QMetaType::Bool,    6,   23,   16,   25,
-    QMetaType::Void, QMetaType::QString, QMetaType::Int,    6,   27,
+    QMetaType::Void, QMetaType::QStringList,   23,
+    QMetaType::Void, QMetaType::QString, QMetaType::QJsonObject, QMetaType::QString,   25,   15,   16,
+    QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::QString, QMetaType::Bool,    6,   25,   16,   27,
+    QMetaType::Void, QMetaType::QString, QMetaType::Int,    6,   29,
     QMetaType::Void,
     QMetaType::Void,
+    QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::QString,   16,    6,   33,
+    QMetaType::Void, QMetaType::QString, QMetaType::QString, QMetaType::QString,   33,   35,    6,
 
        0        // eod
 };
@@ -150,11 +164,14 @@ void HttpServer::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         case 9: _t->endReportReady((*reinterpret_cast< const QJsonObject(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2]))); break;
         case 10: _t->endReportFinished(); break;
         case 11: _t->wavePersistenceFinished((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< bool(*)>(_a[2])),(*reinterpret_cast< int(*)>(_a[3]))); break;
-        case 12: _t->outboxResendReady((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QJsonObject(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3]))); break;
-        case 13: _t->outboxResendResult((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3])),(*reinterpret_cast< bool(*)>(_a[4]))); break;
-        case 14: _t->waveResumed((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< int(*)>(_a[2]))); break;
-        case 15: _t->pendingWavesChanged(); break;
-        case 16: _t->outboxFailedChanged(); break;
+        case 12: _t->epcsLanded((*reinterpret_cast< const QStringList(*)>(_a[1]))); break;
+        case 13: _t->outboxResendReady((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QJsonObject(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3]))); break;
+        case 14: _t->outboxResendResult((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3])),(*reinterpret_cast< bool(*)>(_a[4]))); break;
+        case 15: _t->waveResumed((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< int(*)>(_a[2]))); break;
+        case 16: _t->pendingWavesChanged(); break;
+        case 17: _t->outboxFailedChanged(); break;
+        case 18: _t->fullboxMessageFailed((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3]))); break;
+        case 19: _t->bindPersistFailed((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QString(*)>(_a[2])),(*reinterpret_cast< const QString(*)>(_a[3]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::IndexOfMethod) {
@@ -237,37 +254,58 @@ void HttpServer::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
             }
         }
         {
+            using _t = void (HttpServer::*)(const QStringList & );
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::epcsLanded)) {
+                *result = 12;
+                return;
+            }
+        }
+        {
             using _t = void (HttpServer::*)(const QString & , const QJsonObject & , const QString & );
             if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::outboxResendReady)) {
-                *result = 12;
+                *result = 13;
                 return;
             }
         }
         {
             using _t = void (HttpServer::*)(const QString & , const QString & , const QString & , bool );
             if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::outboxResendResult)) {
-                *result = 13;
+                *result = 14;
                 return;
             }
         }
         {
             using _t = void (HttpServer::*)(const QString & , int );
             if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::waveResumed)) {
-                *result = 14;
-                return;
-            }
-        }
-        {
-            using _t = void (HttpServer::*)();
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::pendingWavesChanged)) {
                 *result = 15;
                 return;
             }
         }
         {
             using _t = void (HttpServer::*)();
-            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::outboxFailedChanged)) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::pendingWavesChanged)) {
                 *result = 16;
+                return;
+            }
+        }
+        {
+            using _t = void (HttpServer::*)();
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::outboxFailedChanged)) {
+                *result = 17;
+                return;
+            }
+        }
+        {
+            using _t = void (HttpServer::*)(const QString & , const QString & , const QString & );
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::fullboxMessageFailed)) {
+                *result = 18;
+                return;
+            }
+        }
+        {
+            using _t = void (HttpServer::*)(const QString & , const QString & , const QString & );
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&HttpServer::bindPersistFailed)) {
+                *result = 19;
                 return;
             }
         }
@@ -305,13 +343,13 @@ int HttpServer::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 17)
+        if (_id < 20)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 17;
+        _id -= 20;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 17)
+        if (_id < 20)
             *reinterpret_cast<int*>(_a[0]) = -1;
-        _id -= 17;
+        _id -= 20;
     }
     return _id;
 }
@@ -391,36 +429,57 @@ void HttpServer::wavePersistenceFinished(const QString & _t1, bool _t2, int _t3)
 }
 
 // SIGNAL 12
-void HttpServer::outboxResendReady(const QString & _t1, const QJsonObject & _t2, const QString & _t3)
+void HttpServer::epcsLanded(const QStringList & _t1)
 {
-    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))) };
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 12, _a);
 }
 
 // SIGNAL 13
-void HttpServer::outboxResendResult(const QString & _t1, const QString & _t2, const QString & _t3, bool _t4)
+void HttpServer::outboxResendReady(const QString & _t1, const QJsonObject & _t2, const QString & _t3)
 {
-    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t4))) };
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))) };
     QMetaObject::activate(this, &staticMetaObject, 13, _a);
 }
 
 // SIGNAL 14
-void HttpServer::waveResumed(const QString & _t1, int _t2)
+void HttpServer::outboxResendResult(const QString & _t1, const QString & _t2, const QString & _t3, bool _t4)
 {
-    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))) };
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t4))) };
     QMetaObject::activate(this, &staticMetaObject, 14, _a);
 }
 
 // SIGNAL 15
-void HttpServer::pendingWavesChanged()
+void HttpServer::waveResumed(const QString & _t1, int _t2)
 {
-    QMetaObject::activate(this, &staticMetaObject, 15, nullptr);
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))) };
+    QMetaObject::activate(this, &staticMetaObject, 15, _a);
 }
 
 // SIGNAL 16
-void HttpServer::outboxFailedChanged()
+void HttpServer::pendingWavesChanged()
 {
     QMetaObject::activate(this, &staticMetaObject, 16, nullptr);
+}
+
+// SIGNAL 17
+void HttpServer::outboxFailedChanged()
+{
+    QMetaObject::activate(this, &staticMetaObject, 17, nullptr);
+}
+
+// SIGNAL 18
+void HttpServer::fullboxMessageFailed(const QString & _t1, const QString & _t2, const QString & _t3)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))) };
+    QMetaObject::activate(this, &staticMetaObject, 18, _a);
+}
+
+// SIGNAL 19
+void HttpServer::bindPersistFailed(const QString & _t1, const QString & _t2, const QString & _t3)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t2))), const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t3))) };
+    QMetaObject::activate(this, &staticMetaObject, 19, _a);
 }
 QT_WARNING_POP
 QT_END_MOC_NAMESPACE

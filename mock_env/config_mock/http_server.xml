@@ -47,6 +47,9 @@
     <rfidHeartbeatEnable>1</rfidHeartbeatEnable>
     <!-- 心跳发送间隔（毫秒，默认2000=2秒） -->
     <rfidHeartbeatIntervalMs>2000</rfidHeartbeatIntervalMs>
+    <!-- ★ EPC 码识别长度（字符数，默认24）：只识别『A + (长度-1) 位数字』形态，与开头是不是 A101 无关；
+         <2 = 不识别（整串原样使用，回退改造前行为）。RFID 推送的原始报文另在 日志/界面/rfid_raw 表 留痕 -->
+    <rfidEpcTruncateLen>24</rfidEpcTruncateLen>
     <!-- 仓库编码 -->
     <warehouseCode>H</warehouseCode>
     <!-- 货主编码 -->

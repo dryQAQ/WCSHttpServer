@@ -125,6 +125,12 @@
     <apiBindingLatticePort>/api/DispatchSortingCommand/BindingLatticePort</apiBindingLatticePort>
     <!-- ③ 波次取消（WMS → WCS，H5 退货任务取消） -->
     <apiInsertWaveIn>/api/DispatchSortingCommand/InsertWaveIn</apiInsertWaveIn>
+    <binding grid="001">H-01-2001</binding>
+    <binding grid="002">H-01-2002</binding>
+    <binding grid="003">H-01-2003</binding>
+    <binding grid="004">H-01-2004</binding>
+    <binding grid="005">H-01-2005</binding>
+    <binding grid="006">H-01-2006</binding>
     <gridName num="1">1号格口</gridName>
     <gridName num="10">10号格口</gridName>
     <gridName num="11">11号格口</gridName>

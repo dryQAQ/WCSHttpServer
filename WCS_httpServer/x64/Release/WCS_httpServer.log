@@ -15,6 +15,7 @@
   moc HttpServer.h
   moc HttpClient.h
   moc qcustomplot.h
+  moc VerticalTabBar.h
   ConfigManager.cpp
   HttpClient.cpp
   HttpServer.cpp
@@ -28,6 +29,7 @@
   SiemensPLC.cpp
   snap7.cpp
   SortingDatabase.cpp
+  VerticalTabBar.cpp
   WaveManager.cpp
   WCS_httpServer.cpp
   main.cpp
@@ -46,5 +48,6 @@
   moc_HttpServer.cpp
   moc_HttpClient.cpp
   moc_qcustomplot.cpp
+  moc_VerticalTabBar.cpp
   WCS_httpServer.vcxproj -> D:\WCS\WCSApp\WCS_httpServer\release_WcsHttpServer\WCS_httpServer.exe
   WCS_httpServer.vcxproj -> ..\release_WcsHttpServer\WCS_httpServer.pdb (完整 PDB)
