@@ -2,6 +2,7 @@
 #include "LogService.h"
 #include "WmsGridCode.h"     // ★ 2026-09-07 WMS 格口编码(22+3位) 入参归一
 #include "PlanAllocTable.h"  // ★ 2026-09-14 计划分配表（编译入参 PlanGridInput）
+#include "WaveMapLogPolicy.h" // ★ 2026-09-18 SKU→格口 留痕的体积闸门判据（与 tests 共用同一份）
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -282,6 +283,95 @@ void ParseWorker::run()
                 it.value().volu.toLocal8Bit().data());
         }
         WCS_INFO("[SKU映射] ==== 映射表结束(共%d条) ====", newMap->size());
+
+        // ════════════════════════════════════════════════════════════════════
+        // ★ 2026-09-18 新增：本次下发的 SKU→格口 映射留痕（log/WAVE_MAP/wave_map.log）
+        //
+        //   现场需求：每次任务下发解析出的 item，把「SKU 对应的格口」留一份记录。
+        //   设计要求（不可违反）：
+        //     ① 写入点在本函数（ParseWorker 解析线程，QThread::LowPriority）——
+        //        **不碰主线程/UI、不持 DB 锁、不在落格/发送链路上**；
+        //     ② 增量语义：每个 SKU 只写它自己那一行，**绝不**调用
+        //        LifecycleTracker::logEvent（那会把全部历史拼在一起 → O(N²) 且越写越长）；
+        //     ③ 写独立文件 WAVE_MAP（log4cxx.properties 有独立 logger），
+        //        不写进 lifecycle.log（那里是 RFID 心跳 + 落格事件，避免被冲掉）；
+        //     ④ 体积闸门：SKU 数 > WAVE_MAP_LOG_MAX_SKU 时只写摘要 + 首尾各 N 条，
+        //        避免 5 万件波次把日志写成 3 万行；需要全量时设环境变量 WCS_WAVE_MAP_FULL=1。
+        //   成本实测（探针 _probe\wavemap_probe.cpp，与本文件同格式串/同 hlog）：
+        //     4,007 行 = 99 ms（0.025 ms/行）→ 4,007 SKU≈0.10 s，32,000 SKU≈0.79 s，
+        //     50,000 SKU≈1.24 s；现场盘可能慢 2~5 倍，全部发生在解析线程上。
+        // ════════════════════════════════════════════════════════════════════
+        {
+            const int skuTotal     = newMap->size();
+            const bool bForceFull  = qEnvironmentVariableIsSet("WCS_WAVE_MAP_FULL");
+            const bool bMapFull    = bForceFull || (skuTotal <= WAVE_MAP_LOG_MAX_SKU);
+
+            WAVE_MAP_INFO("========== 波次下发映射 orderCode=%s items=%lld SKU=%d orderQty=%d "
+                          "映射留痕=%s（limit=%d%s）==========",
+                orderCode.toLocal8Bit().data(), (qint64)items.size(), skuTotal, orderQty,
+                bMapFull ? "全量" : "摘要", WAVE_MAP_LOG_MAX_SKU,
+                bForceFull ? "，环境变量强制全量" : "");
+
+            auto writeOneSku = [](const QString& sku, const GridEntry& e) {
+                // 该 SKU 的每格口计划件数（"034:3+048:1"），格口按内部 3 位 key 升序（可重现）
+                QStringList cells;
+                for (auto pit = e.planQtyPerGrid.constBegin();
+                     pit != e.planQtyPerGrid.constEnd(); ++pit)
+                {
+                    const QString gType = e.gridTypePerGrid.value(pit.key(), e.gridType);
+                    cells << QString("%1(%2):%3件")
+                                 .arg(pit.key())
+                                 .arg(gType == "1" ? QString::fromUtf8("异常")
+                                      : gType == "2" ? QString::fromUtf8("发货")
+                                                     : QString::fromUtf8("分类"))
+                                 .arg(pit.value());
+                }
+                if (cells.isEmpty())   // 兜底：无分格口计划时按候选串 + 总数
+                {
+                    for (const QString& g : e.gridNum.split(',', Qt::SkipEmptyParts))
+                        cells << QString("%1:%2件").arg(g.trimmed()).arg(e.gridCount);
+                }
+
+                WAVE_MAP_INFO("[SKU=%s] → 计划格口=[%s] 格口类型=%s 计划合计=%d 来源库位=%s 容器号=%s",
+                    sku.toLocal8Bit().data(),
+                    cells.join("+").toLocal8Bit().data(),
+                    e.gridType.toLocal8Bit().data(),
+                    e.gridCount,
+                    e.volu.toLocal8Bit().data(),
+                    e.obxCode.toLocal8Bit().data());
+            };
+
+            int written = 0;
+            int idx = 0;
+            for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it, ++idx)
+            {
+                if (waveMapLineMode(idx, skuTotal, WAVE_MAP_LOG_MAX_SKU,
+                                    PARSE_SKU_LOG_TAIL, bForceFull) == WMLM_NONE)
+                    continue;
+                writeOneSku(it.key(), it.value());
+                ++written;
+            }
+
+            // 摘要模式自证：落行数与判据函数算出的值必须一致（tests\test_wave_map_policy.cpp 锁同一份判据）
+            const int expect = waveMapLinesWritten(skuTotal, WAVE_MAP_LOG_MAX_SKU,
+                                                   PARSE_SKU_LOG_TAIL, bForceFull);
+            if (written != expect)
+            {
+                WCS_WARN("[SKU映射留痕] 落行数与判据不一致 written=%d expect=%d SKU=%d（请检查 WaveMapLogPolicy.h）",
+                    written, expect, skuTotal);
+            }
+            if (waveMapIsSummary(skuTotal, WAVE_MAP_LOG_MAX_SKU, bForceFull))
+            {
+                WAVE_MAP_INFO("[SKU映射留痕] 摘要模式：SKU=%d 超过闸门 %d，本次只落首尾各 %d 条"
+                              "（共 %d 行）；完整映射见 return_wave_item 表，或用 "
+                              "docs\\dump_wave_mapping.py <波次号> 导出",
+                    skuTotal, WAVE_MAP_LOG_MAX_SKU, PARSE_SKU_LOG_TAIL, written);
+            }
+
+            WAVE_MAP_INFO("========== 波次下发映射结束 orderCode=%s SKU=%d 本次落行=%d "
+                          "完整映射另见 return_wave_item 表（该波次一行一个 SKU×格口）==========",
+                orderCode.toLocal8Bit().data(), skuTotal, written);
+        }
 
         // ════════════════════════════════════════════════════════════════════
         // ★ 2026-09-14 计划分配表：编译入参（**在解析线程构建，主线程只做编译**）

@@ -63,9 +63,20 @@
 #endif
 
 // ──── 波次明细日志（ParseWorker 每个 items[] 子项单独记录）────
-// 写入 ./log/WAVE_ITEM/wave_item.log
+// ★ 注意：log4cxx.properties 里**没有** WAVE_ITEM logger → 该模块落回 root appender，
+//   实际写入 ./log/Run/run.log（本注释此前写作 wave_item.log，与现场不符，2026-09-18 更正）
 #ifndef WAVE_ITEM_INFO
 #define WAVE_ITEM_INFO(fmt, ...) hlog_format(HLOG_LEVEL_INFO, "WAVE_ITEM", "\t" fmt, ##__VA_ARGS__)
+#endif
+
+// ──── 波次映射留痕（★ 2026-09-18 新增：本次下发的 SKU→格口 记录）────
+// 写入 ./log/WAVE_MAP/wave_map.log（独立文件，不与 lifecycle.log 的心跳混在一起）
+//   用途：现场按波次核对"这次下发的每个 SKU 对应哪些格口、计划几件、什么类型"，
+//         不必再去 run.log 的截断原文里翻，也不影响 lifecycle.log 的原有内容。
+//   写入点：ParseWorker::run（解析线程，QThread::LowPriority）——不碰主线程/UI、不持 DB 锁。
+//   体积闸门：define.h 的 WAVE_MAP_LOG_MAX_SKU（超过则只写摘要，见 ParseWorker.cpp）。
+#ifndef WAVE_MAP_INFO
+#define WAVE_MAP_INFO(fmt, ...) hlog_format(HLOG_LEVEL_INFO, "WAVE_MAP", "\t" fmt, ##__VA_ARGS__)
 #endif
 
 // ──── RFID 模块（RFID 推送 TCP 原始报文 + 解析）────

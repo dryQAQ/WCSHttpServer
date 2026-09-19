@@ -208,6 +208,8 @@ int main(int argc, char* argv[])
     QDir().mkpath(exeDir + "/log/DataBase");    // 数据库操作日志
     
     QDir().mkpath(exeDir + "/log/EPC");         // EpcCache 日志
+    // ★ 2026-09-18 新增：波次 SKU→格口 映射留痕（每次下发解析出的 item 对应格口）
+    QDir().mkpath(exeDir + "/log/WAVE_MAP");
     // ★ 2026-09-06：RFID/SEND 分类日志已并入 run.log（现场反馈独立文件无法写入/不便查看），不再建 RFID/SEND 目录
     QDir().mkpath(exeDir + "/data");            // 分拣数据库目录（UI 查询独立于服务，需提前创建）
 
