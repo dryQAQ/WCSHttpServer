@@ -9,6 +9,12 @@
 //      落格必须**按各格口的数量**分过去，而不是全部投第一个格口。
 //   ② 人工失误/同时两件在线导致"实落 > 计划"必须被系统拦住：
 //      已落格 + 在途认领 ≥ 计划件数 → 后续件一律改投异常口（66 号）。
+//   ③ ★ 2026-09-20 现场问题④：格口"已解锁且未绑定容器"时不允许再落格分拣
+//      （机器与软件只认 SKU-格口对应关系，PLC 不校验容器，落进无容器格口 ⇒
+//        该件无法计入任何容器的 H7 ⇒ 换箱后人工复核多出一件）。
+//      本表承担其中"额度"这一环：调用方把这类格口放进 `claim(blocked=…)` 掩码，
+//      认领直接跳过它们，**额度原样留在该格口**（等 H6 绑定容器后继续分配），
+//      同时不改动 已落格/在途 的任何计数（不变量①②③④全部保持成立）。
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // 为什么这样设计（算法层面：把"每次现算"改成"一次性编译"）
@@ -76,6 +82,15 @@ struct PlanGridInput
     qint32 qty  = 0;
 };
 
+// ★ 2026-09-20 现场问题④：「本次不可分配」的格口掩码（类型见 PlanAllocTable::GridMask）
+//   下标 = 内部格口号（1..BINDING_SLOT_COUNT，与 SkuPlan::gridOff / PlanCell::grid 同域）；
+//   true = 该格口当前不可分配（本次整改口径：**已解锁且未绑定容器**），认领时直接跳过。
+//   为什么要掩码而不是清零额度：格口只是"暂时"不可用（等 WMS 重发 H6 绑定容器），
+//   额度必须原样保留在该格口 —— 绑定一到就能继续按计划分配；清零会造成"计划件凭空少掉"。
+//   掩码由调用方（HttpServer）在**分配表锁之外**依据内存绑定表构建后传入，
+//   本表只做纯计算，不持有锁、不感知绑定来源。
+//   注：`PlanAllocTable::GridMask m{};` 值初始化后全为 false = 全部可分配（等价于不传掩码）。
+
 // 编译结果：每个 SKU 的计划数组视图
 struct SkuPlan
 {
@@ -128,6 +143,10 @@ struct PlanStats
 class PlanAllocTable
 {
 public:
+    // ★ 2026-09-20 现场问题④：「本次不可分配」格口掩码（下标=内部格口号 1..BINDING_SLOT_COUNT）
+    //   由调用方在分配表锁之外构建后传入 claim；false=可分配，true=本次跳过（额度保留）
+    using GridMask = std::array<bool, 67>;
+
     PlanAllocTable() {}
 
     // ──── 编译：波次开始时调用一次（主线程，持锁）────
@@ -304,8 +323,12 @@ public:
 
     // ──── ① 认领（主线程，持锁）────
     // 返回 true = 认领成功（claimGrid/claimId 输出，供 PLC 下发与回传提交）
-    // 返回 false = 该 SKU 各计划格口均已满额（已落+在途 = 计划）→ 调用方按超计划处置
-    bool claim(const QString& sku, qint16* claimGrid, quint64* claimIdOut, qint16* planIdxOut = nullptr)
+    // 返回 false = 该 SKU **可分配**的计划格口均已满额（已落+在途 = 计划）→ 调用方按超计划处置
+    //              ★ 或：尚有额度但全部停在 blocked 标记的"不可分配格口"上（额度保留、不算满额）
+    // blocked（可空）：本次不可分配的格口掩码（现场问题④：已解锁且未绑定容器）。
+    //   命中即跳过，且**不动该格口任何额度**；传 nullptr 时行为与改造前完全一致。
+    bool claim(const QString& sku, qint16* claimGrid, quint64* claimIdOut, qint16* planIdxOut = nullptr,
+               const GridMask* blocked = nullptr)
     {
         const int si = m_skuIndex.value(sku, -1);
         if (si < 0) return false;
@@ -324,10 +347,34 @@ public:
             const qint16 to   = (pass == 0) ? sp.idxCount : start;
             for (qint16 k = from; k < to; ++k)
             {
-                if (m_quota[sp.idxFirst + k].remain > 0) { chosenPi = k; sp.cursorFrom = k; break; }
+                const qint32 ci = sp.idxFirst + k;
+                if (m_quota[ci].remain <= 0) continue;
+                // ★ 现场问题④：不可分配格口（已解锁且未绑定容器）跳过 —— 额度留在原格口
+                if (blocked)
+                {
+                    const int g = (int)m_cells[ci].grid;
+                    if (g >= 0 && g < (int)blocked->size() && (*blocked)[(size_t)g]) continue;
+                }
+                chosenPi = k;
+                sp.cursorFrom = k;
+                break;
             }
         }
-        if (chosenPi < 0) { sp.skuRemain = 0; return false; }   // 防御：与 skuRemain 不一致
+        if (chosenPi < 0)
+        {
+            // ★ 2026-09-20 修正：此处原先无条件 `sp.skuRemain = 0;`。
+            //   现在必须区分两种"没认领到"：
+            //     ① 额度真的用尽（Σ remain = 0）      → 归零，语义与改造前一致；
+            //     ② 额度还停在不可分配格口上（本次整改新增）→ **绝不能归零**，
+            //        否则这些计划件会被永久判为"已满额"而全数改投异常口，
+            //        且不变量④（Σ余量 == SKU余量）会被破坏。
+            //   统一做法：按 Σ remain 重算 skuRemain —— ① 下结果等价（=0），② 下保留真实余量。
+            qint32 sumRemain = 0;
+            for (qint16 k = 0; k < sp.idxCount; ++k)
+                sumRemain += m_quota[sp.idxFirst + k].remain;
+            sp.skuRemain = sumRemain;
+            return false;
+        }
 
         applyClaim(si, (qint16)chosenPi);
         if (claimGrid)  *claimGrid  = m_cells[sp.idxFirst + chosenPi].grid;

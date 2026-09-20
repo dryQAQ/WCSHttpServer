@@ -218,15 +218,25 @@ public:
             if (!it.key().isEmpty())
             {
                 auto existing = m_cache.find(it.key());
-                // ★ 2026-09-16 hasExisting 的语义 = "存在一个**本轮有效**的条目"：
+                // ★ 2026-09-16 hasValidRound 的语义 = "存在一个**本轮有效**的条目"：
                 //   resetCycle 会把 receivedAt 置为无效以作废本轮（条目仍保留 SKU 信息），
                 //   此类条目必须按"无有效本轮"处理 → 走新件分支重新起算，否则会沿用空起点。
-                bool hasExisting = (existing != m_cache.end() && !existing->isExpired()
-                                    && existing->receivedAt.isValid());
+                const bool hasValidRound = (existing != m_cache.end() && !existing->isExpired()
+                                            && existing->receivedAt.isValid());
+                // ★ 2026-09-20 现场问题④：「能否继承 SKU 信息」是**独立判据**，不能用 hasValidRound 兼任。
+                //   原因：resetCycle（异常口件本轮终结，见上）只作废**计时**，其注释明确承诺
+                //   "保留 barcode / skuBound / carNum / expireTime：避免二次推送时重查 SKU"。
+                //   若继承判据也要求 receivedAt 有效，resetCycle 之后 barcode/skuBound 会被丢弃 →
+                //   从异常口取出的件二次重投时必须重走一次 RFID SKU 查询往返：
+                //     ① 多一次网络往返（现场 1s 下发窗口 PLC_SEND_TIMEOUT_MS 从重推起算）；
+                //     ② 查询慢/失败时该件会被判"发送超时/未就绪超时"而入异常，重投形同失败。
+                //   故：只要条目仍在有效期内且已完成 SKU 绑定，就沿用其 barcode（EPC 是同一实物件，绑定稳定）。
+                const bool hasSkuInfo = (existing != m_cache.end() && !existing->isExpired()
+                                         && existing->skuBound && !existing->barcode.isEmpty());
 
                 EpcCacheEntry entry;
                 // ★ 保留已有的 SKU 绑定数据（barcode + skuBound），不覆盖
-                if (hasExisting && existing->skuBound)
+                if (hasSkuInfo)
                 {
                     entry.barcode = existing->barcode;
                     entry.skuBound = true;
@@ -256,13 +266,13 @@ public:
                 //        （实测 142457ms 被误报为"发送超时"），掩盖真实根因（无可用格口）。
                 const QDateTime nowTs = QDateTime::currentDateTime();
                 const QString& newCar = entry.carNum;   // 已含空值回退 DEFAULT_CAR_STR
-                const bool sameCar = hasExisting
+                const bool sameCar = hasValidRound
                     && !existing->carNum.isEmpty() && !newCar.isEmpty()
                     && (existing->firstCarNum.isEmpty() ? existing->carNum : existing->firstCarNum) == newCar;
-                const bool withinWindow = hasExisting
+                const bool withinWindow = hasValidRound
                     && existing->receivedAt.msecsTo(nowTs) <= DOUBLE_READ_WINDOW_MS;
 
-                if (!hasExisting)
+                if (!hasValidRound)
                 {
                     entry.receivedAt  = nowTs;
                     entry.firstCarNum = newCar;                        // 新一轮：记下本轮身份

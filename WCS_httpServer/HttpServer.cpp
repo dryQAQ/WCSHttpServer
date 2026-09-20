@@ -113,10 +113,28 @@ HttpServer::HttpServer(QObject* parent)
 
     // ★ 2026-09-14 单条下发结果回调：失败只**入队**，由主线程释放额度
     //   （分配表写操作统一主线程独占，避免 sendPool 线程直接改表引入状态错乱）
-    m_pPlcMgr->setSendResultCallback([this](const QString& epc, bool success) {
+    //   ★ 2026-09-20 现场问题④：增补"最终下发格口"出参 → 记录"本件本要发往哪个格口"，
+    //     供件落入异常口时区分"软件主动改投"与"PLC 自己改投/偏投"（锁格时 PLC 会把在途件强制送 66）。
+    m_pPlcMgr->setSendResultCallback([this](const QString& epc, int finalGrid, bool success) {
+        if (success && finalGrid > 0)
+        {
+            std::lock_guard<std::mutex> lk(m_lastSentGridMutex);
+            m_lastSentGrid.insert(epc, finalGrid);
+        }
         if (success) return;
         std::lock_guard<std::mutex> lk(m_allocPendingReleaseMutex);
         m_allocPendingRelease.insert(epc);
+    });
+
+    // ★ 2026-09-20 现场问题④：下发前置条件「已解锁 且 已绑定容器」的判据来源
+    //   （内存绑定表为准，不做 DB 兜底 —— 详见 hasBoundContainer 注释）
+    m_pPlcMgr->setGridBoundCallback([this](int grid) -> bool {
+        return hasBoundContainer(grid);
+    });
+
+    // ★ 2026-09-20 现场问题④：改投异常口原因通知（发送侧打标 + UI 告警；落格侧据此写唯一一条留痕）
+    m_pPlcMgr->setExcRouteCallback([this](const QString& epc, const QString& reason) {
+        noteExcRoute(epc, reason);
     });
 
     // ──── 业务线程池 ────
@@ -388,8 +406,14 @@ HttpServer::HttpServer(QObject* parent)
             //       与 m_sentEpcs 的其它访问点同线程，无需加锁。
             //   同时快照出"本次落格属于重扫重投"的 EPC，供线程池内判断（避免跨线程访问成员容器）
             QSet<QString> rescanEpcs;
+            // ★ 2026-09-20 现场问题④：反馈到达时仍记为"在途"的 EPC 快照
+            //   必须在 clearEpcInFlight 之前取：本件若确实处于在途（已下发、尚未反馈），
+            //   说明"下发时格口状态是好的"，是落格前才失去容器绑定 —— 即本次整改后的兜底窗口，
+            //   需要在异常留痕里标注出来（与"下发时就无绑定"区分开，后者改造后不应再发生）。
+            QSet<QString> inFlightEpcs;
             for (const PlcFeedbackEntry& e : entries)
             {
+                if (m_sentEpcs.contains(e.code)) inFlightEpcs.insert(e.code);
                 clearEpcInFlight(e.code);
                 if (m_rescanResendTimes.contains(e.code))
                     rescanEpcs.insert(e.code);
@@ -408,7 +432,7 @@ HttpServer::HttpServer(QObject* parent)
             QSet<QString> landedEpcs;
             if (m_pPlcRecvPool)
             {
-                m_pPlcRecvPool->commitNoWait([this, entries, rescanEpcs, landedEpcs]() mutable {
+                m_pPlcRecvPool->commitNoWait([this, entries, rescanEpcs, inFlightEpcs, landedEpcs]() mutable {
                     AppConfig& cfg = ConfigManager::instance()->config();
                     int waveStatus = m_pWaveMgr->status();
 
@@ -448,34 +472,68 @@ HttpServer::HttpServer(QObject* parent)
                                 QString excBox = currentBoxOfGrid(normalizeGridKey(e.grid));
                                 if (excBox.isEmpty()) excBox = QString::fromUtf8("未绑定容器");
                                 const int excPlanQty = planQtyOfGrid(skuExc, normalizeGridKey(e.grid));
-                                HTTP_LOG_WARN("[异常口] 超计划件已真实落入异常口 epc=%s sku=%s grid=%s 容器=%s "
-                                              "status=%d 该SKU在本口计划=%d件 —— 不计已分拣、不写箱内明细、不进 H7 报文，请人工清出",
+
+                                // ── ★ 2026-09-20 现场问题④：区分"谁把这件弄进异常口的" ──
+                                //   ① 软件主动改投（发送侧已打标）→ 原因取自打标（本次新增：格口未绑定容器）；
+                                //   ② 未打标但本件在途且"本要发往的格口 ≠ 异常口"→ PLC 自己改投/偏投
+                                //      （典型：锁格瞬间 PLC 把在途件强制送 66，客户 2026-09-20 确认）；
+                                //   ③ 其余 → 既有"超计划"口径（人工多投/同时两件在线）。
+                                //   三者都要在日志与异常表里可区分，现场才知道该等绑定、还是该核对人工多投。
+                                const QString tagReason = takeExcRoute(e.code);
+                                int lastSent = 0;
+                                {
+                                    std::lock_guard<std::mutex> lkSent(m_lastSentGridMutex);
+                                    lastSent = m_lastSentGrid.value(e.code, 0);
+                                }
+                                const bool bPlcRedirect = tagReason.isEmpty() && lastSent > 0 &&
+                                                          normalizeGridKey(QString::number(lastSent)) != normalizeGridKey(e.grid);
+                                QString excType, excCauseDesc;
+                                if (!tagReason.isEmpty())
+                                {
+                                    excType      = QString::fromUtf8("改投异常口(%1)").arg(tagReason);
+                                    excCauseDesc = QString::fromUtf8("软件改投（原因：%1）").arg(tagReason);
+                                }
+                                else if (bPlcRedirect)
+                                {
+                                    excType      = QString::fromUtf8("异常口件(PLC改投/偏投)");
+                                    excCauseDesc = QString::fromUtf8("PLC改投/偏投（本件本要发往格口%1）")
+                                                       .arg(PlanAllocTable::gridKeyOf((qint16)lastSent));
+                                }
+                                else
+                                {
+                                    excType      = QString::fromUtf8("超计划入异常口");
+                                    excCauseDesc = QString::fromUtf8("超计划件按策略改投异常口");
+                                }
+
+                                HTTP_LOG_WARN("[异常口] %s已真实落入异常口 epc=%s sku=%s grid=%s 容器=%s "
+                                              "status=%d 该SKU在本口计划=%d件 本件下发目标=%d —— 不计已分拣、不写箱内明细、不进 H7 报文，请人工清出",
+                                    excCauseDesc.toLocal8Bit().data(),
                                     e.code.toLocal8Bit().data(), skuExc.toLocal8Bit().data(),
-                                    e.grid.toLocal8Bit().data(), excBox.toLocal8Bit().data(), e.status, excPlanQty);
+                                    e.grid.toLocal8Bit().data(), excBox.toLocal8Bit().data(), e.status, excPlanQty, lastSent);
                                 emit logMessage(QString::fromUtf8(
-                                    "[异常口] 超计划件已入异常口：EPC %1（SKU %2）格口%3 容器%4 —— 请现场清出")
-                                    .arg(e.code).arg(skuExc).arg(normalizeGridKey(e.grid)).arg(excBox), true);
+                                    "[异常口] %1已入异常口：EPC %2（SKU %3）格口%4 容器%5 —— 请现场清出")
+                                    .arg(excCauseDesc).arg(e.code).arg(skuExc).arg(normalizeGridKey(e.grid)).arg(excBox), true);
                                 if (m_pWaveMgr)
                                     m_pWaveMgr->markException(e.code);
                                 if (m_pSortingDb && m_pSortingDb->isOpen())
                                 {
                                     ExceptionRecord exExc;
-                                    exExc.type      = QString::fromUtf8("超计划入异常口");
+                                    exExc.type      = excType;
                                     exExc.orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
                                     exExc.epc       = e.code;
                                     exExc.sku       = skuExc;
                                     exExc.reason    = QString::fromUtf8(
-                                        "超计划件按策略改投异常口%1并已落格（容器%2，不计已分拣、不上传WMS，请人工清出）")
-                                                          .arg(normalizeGridKey(e.grid)).arg(excBox);
+                                        "%1并已落格（容器%2，不计已分拣、不写箱内明细、不上传WMS，请人工清出）")
+                                                          .arg(excCauseDesc).arg(excBox);
                                     exExc.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                                     m_pSortingDb->insertException(exExc);
                                 }
                                 // 计时/在途复位（与其它异常分支一致，便于现场重新投放）
                                 // ★ 2026-09-16 改为 resetCycle（作废本轮，下次推送按新件起算）
                                 //   + 打"异常终态"根因标记（供后续超时守卫沿用根因）
-                                markEpcTerminalException(e.code, QString::fromUtf8("超计划入异常口"));
+                                markEpcTerminalException(e.code, excType);
                                 if (m_pEpcCache) m_pEpcCache->resetCycle(e.code);
-                                landedEpcs.insert(e.code);   // ★ 超计划件也已落格（异常口）→ 一并归零在途/重发计数
+                                landedEpcs.insert(e.code);   // ★ 异常口件也已落格 → 一并归零在途/重发计数
                                 continue;   // ★ 不再进入正常落格处理
                             }
                         }
@@ -566,11 +624,35 @@ HttpServer::HttpServer(QObject* parent)
                             std::lock_guard<std::mutex> lock(m_containerMutex);
                             if (!m_containerBindings.contains(e.grid))
                             {
-                                // 格口无绑定
-                                // ★ 2026-09-09 口径调整（客户确认"以实时记录PLC分拣数量为准"）：
-                                //   PLC 报成功即计"已分拣"；本条仍写异常表留痕（异常面板只计 PLC 报失败的 2/3）
-                                HTTP_LOG_WARN("PLC反馈格口无绑定 code=%s grid=%s 计为已分拣(PLC报成功)，异常表留痕",
-                                    e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data());
+                                // ──── ★ 2026-09-20 现场问题④：兜底窗口（指令发出后、落地前绑定被拿走）────
+                                //   改造后"下发前置条件 = 已解锁且已绑定容器"，指令不会再发给无容器格口，
+                                //   因此本分支只剩兜底场景：指令发出时格口还是好的，件在途中格口失去绑定
+                                //   （唯一高频来源是人工点「清空格口绑定」，已加二次确认 + 在途件提示）。
+                                //   口径（客户确认 2026-09-20：**暂按现状处理，后续再定**）：
+                                //     · 落格照实（PLC 已把件带过去，软件无法拦）；
+                                //     · 仍计已分拣（既有"以实时 PLC 分拣数量为准"口径，本次不动）；
+                                //     · 只写 no_bind 留痕；**不写落格明细** ⇒ 永不进任何容器的 H7；
+                                //     · **不消耗额度**：认领不提交，≤allocClaimTimeoutMs 由
+                                //       sweepPlanAllocClaims 归还（额度随认领超时回滚，不占计划）；
+                                //     · 面板「处理/异常口」不 +1（本分支不调 markException，与 66 号件区分）。
+                                //   本次新增：UI 红色告警 + 异常原因写明上述口径 + 在途标记（现场可见、可对账）。
+                                const bool bWasInFlight = inFlightEpcs.contains(e.code);
+                                const QString skuNoBind = m_pEpcCache ? m_pEpcCache->get(e.code) : QString();
+                                HTTP_LOG_WARN("PLC反馈格口无绑定 code=%s grid=%s sku=%s 在途件=%d "
+                                              "计为已分拣(PLC报成功)，异常表留痕；该件未进任何容器、不进任何 H7、不消耗额度",
+                                    e.code.toLocal8Bit().data(), e.grid.toLocal8Bit().data(),
+                                    skuNoBind.toLocal8Bit().data(), bWasInFlight ? 1 : 0);
+                                emit logMessage(QString::fromUtf8(
+                                    "[格口未绑定] EPC %1（SKU %2）落格时格口%3 无容器绑定%4 —— 该件已落格但**未进任何容器**："
+                                    "不计入任何容器的 H7 报文、不消耗计划额度（认领将超时归还）；"
+                                    "请人工清出/核对，并确认该格口是否需要重新绑定容器")
+                                    .arg(e.code)
+                                    .arg(skuNoBind.isEmpty() ? QString::fromUtf8("未知") : skuNoBind)
+                                    .arg(e.grid)
+                                    .arg(bWasInFlight
+                                             ? QString::fromUtf8("（在途件：下发时格口可用，落格前失去绑定）")
+                                             : QString::fromUtf8("（非在途件：下发时该格口即未绑定，请检查 Exe 是否为本次改造后版本）")),
+                                    true);
                                 if (m_pWaveMgr)
                                 {
                                     // ★ 2026-09-13 异常及时清理（同"无匹配"分支：先判定再计件）
@@ -592,8 +674,14 @@ HttpServer::HttpServer(QObject* parent)
                                     exRec.type      = "no_bind";
                                     exRec.orderCode = m_pWaveMgr->orderCode();
                                     exRec.epc       = e.code;
-                                    exRec.sku       = "";
-                                    exRec.reason    = QString("格口%1：格口未绑定容器（PLC报成功，计已分拣，仅留痕）").arg(e.grid);
+                                    exRec.sku       = skuNoBind;
+                                    exRec.reason    = QString::fromUtf8(
+                                        "格口%1：落格时无活跃容器绑定（%2）；PLC报成功、计已分拣、仅留痕；"
+                                        "该件不属于任何容器 ⇒ 不进任何 H7 报文；计划额度未消耗（认领超时归还）；请人工清出/核对")
+                                                          .arg(e.grid)
+                                                          .arg(bWasInFlight
+                                                                   ? QString::fromUtf8("在途件，下发时格口可用")
+                                                                   : QString::fromUtf8("非在途件（下发时即无绑定）"));
                                     exRec.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
                                     m_pSortingDb->insertException(exRec);
                                 }
@@ -2610,6 +2698,16 @@ PlcPlanAllocInfo HttpServer::planAllocOf(const QString& epc, const QString& skuI
     if (sku.isEmpty()) return info;
     if (!m_allocValid.load() || !ConfigManager::instance()->config().allocEnabled)
         return info;   // 未启用/未编译 → valid=false，调用方走改造前老逻辑（不阻塞投线）
+
+    // ── ★ 2026-09-20 现场问题④：本次"不可分配"格口掩码（已解锁且未绑定容器）──
+    //   ★★ 必须在 m_allocMutex **之外**构建（allocBlockedMask 内部要取 m_containerMutex 与
+    //      S7 锁格状态锁）—— 否则形成 alloc→container 锁嵌套，加锁顺序与其它路径不一致（死锁风险）。
+    //   ★ 只有 bClaim=true 才需要（只读预查不认领，无需掩码）；开关关闭时掩码全 false。
+    //   ★ 掩码只影响"认领哪一个格口"，**不动任何额度**：被跳过的格口额度原样保留，
+    //     WMS 重发 H6 绑定容器后自动恢复分配（这就是现场要的"不消耗额度"）。
+    PlanAllocTable::GridMask blocked{};
+    if (bClaim) blocked = allocBlockedMask();
+
     // 2) 分配表：计划/类型/已落/在途 + ★ 在同一次加锁内完成额度认领
     //    ★ 必须"判定 + 改数"在同一把锁内：这是修复"同时两件在线 → 两件都判未满额
     //      → 都发同一格口 → 箱内实落超计划"的关键（改造前是两次独立读改）。
@@ -2640,9 +2738,12 @@ PlcPlanAllocInfo HttpServer::planAllocOf(const QString& epc, const QString& skuI
         // ── 认领额度 ──
         //   ① 该件此前已正确落入过原格口（件被拿出重投）→ 放行且不占用新额度，
         //      保持"重扫重投仍回原格口"的既有口径（见 docs 用例 9/10）。
+        //      ★ 但该格口若已解锁且未绑定容器 → 不再回它（件会落进无容器格口），
+        //        继续走 ② 认领别的格口 / 改投异常口。
         for (qint16 g : grids)
         {
             const QString gk = PlanAllocTable::gridKeyOf(g);
+            if (g >= 0 && g < (int)blocked.size() && blocked[(size_t)g]) continue;   // ★ 不可分配 → 跳过
             if (m_alloc.epcLandedIn(sku, gk, epc))
             {
                 info.claimOk      = true;
@@ -2655,9 +2756,10 @@ PlcPlanAllocInfo HttpServer::planAllocOf(const QString& epc, const QString& skuI
         }
 
         //   ② 正常认领：按计划格口顺序取首个仍有额度的格口（额度 = 计划−已落−在途）
+        //      ★ 掩码内（已解锁且未绑定容器）的格口直接跳过，额度保留
         qint16 claimGrid = -1, planIdx = -1;
         quint64 claimId = 0;
-        if (m_alloc.claim(sku, &claimGrid, &claimId, &planIdx))
+        if (m_alloc.claim(sku, &claimGrid, &claimId, &planIdx, &blocked))
         {
             info.claimOk      = true;
             info.claimGrid    = claimGrid;
@@ -2906,6 +3008,10 @@ bool HttpServer::buildPlanAllocTable(const QString& orderCode, int orderQty, int
 }
 
 // ──── 认领（主线程）────
+//   ★ 2026-09-20 现场问题④：本包装**没有调用点**（历史遗留），保留仅为兼容；
+//     真正的认领入口是 planAllocOf()（它会在分配表锁之外构建"不可分配格口掩码"并传入，
+//     保证已解锁且未绑定容器的格口永不被认领、额度原样保留）。
+//     ★ 后续若有人启用本函数：必须同样先算掩码再传入，否则会绕过现场问题④的整改口径。
 bool HttpServer::claimAlloc(const QString& sku, qint16* claimGrid, quint64* claimId, qint16* planIdx)
 {
     std::lock_guard<std::mutex> lock(m_allocMutex);
@@ -2991,6 +3097,21 @@ void HttpServer::drainAllocPendingRelease()
 // ──── 缺口搬迁（计划格口不可用 → 未完成件转同 SKU 其它可用计划格口）────
 int HttpServer::moveAllocGap(const QString& sku, qint16 fromGrid, qint16 toGrid)
 {
+    // ★ 2026-09-20 现场问题④：承接格口必须"可下发"才允许搬迁 ——
+    //   搬迁不可逆（planQty 直接从源格口扣走），把额度搬到一个落不下去的格口等于白丢计划件：
+    //     · 锁格 → 拒绝（原有语义：锁格格口不作承接）；
+    //     · 未绑定容器 / 满箱未重绑(禁用) → 拒绝（本次口径：只有可下发格口能承接）。
+    //   未绑定只是**临时**状态（等 WMS 重发 H6），额度留在原格口即可，绑定后自动恢复分配。
+    //   ★ 判据在锁外求值（isGridDispatchableHere 内部取绑定表/锁格状态锁），避免锁嵌套。
+    if (m_pPlcMgr && (m_pPlcMgr->isGridLocked((int)toGrid) || !isGridDispatchableHere((int)toGrid)))
+    {
+        HTTP_LOG_WARN("[计划搬迁] 拒绝搬迁：承接格口%s 当前不可下发（锁格/未绑定容器/满箱未重绑）"
+                      "—— 额度保留在格口%s，恢复可用后自动继续分配",
+            PlanAllocTable::gridKeyOf(toGrid).toLocal8Bit().data(),
+            PlanAllocTable::gridKeyOf(fromGrid).toLocal8Bit().data());
+        return 0;
+    }
+
     std::lock_guard<std::mutex> lock(m_allocMutex);
     const int moved = m_alloc.moveGap(sku, fromGrid, toGrid);
     if (moved > 0)
@@ -4305,12 +4426,25 @@ void HttpServer::precheckPlanGridBindings(const QString& orderCode)
 
     if (unbound > 0)
     {
-        HTTP_LOG_WARN("计划格口预检 未绑定容器的计划格口 %d 个：%s%s —— 件落到这些格口无法进箱，请先下发 H6 绑定",
+        // ★ 2026-09-20 现场问题④：未绑定容器的格口不再"照发落件"，而是**下发前就被拦下**
+        //   （改投异常口、不计已分拣、不消耗计划额度）。因此这里的告警必须写明后果与动作，
+        //   否则现场会以为"照旧能落、只是不进箱"。
+        HTTP_LOG_WARN("计划格口预检 未绑定容器的计划格口 %d 个：%s%s —— 件不会被下发到这些格口（改投异常口），请先下发 H6 绑定",
             unbound, unboundDesc.join(" ") .toLocal8Bit().data(),
             unbound > 20 ? " …（其余见绑定表）" : "");
         emit logMessage(QString::fromUtf8(
-            "[计划预检] 有 %1 个计划格口尚未绑定容器：%2 —— 请先让 WMS 下发容器绑定，否则这些计划件无处可落")
-            .arg(unbound).arg(unboundDesc.join(" ")).arg(unbound > 20 ? QString::fromUtf8(" …") : QString()), true);
+            "[计划预检] 有 %1 个计划格口尚未绑定容器：%2 —— 这些格口的计划件**不再落格**（判定期即拦下并改投异常口%3），"
+            "请先让 WMS 下发容器绑定（H6），绑定后额度仍在、自动恢复分配")
+            .arg(unbound).arg(unboundDesc.join(" "))
+            .arg(ConfigManager::instance()->config().exceptionGrid), true);
+    }
+    if (disabled > 0)
+    {
+        HTTP_LOG_WARN("计划格口预检 已禁用(满箱未重绑)的计划格口 %d 个：%s —— 该格口的计划件会改分到同 SKU 的其它计划格口",
+            disabled, disabledDesc.join(" ").toLocal8Bit().data());
+        emit logMessage(QString::fromUtf8(
+            "[计划预检] 有 %1 个计划格口处于满箱未重绑(禁用)状态：%2 —— 其计划件将改分到同 SKU 的其它计划格口")
+            .arg(disabled).arg(disabledDesc.join(" ")), true);
     }
     if (disabled > 0)
     {
@@ -4327,12 +4461,16 @@ void HttpServer::precheckPlanGridBindings(const QString& orderCode)
     //   ② 已禁用计划格口按 SKU 列出件数缺口（并确认会转给谁）
     //   ③ 无可用计划格口的 SKU 清单（这些 SKU 的件将全部改投异常口）
     //   只告警不阻塞（除非 allocRequirePlanValid=true —— 由调用方决定是否拒绝开工）
+    //   ★ 2026-09-20 现场问题④：③ 的"可用"判据与发送侧口径对齐 ——
+    //     增加"已解锁且未绑定容器"（这次整改后同样下发不出去）。
+    //     ★ 掩码必须在 m_allocMutex **之外**先算好（allocBlockedMask 内部要取绑定表锁）。
     // ════════════════════════════════════════════════════════════════════════
     if (m_allocValid.load())
     {
         PlanStats st;
         QStringList noneAvailSkus;
         int noneAvailCnt = 0;
+        const PlanAllocTable::GridMask blockedMask = allocBlockedMask();   // ★ 锁外快照
         {
             std::lock_guard<std::mutex> lk(m_allocMutex);
             st = m_alloc.stats();
@@ -4347,7 +4485,11 @@ void HttpServer::precheckPlanGridBindings(const QString& orderCode)
                     bool anyAvail = false;
                     for (qint16 g : gs)
                     {
-                        if (!m_pPlcMgr->isGridDisabled(g) && !m_pPlcMgr->isGridLocked(g)) { anyAvail = true; break; }
+                        if (m_pPlcMgr->isGridDisabled(g) || m_pPlcMgr->isGridLocked(g)) continue;
+                        // ★ 已解锁且未绑定容器 → 同样不可下发（本次整改口径）
+                        if (g >= 0 && g < (int)blockedMask.size() && blockedMask[(size_t)g]) continue;
+                        anyAvail = true;
+                        break;
                     }
                     if (!anyAvail)
                     {
@@ -4373,8 +4515,8 @@ void HttpServer::precheckPlanGridBindings(const QString& orderCode)
             HTTP_LOG_WARN("计划格口预检 无可用计划格口的 SKU %d 个：%s —— 这些 SKU 的件将全部改投异常口",
                 noneAvailCnt, noneAvailSkus.join(" ").toLocal8Bit().data());
             emit logMessage(QString::fromUtf8(
-                "[计划预检] 有 %1 个产品的计划格口全部不可用（禁用/锁格）：%2 —— 这些产品的件将全部改投异常口%3，"
-                "请先处理格口（重绑/解锁）")
+                "[计划预检] 有 %1 个产品的计划格口全部不可用（禁用/锁格/未绑定容器）：%2 —— 这些产品的件将全部改投异常口%3，"
+                "请先处理格口（绑定容器/重绑/解锁）")
                 .arg(noneAvailCnt).arg(noneAvailSkus.join(" "))
                 .arg(ConfigManager::instance()->config().exceptionGrid), true);
         }
@@ -6276,6 +6418,120 @@ QString HttpServer::currentBoxOfGrid(const QString& grid) const
 }
 
 // ============================================================================
+// ★ 2026-09-20 现场问题④（no_bind）：下发前置条件的判据来源与打标
+// ============================================================================
+
+// hasBoundContainer — 某格口当前是否有活跃容器绑定（只查内存绑定表；线程安全）
+//
+//   为什么只认内存绑定表、不做数据库兜底（与 lookupGridBoxCode 的差别）：
+//     DB 里的 active 绑定可能是"已被现场取走的旧箱"（PLC 已解锁、WMS 还没发 H6 的中间态），
+//     若拿它当"已绑定"，就会把件重新导向一个**没有箱子**的格口 —— 正是本次整改要消除的
+//     账实不符来源（现场 034 格口：新容器满箱回传成功、人工复核多出一件）。
+//     内存绑定表由 H6 绑定 / 波次恢复 / 归档清空三条链路维护，是"当前有效绑定"的唯一真相。
+bool HttpServer::hasBoundContainer(int grid) const
+{
+    if (grid < 1 || grid > BINDING_SLOT_COUNT) return false;
+    const QString key = QString("%1").arg(grid, GRID_KEY_PADDING, 10, QChar('0'));
+    std::lock_guard<std::mutex> lock(m_containerMutex);
+    if (!m_containerBindings.value(key).isEmpty()) return true;
+    // 兼容历史/异形 key（如 DB 恢复时的 "34"/"034" 混写）：逐项归一后比对（绑定表 ≤66 项，开销可忽略）
+    for (auto it = m_containerBindings.constBegin(); it != m_containerBindings.constEnd(); ++it)
+    {
+        if (it.value().isEmpty()) continue;
+        bool ok = false;
+        const int g = normalizeGridKey(it.key()).toInt(&ok);
+        if (ok && g == grid) return true;
+    }
+    return false;
+}
+
+// isGridDispatchableHere — 单格口版"是否可下发"（判据唯一来源 = PlcManager::isGridDispatchable）
+//   已禁用(满箱未重绑) → false；锁格 → true（按原有逻辑）；开关关闭 → 只看禁用；
+//   其余（已解锁）→ 必须有容器绑定。
+//   ★ 与 allocBlockedMask() 同源：掩码中 true 的格口 == 本函数返回 false 的格口。
+//   ★ 设备层未就绪（m_pPlcMgr==nullptr）时返回 true（不拦，退回改造前行为）。
+bool HttpServer::isGridDispatchableHere(int grid) const
+{
+    if (!m_pPlcMgr) return true;
+    return m_pPlcMgr->isGridDispatchable(grid);
+}
+
+// allocBlockedMask — 本次"不可认领/不可下发"格口掩码（判据与发送侧完全同源）
+//
+//   ★★ 必须在 m_allocMutex **之外**调用：内部要取 m_containerMutex（绑定表）与
+//      PlcManager 的锁格/禁用状态锁，若在分配表锁内调用会形成 alloc→container 嵌套，
+//      与其它路径的加锁顺序不一致（PlanAllocTable 的线程约定也要求"锁外准备入参"）。
+//
+//   ★ 2026-09-20 口径（现场问题④ + 多格口额度承接）：
+//     **只有"可下发格口"能被认领** —— 即 `!isGridDispatchable(g)`：
+//       · 已解锁且未绑定容器 → 不可认领（本次整改新增）；
+//       · 满箱未重绑(禁用)    → 不可认领（本次同步收紧：禁用格口同样是"不可用"的落点，
+//                               把件认领过去会落进已上报过的满箱/无容器处，制造新的账实不符）；
+//       · 锁格                → 可认领（按原有逻辑，不拦）；
+//       · 开关关闭            → 全 false（等价不传掩码，逐字回退改造前行为）。
+//   ⇒ 多格口 SKU 的效果正是客户 2026-09-20 追加的口径：
+//      **优先用"其它可用计划格口"的剩余额度承接**；若其它格口都没有可用额度（只剩不可用格口上的额度），
+//      认领会失败，由 PlcManager 按根因改投异常口（额度仍原样留在原格口，绑定/换箱后自动恢复分配）。
+PlanAllocTable::GridMask HttpServer::allocBlockedMask() const
+{
+    PlanAllocTable::GridMask blocked{};   // 值初始化 = 全 false = 全部可认领
+    if (!m_pPlcMgr) return blocked;       // 设备层未就绪 → 不拦（退回改造前行为）
+
+    for (int g = 1; g <= BINDING_SLOT_COUNT; ++g)
+    {
+        if (!m_pPlcMgr->isGridDispatchable(g)) blocked[(size_t)g] = true;
+    }
+    return blocked;
+}
+
+// noteExcRoute — 改投异常口的"原因打标"（发送侧，主线程）
+//   ★ 发送侧只打标 + UI 告警，**不写数据库留痕**：留痕统一在件真正落入异常口时写
+//     （一次事件一条记录），避免"指令发出但发送失败/未落格"时留下误导性的异常记录。
+void HttpServer::noteExcRoute(const QString& epc, const QString& reason)
+{
+    if (epc.isEmpty()) return;
+    {
+        std::lock_guard<std::mutex> lk(m_excRouteMutex);
+        m_excRouteMark.insert(epc, qMakePair(reason, QDateTime::currentMSecsSinceEpoch()));
+    }
+    const QString sku = getSkuByEpc(epc);
+    HTTP_LOG_WARN("[不可落格] epc=%s sku=%s 原因=%s → 改投异常口%s（本件不落计划格口、不计已分拣、不消耗计划额度，请人工清出）",
+        epc.toLocal8Bit().data(), sku.toLocal8Bit().data(), reason.toLocal8Bit().data(),
+        ConfigManager::instance()->config().exceptionGrid.toLocal8Bit().data());
+    emit logMessage(QString::fromUtf8(
+        "[不可落格] EPC %1（SKU %2）%3 → 已改投异常口%4（不计已分拣、不消耗计划额度；额度保留在原格口，"
+        "绑定容器后自动恢复分配，请到异常口人工清出）")
+        .arg(epc).arg(sku.isEmpty() ? QString::fromUtf8("未知") : sku).arg(reason)
+        .arg(ConfigManager::instance()->config().exceptionGrid), true);
+}
+
+// clearExcRoute — 清除旧标（每轮投递入口调用）
+//   为什么每轮都要清：一件货可能被反复投放（从异常口取出重投），若上一轮的打标残留，
+//   会把后续**真正因为超计划**落入 66 的同一件误标成"未绑定容器"（原因张冠李戴）。
+void HttpServer::clearExcRoute(const QString& epc)
+{
+    if (epc.isEmpty()) return;
+    std::lock_guard<std::mutex> lk(m_excRouteMutex);
+    m_excRouteMark.remove(epc);
+}
+
+// takeExcRoute — 取用并消费打标（落格线程池）
+//   返回空 = 无标（该件落入 66 属超计划 / PLC 改投，按既有口径处理）；
+//   命中但超过保鲜期同样视为无标（防残留）。
+QString HttpServer::takeExcRoute(const QString& epc)
+{
+    if (epc.isEmpty()) return QString();
+    std::lock_guard<std::mutex> lk(m_excRouteMutex);
+    auto it = m_excRouteMark.find(epc);
+    if (it == m_excRouteMark.end()) return QString();
+    const QPair<QString, qint64> v = it.value();
+    m_excRouteMark.erase(it);
+    const qint64 ageMs = QDateTime::currentMSecsSinceEpoch() - v.second;
+    if (ageMs > EPC_TERMINAL_EXCEPTION_KEEP_MS) return QString();   // 保鲜期外 → 视为无标
+    return v.first;
+}
+
+// ============================================================================
 // sendFullboxForGrid — 单格口 H7 满箱补发（「完结前兜底补发」与「手动满箱切换」共用）
 // 不动波次状态机、不禁用格口；无容器号/缺SKU/Outbox失败 时返回 false（记录保留内存）
 // ============================================================================
@@ -6628,6 +6884,18 @@ QString HttpServer::containerForGrid(const QString& grid) const
 bool HttpServer::isPlcSendInFlight(const QString& epc) const
 {
     return isEpcInFlightReadOnly(epc);
+}
+
+// ★ 2026-09-20 现场问题④：当前在途件数（只读，不改任何状态）
+//   口径与 isEpcInFlightReadOnly 完全一致（含 plcInFlightTimeoutMs 超时判定）——
+//   超时的件不再算"在途"，因此该数与实时面板的"待落格"口径一致。
+//   用途：MainWindow「清空格口绑定」二次确认（分拣中清空会让这些件落到无容器格口）。
+int HttpServer::inFlightCount() const
+{
+    int n = 0;
+    for (const QString& epc : m_sentEpcs)
+        if (isEpcInFlightReadOnly(epc)) ++n;
+    return n;
 }
 
 int HttpServer::rescanResendTimes(const QString& epc) const
@@ -8407,6 +8675,12 @@ bool HttpServer::trySendToPlcForEpcInternal(const QString& epc, bool bReplayed)
         return false;
     }
 
+    // ★ 2026-09-20 现场问题④：本轮投递开始 → 先清掉上一轮的"改投异常口原因"打标。
+    //   为什么必须清：同一件货可能被反复投放（从异常口取出重投），若旧标残留，
+    //   会把后续**真正因超计划**落入 66 的同一件误标成"未绑定容器"（原因张冠李戴）。
+    //   打标只由本轮改投分支写入，落下 66 时取用并消费（一次事件一条异常记录）。
+    clearExcRoute(epc);
+
     // ════════════════════════════════════════════════════════════════════════
     // ★★ 2026-09-14 波次隔离判定（**必须放在所有其它闸门之前**）★★
     //
@@ -8710,6 +8984,9 @@ bool HttpServer::trySendToPlcForEpcInternal(const QString& epc, bool bReplayed)
     //   · rescanResendMaxTimes = 0（默认）→ **不限制重投次数**，只要重新上料就重发原格口；
     //     >0 时才启用上限保护（超限拦截 + 异常表"重扫超限"留痕）
     //   · rescanResendCooldownMs = 0（默认）→ 不做冷却拦截；>0 时恢复防连读限频
+    // ★ 2026-09-20 现场问题④：把"是否重投 / 计数基准"提到块外 —— 计数器改为**真正下发成功后才 +1**
+    bool bRescanSend     = false;
+    int  rescanTimesBefore = 0;
     {
         const AppConfig& cfg = ConfigManager::instance()->config();
         const qint64 nowMs  = QDateTime::currentMSecsSinceEpoch();
@@ -8754,12 +9031,23 @@ bool HttpServer::trySendToPlcForEpcInternal(const QString& epc, bool bReplayed)
                 return false;
             }
 
-            m_rescanResendTimes[epc] = times + 1;
+            // ★ 2026-09-20 现场问题④：计数器只在**真正下发成功**后 +1（见下方 sendOk 分支）。
+            //   为什么移位：原实现在"下发动作之前"就 +1，于是"格口未绑定/满箱未重绑 → 根本没发出指令"
+            //   的反复重投也会吃掉次数配额 —— 现场把这件货拿出异常口再投第 4 次时会被判"重扫超限"
+            //   而彻底锁死（即使格口随后已绑定容器）。下发失败不是这件货的问题，不应计入重投上限。
+            //   rescanResendMaxTimes 的原有语义（防同一件反复真实下发）完全保留。
+            bRescanSend      = true;
+            rescanTimesBefore = times;
+            const QString rescanPrior = terminalExceptionType(epc);   // 前序根因（发送成功后才被清除）
             const QString rescanLog = maxTimes > 0
-                ? QString::fromUtf8("[重扫] EPC=%1 已落格→按原格口映射重新下发 grid=%2（本波次第%3次，上限%4）")
-                      .arg(epc).arg(entry.gridNum).arg(times + 1).arg(maxTimes)
-                : QString::fromUtf8("[重扫] EPC=%1 已落格→按原格口映射重新下发 grid=%2（本波次第%3次，不限次）")
-                      .arg(epc).arg(entry.gridNum).arg(times + 1);
+                ? QString::fromUtf8("[重扫] EPC=%1 已落格/已入异常口→本次为第%2次重投尝试（上限%3）grid=%4%5")
+                      .arg(epc).arg(times + 1).arg(maxTimes).arg(entry.gridNum)
+                      .arg(rescanPrior.isEmpty() ? QString()
+                                                 : QString::fromUtf8("（前序：%1 → 本次为异常口取回/重投，按新件重新判定格口与额度）").arg(rescanPrior))
+                : QString::fromUtf8("[重扫] EPC=%1 已落格/已入异常口→本次为第%2次重投尝试（不限次）grid=%3%4")
+                      .arg(epc).arg(times + 1).arg(entry.gridNum)
+                      .arg(rescanPrior.isEmpty() ? QString()
+                                                 : QString::fromUtf8("（前序：%1 → 本次为异常口取回/重投，按新件重新判定格口与额度）").arg(rescanPrior));
             HTTP_LOG_INFO("%s", rescanLog.toLocal8Bit().data());
             emit logMessage(rescanLog, false);
         }
@@ -8770,18 +9058,23 @@ bool HttpServer::trySendToPlcForEpcInternal(const QString& epc, bool bReplayed)
     //   发送结果（成功/失败）由 sendOk 独立判断，与计时互不干扰
     bool sendOk = m_pPlcMgr->sendBatchCodesWithEpcCache(codeGridMap);
     if (m_pEpcCache) m_pEpcCache->markSent(epc);   // ★ 记录 PLC 发送指令时间（计时终点，无论成败）
+    // ★ 2026-09-20 现场问题④：重投次数只在"真正下发成功"后计数（见上方重扫重投保护的说明）
+    if (sendOk && bRescanSend)
+        m_rescanResendTimes[epc] = rescanTimesBefore + 1;
     qint64 sendElapsed = m_pEpcCache ? m_pEpcCache->getHandleSendMs(epc) : -1;   // 开始处理→发送 耗时
     // ★ 2026-09-13 性能核验：RFID推送→PLC下发 时延采样（现场 1s 硬窗口的关键指标）
     if (sendElapsed >= 0) perfSampleRfidToPlc((int)sendElapsed);
     if (!sendOk)
     {
-        // ★ 发送失败：可能原因 ① 映射内格口全部"满箱未重绑(禁用)"→ 按客户口径不发；② PLC 未连接
-        //   不标记为已发送，并写异常表留痕（便于现场核对"这件为什么没发指令"）
-        HTTP_LOG_WARN("PLC发送未成功 epc=%s sku=%s grid=%s carNum=%s seq=%s elapsed=%lldms (格口满箱未重绑/物理锁格/PLC未连接，不标记已发送)",
+        // ★ 发送失败：可能原因 ① 无可下发格口（未绑定容器/满箱未重绑(禁用)）→ 按客户口径不发；
+        //   ② PLC 未连接。不标记为已发送，并写异常表留痕（便于现场核对"这件为什么没发指令"）
+        HTTP_LOG_WARN("PLC发送未成功 epc=%s sku=%s grid=%s carNum=%s seq=%s elapsed=%lldms "
+                      "(未绑定容器/格口满箱未重绑/物理锁格/PLC未连接，不标记已发送)",
             epc.toLocal8Bit().data(), sku.toLocal8Bit().data(),
             entry.gridNum.toLocal8Bit().data(), carNum.toLocal8Bit().data(),
             seq.toLocal8Bit().data(), sendElapsed);
-        emit logMessage(QString("[格口] 无可用格口，未发指令 epc=%1 sku=%2 映射=[%3] 小车%4 seq=%5（等到 WMS 重绑(H6)或人工处理）")
+        emit logMessage(QString("[格口] 无可用格口，未发指令 epc=%1 sku=%2 映射=[%3] 小车%4 seq=%5"
+                                "（未绑定容器/满箱未重绑；等到 WMS 重发H6绑定或人工处理）")
             .arg(epc).arg(sku).arg(entry.gridNum).arg(carNum).arg(seq), true);
 
         // ★ 异常留痕（type=无可用格口）：现场可在"分拣记录查询"看到原因
@@ -8792,7 +9085,8 @@ bool HttpServer::trySendToPlcForEpcInternal(const QString& epc, bool bReplayed)
             ex.orderCode = m_pWaveMgr ? m_pWaveMgr->orderCode() : QString();
             ex.epc       = epc;
             ex.sku       = sku;
-            ex.reason    = QString::fromUtf8("映射=[%1] 内格口满箱未重绑(禁用)或物理锁格，未发送PLC指令；等待WMS重发H6绑定或人工处理")
+            ex.reason    = QString::fromUtf8("映射=[%1] 内格口未绑定容器/满箱未重绑(禁用)/物理锁格，未发送PLC指令；"
+                                             "等待WMS重发H6绑定容器或人工处理（本件不计已分拣、不消耗额度）")
                                .arg(entry.gridNum);
             ex.time      = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
             m_pSortingDb->insertException(ex);

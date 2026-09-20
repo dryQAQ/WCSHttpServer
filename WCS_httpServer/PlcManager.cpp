@@ -447,11 +447,21 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
         //      若映射内【全部】格口都处于该状态 → 不发指令（记日志/异常，等重绑或人工处理），
         //      避免把货投到已满箱、无可用容器的格口（含单格口映射场景）
         //   ② 在可用格口内按需求5选格：无锁格→首个匹配；部分锁格→首个未锁格；全部锁格→首个匹配
+        //   ★ 2026-09-20 现场问题④（no_bind）新增前置条件：
+        //      · 已解锁 且 未绑定容器 → **不允许下发到该格口**（改投异常口；不计已分拣、
+        //        不消耗计划额度）—— 否则件落进无容器格口，无法计入任何容器的 H7，
+        //        换箱后新容器"满箱回传成功、人工复核多出一件"（现场 034 格口案例）。
+        //      · 锁格 → **完全按原有逻辑处理**（本次不新增判定）；
+        //      · 满箱未重绑(禁用) → 原有逻辑（不下发）。
+        //      判据集中在 isGridDispatchable()，开关 sortingRequireBoundGrid 可逐字回退。
         QString selReason;
         const int mapCount = (int)vecGrid.size();
         // ★ 2026-09-14 计划分配表：本次下发的认领信息（发送失败时按 EPC 释放）
         QString allocClaimEpc;     // 已认领的 EPC（= code）
         bool    allocClaimHeld = false;
+        // ★ 2026-09-20 现场问题④：本件最终是否放弃下发
+        //   （不可落格：已解锁且未绑定容器，且异常口当前也不可下发）
+        bool    bSkipSend = false;
         {
             // ── 候选集 = 映射串 ∪ 分配表内该 SKU 的计划格口 ──
             //   ★ 为什么取并集：改造前"候选"来自映射串、而"计划"来自计划表，两套真相；
@@ -487,15 +497,53 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                 std::sort(cand.begin(), cand.end());
             }
 
+            // ★ 2026-09-20 现场问题④：候选过滤加上"已解锁且已绑定容器"这一前置条件
+            //   （判据集中在 isGridDispatchable：禁用→不发；锁格→按原有逻辑照发；
+            //     已解锁且未绑定容器→本次新增，不发）
+            int nDisabled = 0;        // 满箱未重绑(禁用) —— 原有判据
+            int nUnboundBlocked = 0;  // 已解锁且未绑定容器 —— 本次新增判据
             for (int g : cand)
-                if (!isGridDisabled(g)) avail.push_back(g);
+            {
+                if (isGridDisabled(g)) { ++nDisabled; continue; }        // 原有：禁用不发
+                if (isGridLocked(g))   { avail.push_back(g); continue; } // ★ 锁格：按原有逻辑照发
+                if (!isGridBound(g))   { ++nUnboundBlocked; continue; }  // ★ 新增：已解锁且无容器 → 不发
+                avail.push_back(g);
+            }
+
+            bool bPlanDecided = false;
+            // ★ 是否已正式认领额度（bClaim=true 只允许发生一次；见上方"只读预查"说明）
+            bool bClaimed = false;
 
             if (avail.empty())
             {
-                PLC_LOG_WARN("sendBatchCodesWithEpcCache: 映射内全部格口满箱未重绑(禁用) code=%s grids=%s —— 不发指令，等待WMS重发H6或人工处理",
-                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
-                failCount++;
-                continue;   // ★ 决策③：禁用格口不发（单格口映射同样跳过）
+                // ★ 2026-09-20 现场问题④：本次新判据拦下的件 → 改投异常口（异常口自身必须可下发）
+                const int exc = excGridFromConfig();
+                const bool bNewRuleCause = (nUnboundBlocked > 0);
+                if (bNewRuleCause && canDivertToExc(exc))
+                {
+                    vecGrid      = { exc };
+                    bPlanDecided = true;   // ★ 不进入计划认领 ⇒ 不消耗任何额度（额度留在原格口）
+                    selReason = QString::fromUtf8("候选格口全部不可下发(未绑定容器%1个/满箱未重绑%2个) → 改投异常口%3")
+                                    .arg(nUnboundBlocked).arg(nDisabled).arg(exc);
+                    notifyExcRoute(code, QString::fromUtf8("格口未绑定容器"));
+                    PLC_LOG_WARN("选格-未绑定容器 code=%s 映射=[%s] 候选格口全部不可下发"
+                                 "（已解锁且未绑定容器%d个 / 满箱未重绑(禁用)%d个）→ 改投异常口%d"
+                                 "（本件不落该格口、不计已分拣、不消耗计划额度）",
+                        code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                        nUnboundBlocked, nDisabled, exc);
+                }
+                else
+                {
+                    PLC_LOG_WARN("sendBatchCodesWithEpcCache: 映射内无可下发格口（已解锁且未绑定容器%d个 / 满箱未重绑(禁用)%d个"
+                                 "%3） code=%s grids=%s —— 不发指令，等待WMS重发H6或人工处理",
+                        nUnboundBlocked, nDisabled,
+                        bNewRuleCause
+                            ? QString::fromUtf8("，异常口%1当前亦不可下发").arg(exc > 0 ? QString::number(exc) : QString::fromUtf8("(未配置)"))
+                            : QString(),
+                        code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+                    failCount++;
+                    continue;   // ★ 决策③：无可下发格口不发（单格口映射同样跳过）
+                }
             }
 
             // ════════════════════════════════════════════════════════════════════
@@ -508,9 +556,6 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
             //       （这是修复"箱内实落 > 计划"的关键，改造前只查已落数会漏判）。
             //   满额后：配置了异常口(66) → 多余件发往异常口；未配置 → 退回旧「取首个」逻辑。
             // ════════════════════════════════════════════════════════════════════
-            bool bPlanDecided = false;
-            // ★ 是否已正式认领额度（bClaim=true 只允许发生一次；见上方"只读预查"说明）
-            bool bClaimed = false;
             if (bHasPlan)
             {
                 // 类型显示名（每格口类型：0=正常分拣, 1=异常, 2=发货）
@@ -561,6 +606,10 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                                 const int t = qit.key().toInt(&okT);
                                 if (!okT || t <= 0 || t == g) continue;
                                 if (isGridDisabled(t) || isGridLocked(t)) continue;
+                                // ★ 2026-09-20 现场问题④：未绑定容器的格口不作承接 ——
+                                //   否则"未完成额度"又被搬到一个落不下去的格口（搬迁不可逆，额度会白丢）。
+                                //   未绑定是**临时**状态（等 H6），额度留在原格口即可，绑定后自动恢复分配。
+                                if (acfg.sortingRequireBoundGrid && !isGridBound(t)) continue;
 
                                 if (m_moveGapCb && m_moveGapCb(code, (qint16)g, (qint16)t) > 0)
                                 {
@@ -587,10 +636,13 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                     bClaimed = true;
                 }
 
-                if (bHasPlan && pinfo.claimOk)
+                if (bHasPlan && pinfo.claimOk && isGridDispatchable(pinfo.claimGrid))
                 {
                     // ── ② 已认领到额度（回调已在锁内扣减）：直接下发该格口 ──
                     //  pinfo.claimPlanIdx < 0 表示"该件此前已落入过原格口（重投）→ 放行且未新增认领"
+                    //  ★ 2026-09-20：条件里额外校验"认领回来的格口此刻仍可下发"（掩码与判据同源，
+                    //    正常不会不符；此处为防御 —— 若不符则走 ③ 释放该额度并按根因改投异常口，
+                    //    绝不把件导向不可下发格口）。
                     vecGrid = { pinfo.claimGrid };
                     bPlanDecided = true;
                     allocClaimEpc  = code;
@@ -614,20 +666,115 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                 }
                 else if (bHasPlan)
                 {
-                    // ── ③ 各计划格口均已满额（已落+在途 = 计划）→ 超计划件 ──
+                    // ── ③ 按计划认领失败：区分根因 ──
+                    //   ★ 2026-09-20 现场问题④ + 多格口额度承接口径：
+                    //     a) 该 SKU 多格口：**优先用"其它可用计划格口"的剩余额度承接**（② 分支已覆盖 ——
+                    //        掩码跳过不可用格口 ⇒ 认领自动落到其它可用且有额度的计划格口）；
+                    //     b) 其它格口都没有可用额度（额度只剩在"不可下发格口"上）→ 本分支：
+                    //        按根因改投异常口；异常口自身不可下发时不下发指令。
+                    //     根因必须可区分：超计划（人工多投/额度真用尽） vs 额度停在不可下发格口
+                    //     （未绑定容器 / 满箱未重绑(禁用)）。
+                    //  ★ 防御：若 ② 拿到了认领但该格口此刻已不可下发 → 先释放额度，避免白占
+                    if (pinfo.claimOk)
+                    {
+                        if (m_sendResultCb) m_sendResultCb(code, pinfo.claimGrid, false);   // 入待释放队列（主线程归还额度）
+                        PLC_LOG_WARN("选格-认领格口已不可下发 code=%s 映射=[%s] 认领格口=%d（掩码/判据不符）"
+                                     "→ 释放本次额度并按根因重新决策",
+                            code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(), pinfo.claimGrid);
+                        pinfo.claimOk = false;
+                        pinfo.claimPlanIdx = -1;
+                    }
+
+                    QString blockedGridsDesc;    // 形如 "034(未绑定容器,余1件) 048(满箱未重绑,余2件)"
+                    bool bAnyUnbound = false;    // 额度停在"已解锁且未绑定容器"的格口上
+                    bool bAnyDisabled = false;   // 额度停在"满箱未重绑(禁用)"的格口上
+                    {
+                        for (auto pit = pinfo.planQtyPerGrid.constBegin(); pit != pinfo.planQtyPerGrid.constEnd(); ++pit)
+                        {
+                            bool okG = false;
+                            const int g = pit.key().toInt(&okG);
+                            if (!okG || g <= 0) continue;
+                            const int remain = pit.value()
+                                             - pinfo.landedNum.value(pit.key(), 0)
+                                             - pinfo.reservNum.value(pit.key(), 0);
+                            if (remain <= 0) continue;              // 该格口确已满额（不算"额度停住"）
+                            if (isGridDispatchable(g)) continue;    // 该格口可下发（额度应已被认领；防御跳过）
+
+                            const bool bDis = isGridDisabled(g);
+                            const QString why = bDis ? QString::fromUtf8("满箱未重绑")
+                                                     : QString::fromUtf8("未绑定容器");
+                            if (bDis) bAnyDisabled = true; else bAnyUnbound = true;
+                            if (!blockedGridsDesc.isEmpty()) blockedGridsDesc += " ";
+                            blockedGridsDesc += QString("%1(%2,余%3件)").arg(pit.key()).arg(why).arg(remain);
+                        }
+                    }
+                    const bool bBlockedCause = !blockedGridsDesc.isEmpty();
+                    // ★ 两个用途分开取名（现场日志标签 vs 异常表类型/UI 文案）：
+                    //   · blockedTag   —— PLC 日志的 `选格-<tag>` 标签（短、固定、便于 grep/脚本核对）
+                    //   · blockedReason—— 异常表类型后缀 `改投异常口(<原因>)` 与 UI 告警文案
+                    //   未绑定容器优先：它对应"等 H6 绑定即可恢复"，与"满箱未重绑(等换箱/重绑)"是两条不同的现场动作。
+                    const QString blockedTag    = bAnyUnbound ? QString::fromUtf8("未绑定容器")
+                                                              : QString::fromUtf8("满箱未重绑");
+                    const QString blockedReason = bAnyUnbound ? QString::fromUtf8("格口未绑定容器")
+                                                              : QString::fromUtf8("满箱未重绑");
+
                     if (pinfo.excGrid > 0)
                     {
-                        if (isGridDisabled(pinfo.excGrid) || isGridLocked(pinfo.excGrid))
-                            PLC_LOG_WARN("选格-超计划 code=%s 异常口%d 当前%s，仍按超计划发往该口（若PLC回报无格口/失败，请先给异常口绑定容器）",
-                                code.toLocal8Bit().data(), pinfo.excGrid,
-                                isGridDisabled(pinfo.excGrid) ? "满箱未重绑(禁用)" : "物理锁格");
-                        vecGrid      = { pinfo.excGrid };
+                        // ★ 额度停在不可下发格口时：异常口自身也必须可下发，
+                        //   否则绝不把件导向无容器/满箱的格口 —— 退回"不下发指令"
+                        if (bBlockedCause && !canDivertToExc(pinfo.excGrid))
+                        {
+                            bSkipSend    = true;
+                            bPlanDecided = true;
+                            PLC_LOG_WARN("选格-%s code=%s 映射=[%s] 不可下发格口=%s，"
+                                         "且异常口%d当前不可下发（未绑定/禁用）→ 不下发指令（等待恢复可用或人工处理）",
+                                blockedTag.toLocal8Bit().data(),
+                                code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                                blockedGridsDesc.toLocal8Bit().data(), pinfo.excGrid);
+                        }
+                        else
+                        {
+                            if (isGridDisabled(pinfo.excGrid) || isGridLocked(pinfo.excGrid))
+                                PLC_LOG_WARN("选格-改投异常口 code=%s 异常口%d 当前%s，仍按策略发往该口（若PLC回报无格口/失败，请先给异常口绑定容器）",
+                                    code.toLocal8Bit().data(), pinfo.excGrid,
+                                    isGridDisabled(pinfo.excGrid) ? "满箱未重绑(禁用)" : "物理锁格");
+                            vecGrid      = { pinfo.excGrid };
+                            bPlanDecided = true;
+                            if (bBlockedCause)
+                            {
+                                // ★ 额度不是用尽，而是停在"不可下发格口"上 → 件改投异常口，额度原样保留
+                                selReason = QString::fromUtf8("计划格口不可下发[%1]%2(额度保留)→发往异常口%3")
+                                                .arg(gridStr).arg(blockedGridsDesc).arg(pinfo.excGrid);
+                                notifyExcRoute(code, blockedReason);
+                                PLC_LOG_WARN("选格-%s code=%s 映射=[%s] 分配表=%s 不可下发格口=%s "
+                                             "→ 发往异常口%d（本件不落这些格口、不计已分拣、不消耗计划额度；"
+                                             "额度保留在原格口，恢复可用后自动继续分配）",
+                                    blockedTag.toLocal8Bit().data(),
+                                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                                    planDescOf().toLocal8Bit().data(), blockedGridsDesc.toLocal8Bit().data(),
+                                    pinfo.excGrid);
+                            }
+                            else
+                            {
+                                selReason = QString::fromUtf8("超计划[%1]计划格口已满(%2)→发往异常口%3")
+                                                .arg(gridStr).arg(planDescOf()).arg(pinfo.excGrid);
+                                PLC_LOG_WARN("选格-超计划 code=%s 映射=[%s] 分配表=%s → 发往异常口%d（不再占用计划格口）",
+                                    code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                                    planDescOf().toLocal8Bit().data(), pinfo.excGrid);
+                            }
+                        }
+                    }
+                    else if (bBlockedCause)
+                    {
+                        // ★ 额度停在不可下发格口 + 未配置异常口 → 不下发
+                        //   （取首个格口会把件塞进已满额/无容器的箱，制造新的账实不符）
+                        bSkipSend    = true;
                         bPlanDecided = true;
-                        selReason = QString::fromUtf8("超计划[%1]计划格口已满(%2)→发往异常口%3")
-                                        .arg(gridStr).arg(planDescOf()).arg(pinfo.excGrid);
-                        PLC_LOG_WARN("选格-超计划 code=%s 映射=[%s] 分配表=%s → 发往异常口%d（不再占用计划格口）",
+                        PLC_LOG_WARN("选格-%s code=%s 映射=[%s] 不可下发格口=%s，"
+                                     "且未配置异常口(exceptionGrid) → 不下发指令（等待恢复可用或人工处理）",
+                            blockedTag.toLocal8Bit().data(),
                             code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
-                            planDescOf().toLocal8Bit().data(), pinfo.excGrid);
+                            blockedGridsDesc.toLocal8Bit().data());
                     }
                     else
                     {
@@ -675,6 +822,16 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
             }
         }
 
+        // ★ 2026-09-20 现场问题④：本件判为"不可落格（已解锁且未绑定容器）"且异常口也不可下发
+        //   → 不下发任何指令（额度未认领、无任何副作用），由调用方按既有"无可用格口"留痕。
+        if (bSkipSend)
+        {
+            failCount++;
+            PLC_LOG_WARN("sendBatchCodesWithEpcCache: 不可落格(已解锁且未绑定容器)且异常口不可下发 code=%s grids=%s —— 不发指令",
+                code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
+            continue;
+        }
+
         // ★ 2026-09-09 选格结果日志：现场核对"这件货为什么去这个格口"（映射/锁格/禁用/最终选中）
         PLC_LOG_INFO("选格 code=%s 映射=[%s] 选中格=%d 原因=%s",
             code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
@@ -701,13 +858,14 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
         {
             m_pSendPool->commitNoWait([this, code, vecGrid, car]() {
                 const bool ok = sendCodeInfo(code, vecGrid, car);
-                if (m_sendResultCb) m_sendResultCb(code, ok);
+                // ★ 2026-09-20 现场问题④：回调带出"最终下发格口"（HttpServer 记录本件本要发往哪个格口）
+                if (m_sendResultCb) m_sendResultCb(code, vecGrid.empty() ? 0 : vecGrid[0], ok);
             });
         }
         else
         {
             const bool ok = sendCodeInfo(code, vecGrid, car);
-            if (m_sendResultCb) m_sendResultCb(code, ok);
+            if (m_sendResultCb) m_sendResultCb(code, vecGrid.empty() ? 0 : vecGrid[0], ok);
         }
 
         successCount++;
@@ -1068,6 +1226,58 @@ void PlcManager::enableAllGrids()
     int count = m_disabledGrids.size();
     m_disabledGrids.clear();
     PLC_LOG_INFO("全部格口已恢复 count=%d (新波次开始)", count);
+}
+
+// ============================================================================
+// ★ 2026-09-20 现场问题④（no_bind）：下发前置条件「格口已解锁 且 已绑定容器」
+//
+//   现场现象：格口已物理解锁但未绑定容器时，软件仍把件下发到该格口 —— PLC 只认
+//   {EPC|格口|小车}，容器绑定（H6）只是软件侧账务信息，发送链路原本只校验
+//   "满箱未重绑(禁用)"。结果：PLC 报 status=1 成功，落格反馈侧才发现该格无容器
+//   （type=no_bind，仍计已分拣），该件不属于任何容器 ⇒ 不进任何容器的 H7 ⇒
+//   换箱后新容器"满箱回传成功、人工复核多出一件"。
+//
+//   整改口径（客户确认 2026-09-20）：
+//     · 已解锁 且 已绑定容器 → 允许下发（再叠加既有条件：执行态/有映射/有额度/PLC已连接）
+//     · 已解锁 且 未绑定容器 → **不下发到该格口**，改投异常口并留痕；
+//                              该件不计已分拣、不写箱内明细、不进 H7、不消耗计划额度
+//     · 锁格                → **完全按原有逻辑处理**（锁格边沿→H7+禁用→不进候选；
+//                              未被禁用时按既有优先级/单格口兜底照发），本次不新增判定
+//     · 满箱未重绑(禁用)     → 原有逻辑（不下发 + 无可用格口留痕）
+//   异常口自身不可下发时退回原有"不发指令"路径，绝不把件导向无容器格口。
+// ============================================================================
+
+bool PlcManager::isGridBound(int grid) const
+{
+    if (!m_gridBoundCb) return true;   // 未注册回调 → 视为已绑定（保持既有行为）
+    return m_gridBoundCb(grid);
+}
+
+bool PlcManager::isGridDispatchable(int grid) const
+{
+    if (isGridDisabled(grid)) return false;   // 原有：满箱未重绑(禁用)不下发
+    if (isGridLocked(grid))   return true;    // 锁格：按原有逻辑处理（本次不拦截）
+    if (!ConfigManager::instance()->config().sortingRequireBoundGrid)
+        return true;                          // 开关关闭 → 逐字回退改造前行为
+    return isGridBound(grid);                 // ★ 本次新增：已解锁必须有容器绑定
+}
+
+int PlcManager::excGridFromConfig() const
+{
+    const QString excCfg = ConfigManager::instance()->config().exceptionGrid.trimmed();
+    bool ok = false;
+    const int exc = excCfg.toInt(&ok);
+    return (ok && exc > 0 && exc <= BINDING_SLOT_COUNT) ? exc : -1;
+}
+
+bool PlcManager::canDivertToExc(int exc) const
+{
+    return exc > 0 && isGridDispatchable(exc);
+}
+
+void PlcManager::notifyExcRoute(const QString& epc, const QString& reason) const
+{
+    if (m_excRouteCb) m_excRouteCb(epc, reason);
 }
 
 // ============================================================================

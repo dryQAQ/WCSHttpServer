@@ -4250,6 +4250,11 @@ void MainWindow::onBindPersistFailed(const QString& grid, const QString& box, co
 
 // ★ 2026-09-07 清空格口容器绑定（人工重置按钮）
 //   确认后：内存绑定清空 + DB 归档留史（可追溯/可沿用）+ 恢复满箱禁用格口 → 提示 + 日志
+//
+//   ★ 2026-09-20 现场问题④：本按钮是"分拣过程中唯一能把绑定整体拿走"的路径（无波次状态保护）——
+//     清空瞬间起，发送侧新判据会拦住所有件（无格口可落），但**已经在途的件**仍会落到
+//     已无绑定的格口：只留 no_bind 留痕、不进任何容器 H7、不消耗额度、需人工清出。
+//     因此在确认框里把"当前在途件数"直接摆出来，并给出后果说明，避免误点造成实物对不上账。
 void MainWindow::onClearAllGridBinds()
 {
     if (!m_pServer)
@@ -4258,22 +4263,43 @@ void MainWindow::onClearAllGridBinds()
         return;
     }
 
+    const int inFlight = m_pServer->inFlightCount();   // 已下发 PLC、尚未收到落格反馈的件数
+
+    QString warnExtra;
+    if (inFlight > 0)
+    {
+        warnExtra = QString::fromUtf8(
+            "\n\n⚠ 当前有 %1 件**在途**（已下发 PLC、尚未收到落格反馈）：\n"
+            "   · 清空后这些件仍会落到原格口，但那时格口已无容器绑定 → 只能留痕（no_bind），\n"
+            "     不计入任何容器的 H7 报文、不消耗计划额度，需人工清出/核对；\n"
+            "   · 建议等这些件落格完成（或在异常口场景先停止投线）后再清空。").arg(inFlight);
+    }
+
     auto ret = QMessageBox::question(this, QString::fromUtf8("清空格口容器绑定"),
         QString::fromUtf8("确定清空全部格口的当前容器绑定吗？\n\n"
                           " ① 所有格口恢复初始未绑定状态（可重新由 WMS 下发 H6 绑定）；\n"
-                          " ② 原绑定记录将归档保留在数据库（可追溯、可沿用）；\n"
-                          " ③ 满箱锁格禁用的格口一并恢复。"),
+                          " ② 清空后**没有格口可落件**：所有件在下发前即被拦下（改投异常口%1），\n"
+                          "     直到 WMS 重发 H6 绑定容器为止；\n"
+                          " ③ 原绑定记录将归档保留在数据库（可追溯、可沿用）；\n"
+                          " ④ 满箱锁格禁用的格口一并恢复。%2")
+            .arg(ConfigManager::instance()->config().exceptionGrid.isEmpty()
+                     ? QString::fromUtf8("(未配置)") : ConfigManager::instance()->config().exceptionGrid)
+            .arg(warnExtra),
         QMessageBox::Yes | QMessageBox::Cancel);
     if (ret != QMessageBox::Yes)
         return;
 
     appendLog("[清空绑定] 执行清空格口容器绑定 ...", true);
+    if (inFlight > 0)
+        appendLog(QString::fromUtf8("[清空绑定] ⚠ 当前在途 %1 件：清空后这些件落格时格口已无绑定，"
+                                    "只留痕(no_bind)、不进任何容器 H7、不消耗额度，请人工清出/核对").arg(inFlight), true);
     m_pServer->clearAllGridBinds();   // 内部：内存清空 + DB归档留史 + enableAllGrids + bindingUpdated + 日志
     updateBindingPanel();
     m_bindingDirty = true;
     appendLog("[清空绑定] 完成：格口已恢复初始状态，历史绑定已归档保留于数据库（可在日志/DB 追溯）", true);
     QMessageBox::information(this, QString::fromUtf8("已清空"),
-        QString::fromUtf8("已清空全部格口容器绑定，格口恢复初始状态。\n历史绑定记录已归档保存在数据库中，可追溯。"));
+        QString::fromUtf8("已清空全部格口容器绑定，格口恢复初始状态。\n历史绑定记录已归档保存在数据库中，可追溯。\n\n"
+                          "注意：容器绑定恢复（WMS 重发 H6）之前，件不会被下发到任何格口。"));
 }
 
 // ★ 2026-09-16 需求②：该格口是否在「容器绑定状态」面板中隐藏
@@ -5663,13 +5689,19 @@ void MainWindow::renderPlanAllocRows()
                 gItem->setTextAlignment(Qt::AlignCenter);
                 gItem->setForeground(stateFg);
                 if (stateBg.isValid()) gItem->setBackground(stateBg);
-                gItem->setToolTip(QString("%1(%2) 容器%3%4%5")
+                // ★ 2026-09-20 现场问题④：未绑定容器(已解锁)的格口**不参与分配**（件改投异常口，额度保留），
+                //   必须在 tooltip 里写清楚 —— 现场看这一页就是判断"能不能落"
+                gItem->setToolTip(QString("%1(%2) 容器%3%4%5%6")
                     .arg(cell->gridKey)
                     .arg((cell->gridType == "2") ? QString::fromUtf8("发货")
                          : (cell->gridType == "1") ? QString::fromUtf8("异常") : QString::fromUtf8("正常分拣"))
                     .arg(cell->boxcode.isEmpty() ? QString::fromUtf8("(无)") : cell->boxcode)
                     .arg(cell->disabled ? QString::fromUtf8(" ｜ 满箱未重绑(禁用)") : QString())
-                    .arg(cell->locked ? QString::fromUtf8(" ｜ 物理锁格") : QString()));
+                    .arg(cell->locked ? QString::fromUtf8(" ｜ 物理锁格") : QString())
+                    .arg(!cell->bound && !cell->locked
+                             ? QString::fromUtf8(" ｜ 未绑定容器(已解锁) → **不参与分配**：件改投异常口，"
+                                                 "计划额度保留在原格口，WMS 重发 H6 绑定容器后自动恢复")
+                             : QString()));
                 m_tblPlanAlloc->setItem(row, base, gItem);
 
                 setCell(base + 1, QString::number(cell->planQty));

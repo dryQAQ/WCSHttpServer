@@ -116,6 +116,8 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "sortingOrderQtyValidate") sortingOrderQtyValidate = xml.readElementText();
         else if (name == "sortingConflictPolicy")   sortingConflictPolicy = xml.readElementText();
         else if (name == "sortingAllowOverrecv")    sortingAllowOverrecv = (xml.readElementText().trimmed().toLower() == "true");
+        // ★ 2026-09-20 现场问题④：解锁且未绑定容器的格口不下发（改投异常口）
+        else if (name == "sortingRequireBoundGrid") sortingRequireBoundGrid = (xml.readElementText().trimmed().toLower() == "true");
         // ★ 2026-09-11 同波次重扫重投
         else if (name == "rescanResendEnabled")     rescanResendEnabled = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "rescanResendCooldownMs")  rescanResendCooldownMs = xml.readElementText().toInt();
@@ -308,6 +310,8 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("sortingConflictPolicy",   sortingConflictPolicy);
     xml.writeComment(" 是否允许超收（true/false） ");
     xml.writeTextElement("sortingAllowOverrecv",     sortingAllowOverrecv ? "true" : "false");
+    xml.writeComment(" ★ 下发前置条件：格口必须已解锁且已绑定容器（true=未绑定容器不下发到该格、改投异常口且不消耗额度；false=回退改造前照发行为） ");
+    xml.writeTextElement("sortingRequireBoundGrid",  sortingRequireBoundGrid ? "true" : "false");
     // ──── ★ 2026-09-11 同波次重扫重投 ────
     xml.writeComment(" 重扫重投开关（true=已落格件重新上料仍按原格口下发；false=旧行为不再下发） ");
     xml.writeTextElement("rescanResendEnabled",      rescanResendEnabled ? "true" : "false");

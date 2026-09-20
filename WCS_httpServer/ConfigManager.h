@@ -95,6 +95,10 @@ struct AppConfig
     QString sortingOrderQtyValidate = SORTING_ORDERQTY_VALIDATE; // orderQty校验模式（strict/loose）
     QString sortingConflictPolicy = SORTING_CONFLICT_POLICY;   // 冲突策略（STRICT_EXCEPTION/LOOSE_FIRST）
     bool    sortingAllowOverrecv = SORTING_ALLOW_OVERRECV;     // 允许超收（true/false）
+    // ★ 2026-09-20 现场问题④：下发前必须确认格口"已解锁且已绑定容器"
+    //   true（默认）= 解锁且未绑定容器的格口不下发到该格，改投异常口（不计分拣、不消耗额度）
+    //   false        = 逐字回退改造前行为（锁格/未绑定都按原有逻辑照发）
+    bool    sortingRequireBoundGrid = SORTING_REQUIRE_BOUND_GRID;
 
     // ──── ★ 2026-09-14 计划分配表（落格结构优化）配置 ────
     //   客户口径：一个 SKU 可同时计划到「正常分拣格口」与「发货格口」，

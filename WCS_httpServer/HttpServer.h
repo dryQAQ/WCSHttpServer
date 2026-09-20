@@ -203,8 +203,19 @@ public:
     // ★ 2026-09-13 实时面板/异常弹窗只读访问（全部为无副作用查询）
     // 格口当前容器号（内存绑定表，含补零兜底；无绑定返回空串）
     QString containerForGrid(const QString& grid) const;
+    // ★ 2026-09-20 现场问题④：某格口当前是否有活跃容器绑定（只查内存绑定表，线程安全）
+    //   用途：下发前置条件的判据来源（PlcManager::isGridDispatchable 回调本方法）。
+    //   ★ 为什么不做数据库兜底（与 lookupGridBoxCode 的差别）：DB 里的 active 绑定可能是
+    //     "已被现场取走的旧箱"（PLC 解锁早于 H6 重绑时的中间态），拿它当"已绑定"会把件
+    //     重新导向一个没有箱子的格口 —— 正是本次整改要消除的账实不符来源。
+    //     内存绑定表由 H6/波次恢复/归档三条链路维护，是"当前有效绑定"的唯一真相。
+    bool hasBoundContainer(int grid) const;
     // 某 EPC 是否仍在途（已下发 PLC、未收到落格反馈）——实时面板判定"待落格/超时未反馈"用
     bool isPlcSendInFlight(const QString& epc) const;
+    // ★ 2026-09-20 现场问题④：当前在途件数（已下发、未收到落格反馈；含 plcInFlightTimeoutMs 超时判定，只读）
+    //   用途：「清空格口绑定」二次确认 —— 分拣中清空绑定会让这些在途件落到"已无容器"的格口，
+    //   必须让操作员在动手前看到数量（该操作是分拣过程中唯一能把绑定整体拿走的路径）。
+    int  inFlightCount() const;
     // 某 EPC 本波次重投次数（0=仅首投；实时面板状态列显示"重投k次"用）
     int  rescanResendTimes(const QString& epc) const;
     // 本次运行累计 RFID 扫描次数（= RFID 推送 EPC 次数，重复 EPC 重复计数；重启归 0）
@@ -455,6 +466,7 @@ public:
     // 返回 false = 该 SKU 各计划格口已满额（按超计划处置：改投异常口）
     // 说明：若该 EPC 已在本 (SKU,格口) 落格过（件被拿出重投回原格口），
     //      调用方应先查 epcLandedInPlan() 放行，不进入本函数（保持既有重投口径）。
+    // ★ 历史遗留包装（当前无调用点）：真正入口是 planAllocOf（含"不可分配格口掩码"）
     bool claimAlloc(const QString& sku, qint16* claimGrid, quint64* claimId, qint16* planIdx);
     // 认领登记（PLC 指令发出后立即调用；幂等，避免重复挂账导致额度泄漏）
     void noteAllocIssued(const QString& epc, int skuIdx, qint16 planIdx, quint64 claimId);
@@ -606,6 +618,28 @@ private:
     void markEpcTerminalException(const QString& epc, const QString& type);  // 打标（本轮已入异常终态）
     void clearEpcTerminalException(const QString& epc);                      // 解除（本轮成功下发/清理）
     QString terminalExceptionType(const QString& epc) const;                 // 取保鲜期内的类型（无则空）
+
+    // ──── ★ 2026-09-20 现场问题④：「改投异常口原因」打标（发送侧 → 落格侧）────
+    //   为什么需要：异常口(66)会收到三类件 —— ①超计划件（人工多投/同时两件在线）；
+    //   ②本次新增的"格口已解锁且未绑定容器"件；③PLC 在锁格瞬间自己改投的在途件。
+    //   三者的异常留痕类型与日志必须可区分，现场才能据此决定处理方式（等绑定/清出/核对）。
+    //   生命周期：每轮投递开始（trySendToPlcForEpcInternal 入口）先清旧标 → 改投分支打标
+    //   → 落下 66 时取用并消费（写**唯一一条**异常记录，发送侧只打标不写库，避免重复留痕）。
+    //   TTL 仅作兜底（防"打标后指令发送失败、该件再没上线"的残留被后续事件误用）。
+    //   线程：主线程写（选格链路）→ 落格线程池读 ⇒ 独立小锁保护。
+    QHash<QString, QPair<QString, qint64>> m_excRouteMark;   // EPC → {原因, 打标时刻ms}
+    mutable std::mutex                     m_excRouteMutex;
+    void    noteExcRoute(const QString& epc, const QString& reason);  // 打标（主线程）
+    void    clearExcRoute(const QString& epc);                        // 清除旧标（每轮入口）
+    QString takeExcRoute(const QString& epc);                         // 取用并消费（落格线程池）
+
+    // ──── ★ 2026-09-20 现场问题④：最近一次成功下发的格口（EPC → 内部格口号）────
+    //   用途：件落入异常口时区分"软件主动改投（已打标）"与"PLC 自己改投/偏投"——
+    //   后者典型场景是锁格瞬间 PLC 把在途件强制送 66（客户 2026-09-20 确认），
+    //   现场需要看到"这件本要发往哪个格口"，否则会被误记成"超计划"。
+    //   线程：sendPool 线程写（下发结果回调）→ 落格线程池读 ⇒ 加锁。
+    QHash<QString, int> m_lastSentGrid;
+    mutable std::mutex  m_lastSentGridMutex;
 
     bool isEpcInFlight(const QString& epc);       // 是否在途（含 plcInFlightTimeoutMs 超时判定，会顺手清理超时项）
     // ★ 2026-09-13 只读版本：不做任何写操作（UI 每秒查询"待落格/超时未反馈"用，避免 UI 改业务状态）
@@ -816,6 +850,16 @@ private:
     PlanAllocTable          m_alloc;
     mutable std::mutex      m_allocMutex;
     std::atomic<bool>       m_allocValid{false};     // 分配表是否生效（false=退回老逻辑）
+    // ★ 2026-09-20 现场问题④：本次"不可认领/不可下发"格口掩码
+    //   判据与发送侧**完全同源**（PlcManager::isGridDispatchable）：只有"可下发格口"能被认领 ——
+    //   已解锁且未绑定容器 / 满箱未重绑(禁用) 均不可认领；锁格可认领（按原有逻辑）。
+    //   ⇒ 多格口 SKU 优先用"其它可用计划格口"的剩余额度承接；都没有可用额度时由 PlcManager
+    //     按根因改投异常口（额度原样留在原格口）。
+    //   ★★ 必须在 m_allocMutex **之外**构建（内部要取 m_containerMutex / S7 状态锁），
+    //      否则会形成 alloc→container 的锁嵌套（与其它路径的加锁顺序不一致，存在死锁风险）。
+    PlanAllocTable::GridMask allocBlockedMask() const;
+    // 单格口版判据（与掩码同源；供 moveAllocGap 等单点判定复用）
+    bool isGridDispatchableHere(int grid) const;
     std::atomic<int>        m_allocAuditBad{0};      // 不变量巡检违规条数（UI 显示用）
     QString                 m_allocOrderCode;        // 分配表对应的波次号（仅主线程读写）
     int                     m_allocPlanLogCnt = 0;   // 选格成功日志节流计数（仅主线程）

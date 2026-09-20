@@ -193,7 +193,18 @@ typedef std::function<bool()> PlcSelectLogCallback;
 // ★ 2026-09-14 单条下发结果回调（EPC, 是否成功）：发送失败时释放已认领的额度
 //   为什么放在 sendCodeInfo 出口：sendBatchCodesWithEpcCache 内部存在"发送成功但
 //   failCount 未归零"的路径，只在批出口释放会漏；出口回调保证每一条都可对账。
-typedef std::function<void(const QString& epc, bool success)> PlcSendResultCallback;
+//   ★ 2026-09-20 现场问题④：增加"最终下发格口"出参 —— HttpServer 据此记录
+//     "这件本要发给哪个格口"，用于异常口（66）落格时区分"软件改投/超计划"与
+//     "PLC 自己改投/偏投"（锁格时 PLC 会把在途件强制送异常口，客户确认 2026-09-20）。
+typedef std::function<void(const QString& epc, int finalGrid, bool success)> PlcSendResultCallback;
+
+// ★ 2026-09-20 现场问题④：格口是否已绑定容器（由 HttpServer 依据内存绑定表判定）
+//   未注册回调时 isGridBound 返回 true（保持既有行为：不因未绑定而拦截，便于独立使用/单测）
+typedef std::function<bool(int grid)> PlcGridBoundCallback;
+
+// ★ 2026-09-20 现场问题④：改投异常口的"原因"通知（发送侧 → HttpServer 打标/留痕/UI 告警）
+//   reason 取值："格口未绑定容器"（本次整改新增的唯一来源）
+typedef std::function<void(const QString& epc, const QString& reason)> PlcExcRouteCallback;
 
 class PlcManager : public QObject, public CTcpServerListener
 {
@@ -230,6 +241,20 @@ public:
     bool isGridDisabled(int grid) const; // 查询格口是否被禁用
     void enableAllGrids();              // 全部启用（新波次开始时）
 
+    // ★ 2026-09-20 现场问题④：下发前置条件「已解锁 且 已绑定容器」
+    //   isGridBound          —— 该格口当前是否已绑定容器（由 HttpServer 提供；无回调时视为已绑定）
+    //   isGridDispatchable   —— 是否允许把分拣指令下发到该格口：
+    //                           已禁用(满箱未重绑) → false（原有）
+    //                           锁格               → true （**按原有逻辑处理**，本次不拦截）
+    //                           开关关闭           → true （逐字回退改造前行为）
+    //                           其余               → 必须有容器绑定（本次新增）
+    //   excGridFromConfig    —— 配置的异常格口号（未配置/越界 → -1）
+    //   canDivertToExc       —— 该异常口自身是否可下发（不可下发则退回"不发指令"）
+    bool isGridBound(int grid) const;
+    bool isGridDispatchable(int grid) const;
+    int  excGridFromConfig() const;
+    bool canDivertToExc(int exc) const;
+
     void registerStatusCallback(PlcStatusCallback cb) { m_statusCb = std::move(cb); }
     void registerFeedbackCallback(PlcFeedbackCallback cb) { m_feedbackCb = std::move(cb); }
     void setLookupCallback(PlcLookupCallback cb) { m_lookupCb = std::move(cb); }
@@ -241,8 +266,12 @@ public:
     void setMoveGapCallback(PlcMoveGapCallback cb) { m_moveGapCb = std::move(cb); }
     // ★ 2026-09-14 设置选格成功日志节流回调
     void setSelectLogCallback(PlcSelectLogCallback cb) { m_selectLogCb = std::move(cb); }
-    // ★ 2026-09-14 设置单条下发结果回调（发送失败 → 释放认领额度）
+    // ★ 2026-09-14 设置单条下发结果回调（发送失败 → 释放认领额度；2026-09-20 增补"最终格口"出参）
     void setSendResultCallback(PlcSendResultCallback cb) { m_sendResultCb = std::move(cb); }
+    // ★ 2026-09-20 现场问题④：设置"格口是否已绑定容器"查询回调（HttpServer 依据内存绑定表提供）
+    void setGridBoundCallback(PlcGridBoundCallback cb) { m_gridBoundCb = std::move(cb); }
+    // ★ 2026-09-20 现场问题④：设置"改投异常口原因"通知回调（HttpServer 据此打标/留痕/UI 告警）
+    void setExcRouteCallback(PlcExcRouteCallback cb) { m_excRouteCb = std::move(cb); }
 
     // ──── 发送指令 ────
     // code 为 EPC编码，客户已确认（2026-08-10）
@@ -290,6 +319,8 @@ signals:
     void parsePlcFeedback(const QByteArray& data);
     void OnS7HeartThread();                    // ★ S7 心跳线程：每2秒检测连接，断线重连（与 WCSApp simensS7::OnHeartThread 一致）
     void flushFeedbackBatch();                 // ★ 定时刷新批量反馈到UI
+    // ★ 2026-09-20 现场问题④：通知 HttpServer"本件因格口未绑定容器改投异常口"（无回调时空操作）
+    void notifyExcRoute(const QString& epc, const QString& reason) const;
 
     // ──── TCP 通信 ────
     CTcpServerPtr m_tcpServer;
@@ -330,6 +361,10 @@ signals:
     // ──── 格口禁用集合（满箱锁格后禁用，WMS重新绑定H6时恢复）────
     QSet<int>            m_disabledGrids;          // 已禁用的格口号集合
     mutable std::mutex   m_lockDisabledGrids;      // 保护 m_disabledGrids
+
+    // ──── ★ 2026-09-20 现场问题④：下发前置条件（已解锁且已绑定容器）────
+    PlcGridBoundCallback m_gridBoundCb;            // 格口是否已绑定容器（HttpServer 提供）
+    PlcExcRouteCallback  m_excRouteCb;             // 改投异常口原因通知（HttpServer 提供）
 
     // ──── S7 锁格轮询定时器 ────
     QTimer*     m_s7LockTimer = nullptr;     // ★ S7锁格轮询定时器（1秒间隔，与WCSApp S7边沿检测一致）
