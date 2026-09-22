@@ -500,13 +500,27 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
             // ★ 2026-09-20 现场问题④：候选过滤加上"已解锁且已绑定容器"这一前置条件
             //   （判据集中在 isGridDispatchable：禁用→不发；锁格→按原有逻辑照发；
             //     已解锁且未绑定容器→本次新增，不发）
+            // ★ 2026-09-21 硬上限（客户口径：**格口计划多少件就只分多少件**）：
+            //   候选还必须"该 (SKU,格口,属性) 仍有剩余额度" —— 剩余 = H4计划 − 已落 − 在途。
+            //   为什么放在候选过滤这一层：认领、多格口兜底、单格口兜底、锁格兜底**全部**从这里取候选，
+            //   所以放在这里等于"所有下发路径都受计划上限约束"，包括分配表失效时的回退路径
+            //   （此前 ① 分配表一失效就没上限、② 老闸门拿 SKU 计划总数当本格口上限，是超计划的另两个成因）。
             int nDisabled = 0;        // 满箱未重绑(禁用) —— 原有判据
-            int nUnboundBlocked = 0;  // 已解锁且未绑定容器 —— 本次新增判据
+            int nUnboundBlocked = 0;  // 已解锁且未绑定容器 —— 2026-09-20 新增判据
+            int nQuotaFull = 0;       // 该 (SKU,格口) 计划额度已用尽（含在途）—— 2026-09-21 新增判据
+            QString firstFullDesc;    // 供日志：首个额度用尽格口的"格口(属性):计划/已落/在途"
             for (int g : cand)
             {
                 if (isGridDisabled(g)) { ++nDisabled; continue; }        // 原有：禁用不发
-                if (isGridLocked(g))   { avail.push_back(g); continue; } // ★ 锁格：按原有逻辑照发
-                if (!isGridBound(g))   { ++nUnboundBlocked; continue; }  // ★ 新增：已解锁且无容器 → 不发
+                if (isGridLocked(g))                                        // 锁格：按原有逻辑放行
+                {
+                    if (!gridHasQuotaLeft(pinfo, g, &firstFullDesc)) { ++nQuotaFull; continue; }
+                    avail.push_back(g);
+                    continue;
+                }
+                if (!isGridBound(g))   { ++nUnboundBlocked; continue; }  // 已解锁且无容器 → 不发
+                // ★ 硬上限：计划额度已用尽（或该格口在 H4 计划里没有数量）→ 不进候选
+                if (!gridHasQuotaLeft(pinfo, g, &firstFullDesc)) { ++nQuotaFull; continue; }
                 avail.push_back(g);
             }
 
@@ -516,28 +530,45 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
 
             if (avail.empty())
             {
-                // ★ 2026-09-20 现场问题④：本次新判据拦下的件 → 改投异常口（异常口自身必须可下发）
+                // 本件为什么没有任何可下发格口？三类根因（可并存）：
+                //   · 未绑定容器（2026-09-20 新增判据）→ 改投异常口，额度保留
+                //   · 计划额度已用尽（2026-09-21 新增硬上限）→ 超计划件，改投异常口
+                //   · 满箱未重绑(禁用)/锁格相关 → 沿用原有语义（不发指令）
                 const int exc = excGridFromConfig();
-                const bool bNewRuleCause = (nUnboundBlocked > 0);
-                if (bNewRuleCause && canDivertToExc(exc))
+                const bool bUnboundCause = (nUnboundBlocked > 0);
+                const bool bQuotaCause   = (nQuotaFull > 0);
+                if ((bUnboundCause || bQuotaCause) && canDivertToExc(exc))
                 {
                     vecGrid      = { exc };
                     bPlanDecided = true;   // ★ 不进入计划认领 ⇒ 不消耗任何额度（额度留在原格口）
-                    selReason = QString::fromUtf8("候选格口全部不可下发(未绑定容器%1个/满箱未重绑%2个) → 改投异常口%3")
-                                    .arg(nUnboundBlocked).arg(nDisabled).arg(exc);
-                    notifyExcRoute(code, QString::fromUtf8("格口未绑定容器"));
-                    PLC_LOG_WARN("选格-未绑定容器 code=%s 映射=[%s] 候选格口全部不可下发"
-                                 "（已解锁且未绑定容器%d个 / 满箱未重绑(禁用)%d个）→ 改投异常口%d"
-                                 "（本件不落该格口、不计已分拣、不消耗计划额度）",
-                        code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
-                        nUnboundBlocked, nDisabled, exc);
+                    if (bUnboundCause)
+                    {
+                        selReason = QString::fromUtf8("候选格口全部不可下发(未绑定容器%1个/满箱未重绑%2个) → 改投异常口%3")
+                                        .arg(nUnboundBlocked).arg(nDisabled).arg(exc);
+                        notifyExcRoute(code, QString::fromUtf8("格口未绑定容器"));
+                        PLC_LOG_WARN("选格-未绑定容器 code=%s 映射=[%s] 候选格口全部不可下发"
+                                     "（已解锁且未绑定容器%d个 / 满箱未重绑(禁用)%d个）→ 改投异常口%d"
+                                     "（本件不落该格口、不计已分拣、不消耗计划额度）",
+                            code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                            nUnboundBlocked, nDisabled, exc);
+                    }
+                    else
+                    {
+                        // ★ 硬上限：本 SKU 各候选格口的 H4 计划额度都已用尽 → 典型的超计划件
+                        selReason = QString::fromUtf8("超计划[%1]本格口计划已满(%2) → 发往异常口%3")
+                                        .arg(gridStr).arg(firstFullDesc).arg(exc);
+                        PLC_LOG_WARN("选格-超计划(本格口计划已满) code=%s 映射=[%s] %s "
+                                     "→ 发往异常口%d（严格不大于计划件数：该格口计划已满，本件不计已分拣、不消耗额度）",
+                            code.toLocal8Bit().data(), gridStr.toLocal8Bit().data(),
+                            firstFullDesc.toLocal8Bit().data(), exc);
+                    }
                 }
                 else
                 {
-                    PLC_LOG_WARN("sendBatchCodesWithEpcCache: 映射内无可下发格口（已解锁且未绑定容器%d个 / 满箱未重绑(禁用)%d个"
-                                 "%3） code=%s grids=%s —— 不发指令，等待WMS重发H6或人工处理",
-                        nUnboundBlocked, nDisabled,
-                        bNewRuleCause
+                    PLC_LOG_WARN("sendBatchCodesWithEpcCache: 映射内无可下发格口（未绑定容器%d个 / 计划已满%d个 / 满箱未重绑(禁用)%d个"
+                                 "%4） code=%s grids=%s —— 不发指令，等待WMS重发H6或人工处理",
+                        nUnboundBlocked, nQuotaFull, nDisabled,
+                        (bUnboundCause || bQuotaCause)
                             ? QString::fromUtf8("，异常口%1当前亦不可下发").arg(exc > 0 ? QString::number(exc) : QString::fromUtf8("(未配置)"))
                             : QString(),
                         code.toLocal8Bit().data(), gridStr.toLocal8Bit().data());
@@ -578,6 +609,12 @@ bool PlcManager::sendBatchCodesWithEpcCache(const QMap<QString, QString>& codeGr
                 };
 
                 // ── ① 计划格口不可用（禁用/锁格）→ 未完成件搬迁到同 SKU 其它可用计划格口 ──
+                //   ★ 2026-09-21 客户口径修正：**缺口搬迁已默认关闭**（`allocGapMoveOnDisabled/Locked`
+                //     默认 false）—— 现场 SKU 105301083212803（H4：034=2件+040=176件）因两个箱子轮流满箱，
+                //     搬迁把额度在两格口之间来回搬（净搬入 034 81 件）→ 现场看到"计划2/分拣83"，
+                //     且属于**跨类型**搬迁（分类口额度搬进发货口）。新口径：每个格口严格按 H4 计划，
+                //     不可用格口的额度留在原地，件改用其它格口自身额度，都没有则改投异常口 66。
+                //   ⇒ 本段仅在配置显式置 true（回退旧行为）时才生效；保留代码以便按需回退。
                 //   为什么：计划格口换箱期间其计划件数不应被静默丢弃（客户口径：按各格口数量分）。
                 //   只搬"未完成额度"，已落格件数不动。
                 {
@@ -1278,6 +1315,41 @@ bool PlcManager::canDivertToExc(int exc) const
 void PlcManager::notifyExcRoute(const QString& epc, const QString& reason) const
 {
     if (m_excRouteCb) m_excRouteCb(epc, reason);
+}
+
+// ============================================================================
+// ★ 2026-09-21 硬上限：该 (SKU,格口,分拣属性) 是否仍有剩余额度
+//
+//   客户口径：**格口计划多少件就只分多少件，严格不大于计划件数**；
+//   额度以 (SKU,格口,属性) 为单位，分类与发货各自独立、互不借用。
+//
+//   判据：`H4计划 − 已落 − 在途 > 0`（planQtyPerGrid/landedNum/reservNum 由 HttpServer 提供；
+//   分配表失效时 HttpServer 用 m_boxLandedEpcs + 按格口在途 组合同样的口径）。
+//   · 该格口在 H4 计划里没有数量（plan <= 0）→ 视为 0 额度，不可投（进异常口），
+//     不再"照映射串首个格口投"（那正是"某格口超计划那么多"的结构性来源之一）。
+//   · descOut：首个被判满格口的可读描述（日志用，形如 `034(发货):计划2件/已落2/在途0`）。
+bool PlcManager::gridHasQuotaLeft(const PlcPlanAllocInfo& pinfo, int grid, QString* descOut) const
+{
+    const QString gk = QString("%1").arg(grid, GRID_KEY_PADDING, 10, QChar('0'));
+    const int plan   = pinfo.planQtyPerGrid.value(gk, 0);
+    const int landed = pinfo.landedNum.value(gk, 0);
+    const int reserv = pinfo.reservNum.value(gk, 0);
+    const bool ok = (plan > 0 && landed + reserv < plan);
+    if (!ok && descOut && descOut->isEmpty())
+    {
+        *descOut = QString::fromUtf8("%1(%2):计划%3件/已落%4/在途%5")
+                       .arg(gk)
+                       .arg(gridTypeName(pinfo.gridTypePerGrid.value(gk)))
+                       .arg(plan).arg(landed).arg(reserv);
+    }
+    return ok;
+}
+
+QString PlcManager::gridTypeName(const QString& t)
+{
+    if (t == "1") return QString::fromUtf8("异常");
+    if (t == "2") return QString::fromUtf8("发货");
+    return QString::fromUtf8("分类");
 }
 
 // ============================================================================

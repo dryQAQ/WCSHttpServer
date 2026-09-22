@@ -321,6 +321,10 @@ signals:
     void flushFeedbackBatch();                 // ★ 定时刷新批量反馈到UI
     // ★ 2026-09-20 现场问题④：通知 HttpServer"本件因格口未绑定容器改投异常口"（无回调时空操作）
     void notifyExcRoute(const QString& epc, const QString& reason) const;
+    // ★ 2026-09-21 硬上限：该 (SKU,格口,属性) 是否仍有剩余额度（H4计划 − 已落 − 在途 > 0）
+    //   判据口径见实现处注释；descOut 输出首个被判满格口的可读描述（日志用）
+    bool gridHasQuotaLeft(const PlcPlanAllocInfo& pinfo, int grid, QString* descOut) const;
+    static QString gridTypeName(const QString& t);   // "0"→分类 / "1"→异常 / "2"→发货
 
     // ──── TCP 通信 ────
     CTcpServerPtr m_tcpServer;

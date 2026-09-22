@@ -191,6 +191,14 @@ public:
     void scheduleSkuQueryRetry(const QStringList& epcList);          // ★ SKU 查询失败后延迟重试（最多重试 SKU_QUERY_MAX_RETRY 次）
     void scheduleNotReadyRetry(const QString& epc);                // ★ 未就绪(carNum未到)时延迟重试（最多重试 NOT_READY_RETRY_MAX 次）
 
+    // ── ★ 2026-09-21 硬上限 + 分拣属性隔离（客户口径：格口计划多少件就只分多少件）──
+    //   额度以 **(SKU, 格口, 分拣属性)** 为单位：严格不大于 H4 该格口计划件数；
+    //   分类(0)/发货(2)各自独立封顶，互不借用（禁止用 SKU 计划总数当某格口/某属性的上限）。
+    //   这三个接口同时服务"分配表生效"与"分配表失效回退"两条路径（回退路径不再无上限）。
+    int  h4PlanQtyOfGrid(const QString& sku, const QString& gridKey) const;   // H4 计划件数（0=该格无计划→不可投）
+    int  inFlightCountOfGrid(const QString& sku, const QString& gridKey) const; // 该格口在途件数（表失效时用）
+    bool hasGridQuotaLeft(const QString& sku, const QString& gridKey) const;  // 剩余额度 > 0（严格口径）
+
     // ★ RFID查询：根据EPC获取对应的SKU/EPC（商品编码）（T-S4-04 EpcCache TTL缓存）
     QString getSkuByEpc(const QString& epc) const {
         if (m_pEpcCache) return m_pEpcCache->get(epc);
@@ -230,7 +238,10 @@ public:
     PerfSnapshot perfSnapshot() const;
 
     // ★ S5 满箱回传结果处理（H7 满箱同步到WMS，MainWindow 回调，必须 public）
-    void onFullboxReplyFinished(const QString& msgId, bool success, const QString& body);
+    //   ★ 2026-09-22 现场需求①：补齐 HTTP 状态与传输层说明（body 为**完整响应体**），
+    //     入口即落库到 outbox_fullbox 的 resp_* 四列，供波次面板「回传次数 → 查看 → 双击」展示。
+    void onFullboxReplyFinished(const QString& msgId, bool success, int httpStatus,
+                                const QString& body, const QString& note);
 
     // ──── S6 新增：完结回传（H8 波次完结通知WMS，T-S6-01~T-S6-05）────
     QJsonObject buildEndPayload(const QString& orderCode, int sumLocation); // ★ 构建完结报文（H8 波次完结通知WMS）
@@ -238,7 +249,8 @@ public:
     //   （调用方应进入等待/兜底流程）；false=同步拒绝（无波次/状态不允许），调用方可立即收尾
     bool sendEnd();
     void sendEndToWms(const QString& msgId, const QJsonObject& payload); // ★ 发送完结回传到 WMS（H8 波次完结通知WMS，T-S6-03）
-    void onEndReplyFinished(const QString& msgId, bool success, const QString& body); // ★ 完结回传结果处理（H8 波次完结通知WMS，T-S6-04）
+    void onEndReplyFinished(const QString& msgId, bool success, int httpStatus,
+                            const QString& body, const QString& note); // ★ 完结回传结果处理（H8 波次完结通知WMS，T-S6-04；★ 2026-09-22 带响应留痕）
     void pollOutboxEnd();                           // ★ Outbox 完结回传重试调度（H8 波次完结通知WMS，T-S6-03）
 
     // ──── S8 新增：对账（T-S8-01/02）────
@@ -289,7 +301,16 @@ public:
     qint64 rfidRawFlushedRows() const { return m_rfidRawFlushed; }
     qint64 rfidRawDroppedRows() const { return m_rfidRawDropped; }
     void resendOutbox(const QString& orderCode, bool resendH7, bool resendH8); // 手动重传选中波次的 H7/H8
-    void onOutboxResendReply(const QString& msgId, bool isH7, bool success);   // 手动重传结果（轻量，不动波次状态/绑定）
+    // ★ 2026-09-22 现场需求（H8 完结屏障）：存在未成功的满箱回传（H7）时，完结回传先暂缓，
+    //   由操作员选择「先去处理/人工重传」或「确认直接完结」。本方法 = 后者的唯一入口：
+    //   立即生成并发送 H8（H8 始终是最后一条报文），并写异常留痕 + 红色告警以便追溯。
+    void confirmEndReport(const QString& orderCode, const QString& reason);
+    // 完结屏障当前状态文本（空串=无暂缓；供 UI 状态条显示"待满箱回传 N 条 → 完结回传已暂缓"）
+    QString endBarrierStateText();
+    // ★ 2026-09-22 手动重传结果（轻量，不动波次状态/绑定）；补齐 HTTP 状态/完整响应体/传输层说明，
+    //   入口即落库到 outbox 的 resp_* 四列（重传后"查看 → 双击"能看到最新一次响应）
+    void onOutboxResendReply(const QString& msgId, bool isH7, bool success, int httpStatus,
+                             const QString& body, const QString& note);
     // ★ 2026-09-07 手动满箱切换：UI 输入格口号 → 读取该格口当前记录+容器号，按 H7 满箱回传上传
     //   ★ 2026-09-16 需求④：返回值改为本次生成的 H7 msgId（成功=非空，已入 Outbox 待发/重试）；
     //     失败返回空串，并把可读原因写入 *reasonOut（"无待上传记录"/"无容器绑定"/…），
@@ -477,6 +498,9 @@ public:
     bool commitLandedAlloc(const QString& sku, const QString& gridKey, const QString& epc,
                            quint64 claimId, bool* mismatchOut, int* landedNowOut, int* planQtyOut);
     // 计划格口不可用时的缺口搬迁（把未完成计划件转给同 SKU 其它可用计划格口）
+    //   ★ 2026-09-21 客户口径：**取消跨格口搬额度**（allocGapMoveOnDisabled/Locked 默认 false）
+    //     —— 每个格口严格按 H4 计划；不可用格口的额度留在原地，件改用其它格口自身额度，
+    //     都没有则改投异常口 66。本接口保留供配置显式回退时使用。
     int  moveAllocGap(const QString& sku, qint16 fromGrid, qint16 toGrid);
     // 该 EPC 是否已在本 (SKU,格口) 落格（重投回原格口的放行依据）
     bool epcLandedInPlan(const QString& sku, const QString& gridKey, const QString& epc) const;
@@ -521,6 +545,9 @@ signals:
     void pendingWavesChanged();
     // ★ 2026-09-08 失败重传记录变化（重试耗尽标记失败 / 手动重传成功后清除）→ UI 刷新两个失败下拉
     void outboxFailedChanged();
+    // ★ 2026-09-22 现场需求①：某条出站报文的**响应留痕**已落库（成功/失败/超时/网络失败/手动重传）
+    //   用途：「回传明细」弹窗打开着时即时刷新列表（波形：待发 → 成功 + 响应结果列）
+    void outboxResponseSaved();
     // ★ 2026-09-16 需求④：某条 H7 报文**最终失败**（重试耗尽 → status='failed'）
     //   用途：「一键满箱回传」计数归因——只对"该次一键生成的 msgId"累加失败数，其它来源仅刷新总数
     void fullboxMessageFailed(const QString& msgId, const QString& orderCode, const QString& grid);
@@ -528,6 +555,11 @@ signals:
     //   "面板显示已绑定、库里一行都没有"（切回该波次时无绑定可恢复）。
     //   发出后 UI 红字提示 + 显示未落库计数，运维可当场重发 H6 / 排查磁盘。
     void bindPersistFailed(const QString& grid, const QString& box, const QString& orderCode);
+    // ★ 2026-09-22 现场需求（H8 完结屏障）：存在未成功的满箱回传（H7）→ 完结回传暂缓，
+    //   需要操作员决策。detailText 含"格口号/箱号/状态/已重试次数"清单，供弹窗/面板原样展示。
+    void endBarrierNeedDecision(const QString& orderCode, const QString& detailText);
+    // 屏障状态变化（暂缓 / 通过 / 人工确认）→ UI 刷新状态条
+    void endBarrierChanged();
 
 protected:
     // CHttpServerListener 回调
@@ -561,6 +593,40 @@ private:
     void sendFullbox(const QString& grid);                // ★ 满箱触发入口（T-S5-01）
     void sendFullboxToWms(const QString& msgId, const QJsonObject& payload); // ★ 发送满箱回传到 WMS（H7 满箱同步到WMS，T-S5-04）
     void pollOutboxFullbox();                              // ★ Outbox 重试调度（T-S5-04）
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-22 现场需求（第2条 + 完结顺序）：
+    //   ① 锁格（=满箱）即"容器离场"：先保存箱号快照，再**立即**清掉该格活跃绑定，
+    //      **不等 H7 回传结果**；H7 报文与箱号持久保留在 outbox_fullbox，失败自动重试、
+    //      重试耗尽留痕等人工重传。
+    //   ② 完结回传（H8）**一定是最后一条报文**：先把未回传的记录补发成 H7，等这些 H7
+    //      跑到终态；全部成功 → 直接发 H8；存在失败/未生成 → 暂缓并提示（列出格口号），
+    //      由操作员选择「先去处理/人工重传」或「确认直接完结」。
+    // ════════════════════════════════════════════════════════════════════════
+    //   "容器离场"箱号快照（规范格号 → 锁格/补发瞬间箱号；m_containerMutex 保护）
+    //   用途：活跃绑定被清掉后，H7 报文重建（缺SKU/Outbox失败后补发、手动满箱）仍能取到正确箱号。
+    void    markBoxSnapshot(const QString& grid, const QString& box);
+    QString boxSnapshotOf(const QString& grid) const;
+    void    clearBoxSnapshot(const QString& grid);
+    void    clearAllBoxSnapshots();
+    // 统一的"容器离场"处理：快照 → 清内存绑定 → DB 归档(active=0+unbind_time) → 解绑留痕日志
+    //   reason：留痕用语（"锁格满箱(H7待回传)" / "完结补发(H7待回传)"）
+    //   返回 true = 本次确实清掉了一条活跃绑定（供调用方判断是否打印"容器离场"汇总）
+    bool    detachContainerOnFullbox(const QString& grid, const QString& box, const QString& reason);
+
+    // ── H8 完结屏障 ──
+    //   分类当前波次的满箱回传完成情况：
+    //     0 = None      全部 success 且无未上传记录 → 可以直接发 H8
+    //     1 = Inflight  仍有 pending（重试中）→ 暂缓等待，不打扰操作员
+    //     2 = NeedDecision 存在 failed/cancelled 或"报文未生成"的记录 → 暂缓 + 提示人工决策
+    int     classifyEndBarrier(const QString& orderCode, QString* detailOut);
+    void    checkEndBarrier();      // 复检（H7 回执/人工重传成功后调用）：清了就自动发 H8
+    bool    emitEndReportNow();     // H8 的唯一生成+发送出口（sendEnd / 屏障通过 / 人工确认 共用）
+    void    onEndBarrierTick();     // 屏障期间进度扫描（5s）
+    void    stopEndBarrier(const QString& why);   // 收敛：停表 + 清登记
+    // 屏障留痕：把"未成功的满箱回传清单 + 处理方式"写异常表（人工确认/auto 策略/超时都留痕）
+    void    writeEndBarrierException(const QString& orderCode, const QString& detail, const QString& action);
+
     // ──── 完结前兜底补发（2026-09-07）：H8 前把未满箱格口数据补发 H7 ────
     QString lookupGridBoxCode(const QString& grid);        // 格口当前容器号（内存→DB 兜底，sendFullbox/补发共用）
     int     flushUnreportedFullboxes(const QString& orderCode); // 补发内存中未满箱格口的 H7，返回补发格口数
@@ -774,6 +840,14 @@ private:
     // ──── 格口容器绑定 ────
     QMap<QString, QString>  m_containerBindings;  // latticehole(格口号) → boxcode(容器号)
     mutable std::mutex       m_containerMutex;     // 保护 m_containerBindings（const方法中需加锁）
+    // ★ 2026-09-22 "容器离场"箱号快照：锁格/完结补发瞬间把箱号存下来（随后立即清活跃绑定），
+    //   供 H7 报文重建与留痕使用；H6 重绑 / 批量清空绑定时一并清除。同受 m_containerMutex 保护。
+    QMap<QString, QString>  m_boxSnapshot;
+    // ★ 2026-09-22 H8 完结屏障（H7 未全部成功时暂缓完结回传，等人工决策）
+    QTimer*                 m_endBarrierTimer = nullptr;   // 屏障期间进度扫描（5s）
+    QString                 m_endBarrierOrderCode;         // 已暂缓完结的波次（空=无）
+    bool                    m_endBarrierPrompted = false;  // 是否已就"需人工决策"提示过（防重复弹窗）
+    int                     m_endBarrierTicks = 0;         // 已扫描拍数（每 6 拍≈30s 打一次进度）
     int                      m_expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT;  // 期望绑定数量（波次下发时校验全部绑定用，默认1）
 
     // ──── 格口分拣记录（锁格回传用）────

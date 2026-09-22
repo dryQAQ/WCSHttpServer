@@ -103,6 +103,11 @@ private slots:
     // ★ 2026-09-13 需求：超计划预警明细弹窗（落了几件/哪个格口容器/计划几件/多余几件）
     void showOverplanWarningDialog();
     void refreshOverplanWarning();   // 刷新面板「预警」数字与按钮可用态
+    // ★ 2026-09-22 现场需求①：波次面板「回传次数」——
+    //   refreshCallbackCount: 取数+渲染（缓存口径；内部 250ms 突发合并，不每秒查库）
+    //   onViewCallbacks:      打开「回传明细」弹窗（全部回传条目，带波次切换下拉，双击看完整报文与响应）
+    void refreshCallbackCount();
+    void onViewCallbacks();
     // ★ 2026-09-13 需求：一键满箱回传（对当前所有已绑定容器逐个执行 H7 满箱回传）
     void onOneKeyFullbox();
 
@@ -191,6 +196,17 @@ private:
     // ★ 2026-09-13 超计划预警：数字（超计划的 格口+SKU 条目数）+「查看」按钮（明细弹窗）
     QLabel*      m_lblOverplanWarn = nullptr;  // 预警数量
     QPushButton* m_btnOverplanView = nullptr;  // 查看预警明细（落了几件/哪个格口容器/计划几件/多余几件）
+    // ★ 2026-09-22 现场需求①：「回传次数」= 本波次已生成的出站报文条数（H7 满箱切换 + H8 完结回传）
+    //   + 右侧「查看」按钮 → 回传明细弹窗（带回传条目列表 + 波次切换下拉 + 双击看完整报文与响应）
+    //   取数口径与「波次数据记录」列表同源（getFullboxStatusCountAll/getEndStatusCountAll，两次 GROUP BY）；
+    //   面板每秒渲染只读缓存，**不每秒查库**（与「留痕」同款 10 秒缓存口径）。
+    QLabel*      m_lblCallbackCount = nullptr;   // 回传次数数值（"N 次"）
+    QPushButton* m_btnCallbackView  = nullptr;   // 查看回传明细（全部条目：满箱切换 + 完结回传）
+    int          m_cachedCallbackCount = -1;     // 缓存值（-1 = 无波次/未知 → 面板显示 --）
+    int          m_cachedCallbackFailed = 0;     // 缓存中"失败/已取消"条数（>0 → 数值标红，一眼可见）
+    qint64       m_cbRefreshLastMs = 0;          // 上次取数时刻（突发合并：最快 250ms 一次）
+    QString      m_cachedCallbackOrder;          // 缓存所属波次（换波次立即重算）
+    QString      m_cachedCallbackBreak;          // 缓存拆分文本（tooltip：H7/H8 成功·待发·失败）
     // ★ 2026-09-13 客户要求：波次信息面板不再显示容器绑定数据（改由第 0 页标签页展示）
     QLabel*      m_lblEfficiency   = nullptr;  // ★ 2026-09-07 分拣效率（折算件/时）
     QLabel*      m_lblPeakEff      = nullptr;  // ★ 2026-09-07 峰值效率（当日最大，件/时；落库 daily_peak）
@@ -240,6 +256,10 @@ private:
     QComboBox*    m_cmbFailedH7         = nullptr;  // H7 失败格口下拉（全部历史 失败/已取消重试）
     QComboBox*    m_cmbFailedH8         = nullptr;  // H8 失败波次下拉（全部历史 失败/已取消重试）
     QPushButton*  m_btnViewWaveQueue    = nullptr;  // ★ 查看接收波次队列（弹窗，含"接收新任务"选项）
+    // ★ 2026-09-22 现场需求②：服务控制区「回传结果」—— 与波次信息面板「回传次数 → 查看」
+    //   **同一个弹窗**（全部回传条目 + 波次切换下拉 + 双击看完整请求报文与 WMS 响应，全文不截断）；
+    //   实现直接复用 onViewCallbacks()（单实例复用，不会开出两个窗口）；常驻可用。
+    QPushButton*  m_btnCallbackResult   = nullptr;
     QVector<HttpServer::FailedFullboxItem> m_failedH7Items;  // 下拉数据快照（与下拉行一一对应）
     QVector<HttpServer::FailedEndItem>     m_failedH8Items;
 
@@ -362,4 +382,12 @@ private:
     QTimer*      m_stopTimeoutTimer = nullptr;   // ★ 停止超时安全网（30秒）
     QDialog*     m_effDlg            = nullptr;   // ★ 2026-09-07 效率统计弹窗实例（单例复用，关闭即删）
     QDialog*     m_excDlg            = nullptr;   // ★ 2026-09-13 异常明细弹窗实例（单例复用，关闭即删）
+    // ★ 2026-09-22 现场需求①：回传明细弹窗实例（单例复用，关闭即删）
+    //   OutboxListDialog 定义在 MainWindow.cpp 内且无 Q_OBJECT → 用 std::function 暴露"重载列表"，
+    //   避免跨文件类型转换；响应对账（outboxResponseSaved）到达时若弹窗开着即刷新。
+    QDialog*     m_cbDlg             = nullptr;
+    std::function<void()> m_cbDlgRefresh;
+    // ★ 2026-09-22 现场反馈「弹窗打开后界面卡顿」：响应留痕高频落库时的**合并重载**入口
+    //   （波次完结补发几十条回执 → 400ms 合并为一次整表重建；打开/手动刷新/切波次仍即时重载）
+    std::function<void()> m_cbDlgCoalesce;
 };

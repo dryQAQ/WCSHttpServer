@@ -136,6 +136,15 @@ struct OutboxRecord
     int     retryCount      = 0;
     QString nextRetry;
     QString createdAt;
+    // ★ 2026-09-22 现场需求①：回传响应留痕（波次面板「回传次数 → 查看 → 双击」展示）
+    //   respHttp — 最近一次回传的 HTTP 状态码（0 = 未收到 HTTP 响应：超时/网络层失败）
+    //   respBody — 最近一次回传的**完整响应体原文**（全量落库，不做长度截断）
+    //   respNote — 传输层说明（超时/网络错误描述），无则空
+    //   respTime — 响应落库时间；为空 = 该报文尚无响应留痕（升级前的历史报文或尚未回传）
+    int     respHttp        = 0;
+    QString respBody;
+    QString respNote;
+    QString respTime;
 };
 
 // ──── 新增：异常记录 ────
@@ -377,19 +386,37 @@ public:
     QVector<OutboxRecord> getPendingOutboxFullbox(int limit = 10);
     // 查询待重试的完结回传出站消息（H8）
     QVector<OutboxRecord> getPendingOutboxEnd(int limit = 10);
-    // 更新满箱回传出站消息状态（H7，重试用）
+    // 更新满箱回传出站消息状态（H7，重试用）—— ★ 每次调用 = 消耗一次重试次数（retry_count + 1）
     bool updateOutboxFullboxStatus(const QString& msgId, const QString& newStatus, const QString& nextRetry);
-    // 更新完结回传出站消息状态（H8，重试用）
+    // 更新完结回传出站消息状态（H8，重试用）—— ★ 每次调用 = 消耗一次重试次数（retry_count + 1）
     bool updateOutboxEndStatus(const QString& msgId, const QString& newStatus, const QString& nextRetry);
+    // ★ 2026-09-22 现场需求：只改状态、**不动 retry_count**（终态标记专用）
+    //   口径：retry_count = 已发生的"重发尝试"次数（首发不计）。终态标记（重试耗尽 failed /
+    //   payload 解析失败 failed / 波次切出 cancelled）不是一次尝试，故走本方法。
+    bool setOutboxFullboxStatus(const QString& msgId, const QString& newStatus, const QString& nextRetry);
+    bool setOutboxEndStatus(const QString& msgId, const QString& newStatus, const QString& nextRetry);
     // 标记满箱回传出站成功（H7）
     bool markOutboxFullboxSuccess(const QString& msgId);
     // 标记完结回传出站成功（H8）
     bool markOutboxEndSuccess(const QString& msgId);
+    // ★ 2026-09-22 现场需求①：回传响应留痕回填（波次面板「回传次数 → 查看 → 双击看报文与响应」）
+    //   调用时机：**每次**收到回传响应（HttpClient::reportResult）——成功、失败、超时、
+    //   网络层失败、手动重传全部覆盖写"最近一次"响应，与出站状态机互不干扰
+    //   （本方法只写 resp_* 四列，不改 status/retry_count；状态迁移仍由 mark*/update* 负责）。
+    //   参数：msgId 幂等键；isH7=true → outbox_fullbox，false → outbox_end；
+    //        httpStatus = HTTP 状态码（0 = 未收到 HTTP 响应）；body = **完整响应体原文**
+    //        （**不做任何长度截断** —— 现场要求报文内容必须完整可查）；note = 传输层说明（可空）。
+    //   返回：SQL 执行成功标记（行不存在时也算成功：该报文可能未成功入 Outbox）。
+    bool saveOutboxResponse(const QString& msgId, bool isH7, int httpStatus,
+                            const QString& body, const QString& note);
     // 按波次号查询待重试出站消息（人工重发用）
     QVector<OutboxRecord> getOutboxByOrderCode(const QString& orderCode);
     // 按波次号查询全部 满箱回传（H7）出站消息（含状态，供未完成波次面板展示/重传）
+    // ★ 2026-09-22 同时带回响应留痕（respHttp/respBody/respNote/respTime），供「回传明细」弹窗
+    //   双击查看；**无 LIMIT = 该波次全部条目**（现场要求：不抽稀、不截断）
     QVector<OutboxRecord> getOutboxFullboxByOrder(const QString& orderCode);
     // 按波次号查询全部 完结回传（H8）出站消息（含状态，供未完成波次面板展示/重传）
+    // ★ 2026-09-22 同上：带回响应留痕；无 LIMIT = 该波次全部条目
     QVector<OutboxRecord> getOutboxEndByOrder(const QString& orderCode);
     // 按 msgId 查询单条出站消息（人工重发用）
     OutboxRecord getOutboxFullboxByMsgId(const QString& msgId);

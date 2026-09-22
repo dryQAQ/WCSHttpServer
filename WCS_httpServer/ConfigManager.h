@@ -99,14 +99,26 @@ struct AppConfig
     //   true（默认）= 解锁且未绑定容器的格口不下发到该格，改投异常口（不计分拣、不消耗额度）
     //   false        = 逐字回退改造前行为（锁格/未绑定都按原有逻辑照发）
     bool    sortingRequireBoundGrid = SORTING_REQUIRE_BOUND_GRID;
+    // ★ 2026-09-22 现场需求（第2条）：锁格（=满箱）/完结补发时**立即**清掉该格活跃绑定（不等 H7 回执）
+    //   true（默认）= 锁格瞬间保存箱号快照并清理绑定 ⇒ 门禁立刻视为"未绑定"，件改投异常口；
+    //                  H7 报文与箱号持久保留在 outbox_fullbox，失败自动重试、耗尽留痕等人工重传。
+    //   false        = 逐字回退改造前行为（等 H7 回传成功后才解绑）。
+    bool    sortingClearBoxOnFullbox = SORTING_CLEAR_BOX_ON_FULLBOX;
+    // ★ 2026-09-22 现场需求（完结顺序）：完结回传（H8）一定是最后一条报文。
+    //   endFullboxBarrier=true（默认）：先把未回传记录补发成 H7，等它们跑到终态；
+    //     全部成功 → 直接发 H8；存在失败/未生成 → 暂缓并提示（列格口号），由人工决策。
+    //   false = 逐字回退改造前行为（补发完立即发 H8，不等结果）。
+    bool    endFullboxBarrier = END_FULLBOX_BARRIER;
+    // ask（默认）= 有失败时提示人工选择；auto = 不询问直接完结（留痕）；block = 必须人工重传成功才能完结
+    QString endFullboxBarrierPolicy = END_FULLBOX_BARRIER_POLICY;
 
     // ──── ★ 2026-09-14 计划分配表（落格结构优化）配置 ────
     //   客户口径：一个 SKU 可同时计划到「正常分拣格口」与「发货格口」，
     //   每个格口各有一份数量，落格按各格口数量分；已落+在途 ≥ 计划 → 改投异常口。
     bool    allocEnabled            = ALLOC_ENABLED;             // 总开关（false=回退改造前"恒取首个格口"行为）
     bool    allocRequirePlanValid   = ALLOC_REQUIRE_PLAN_VALID;  // true=Σ每格口计划≠orderQty 时拒绝开工
-    bool    allocGapMoveOnDisabled  = ALLOC_GAP_MOVE_ON_DISABLED;// 计划格口禁用时把未完成件转给同 SKU 其它计划格口
-    bool    allocGapMoveOnLocked    = ALLOC_GAP_MOVE_ON_LOCKED;  // 物理锁格时同样转移
+    bool    allocGapMoveOnDisabled  = ALLOC_GAP_MOVE_ON_DISABLED;// 计划格口禁用时把未完成件转给同 SKU 其它计划格口（★默认 false：2026-09-21 起取消跨格口搬额度）
+    bool    allocGapMoveOnLocked    = ALLOC_GAP_MOVE_ON_LOCKED;  // 物理锁格时同样转移（★默认 false）
     int     allocMaxInflight        = ALLOC_MAX_INFLIGHT;        // 在途认领上限（超出强制清扫+留痕）
     int     allocAuditIntervalMs    = ALLOC_AUDIT_INTERVAL_MS;   // 不变量巡检+认领清扫周期(ms)
     int     allocClaimTimeoutMs     = ALLOC_CLAIM_TIMEOUT_MS;    // 认领超时(ms)
@@ -119,6 +131,11 @@ struct AppConfig
     //   · true  = 与改造前一致，页面正常显示
     bool    showLivePage      = UI_SHOW_LIVE_PAGE_DEFAULT;        // 实时面板页（落格反馈数据）
     bool    showPlanAllocPage = UI_SHOW_PLAN_ALLOC_PAGE_DEFAULT;  // 计划分配表页
+    // ★ 2026-09-22 现场需求①：「运行日志」页右侧「效率统计」面板显隐
+    //   （= 原「效率统计」按钮的按下状态；该按钮已按现场要求隐藏 → 由本项控制）
+    //   true（默认）= 显示面板；false = 不创建面板，日志区吃满宽度
+    //   ★★ 同样只在**启动时读取一次**（改 config/http_server.xml 需重启程序才生效）★★
+    bool    logEffPanelOn     = UI_LOG_EFF_PANEL_DEFAULT;
 
     // ──── API 路由（WMS 调用 WCS 的接口路径，可配置以适应 WMS 路径变更）────
     QString apiInsertWaveInfo     = API_INSERT_WAVE_INFO;      // ① 波次下发（H4 WMS推送波次数据）(POST)

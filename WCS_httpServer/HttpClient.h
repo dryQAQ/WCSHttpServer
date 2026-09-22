@@ -58,10 +58,16 @@ public:
 
 signals:
     // 回传结果通知
-    // orderCode: 波次号
-    // success:   回传是否成功（HTTP 200 + body.success==true）
-    // body:      WMS返回的原始响应体（失败时为空）
-    void reportResult(const QString& orderCode, bool success, const QString& body);
+    // orderCode:  上下文（"fullbox_<msgId>" / "end_<msgId>" / "resendFullbox_<msgId>" /
+    //             "resendEnd_<msgId>" / "lockGrid_<grid>" / 波次号）——路由靠前缀
+    // success:    回传是否成功（HTTP 200 + body.success==true）
+    // httpStatus: ★ 2026-09-22 HTTP 状态码；**0 = 未收到 HTTP 响应**（超时 / 网络层失败）
+    // body:       ★ WMS 返回的**完整原始响应体**（不截断）；无响应体时为空串
+    // note:       ★ 2026-09-22 传输层说明（"超时（3000ms 无响应）"/网络错误描述），无则空
+    //   用途（现场需求①）：HttpServer 把响应原样落库到 outbox 的 resp_* 四列，
+    //   供波次面板「回传次数 → 查看 → 双击」展示该条报文的响应信息（全文，不截断）。
+    void reportResult(const QString& orderCode, bool success, int httpStatus,
+                      const QString& body, const QString& note);
 
     // ★ SKU-EPC 绑定查询结果（epc → barcode）
     //    epcBarcodeMap: EPC → barcode 映射，查询失败返回空 Map

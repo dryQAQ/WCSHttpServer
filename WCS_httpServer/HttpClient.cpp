@@ -85,7 +85,9 @@ void HttpClient::sendWaveComplete(const QString& orderCode, int sumLocation)
         HTTP_LOG_ERROR("回传URL为空，跳过 orderCode=%s", orderCode.toLocal8Bit().data());
         LogCenter::Instance()->wcs_run_log_warn(false,
             QString("[Report] 回传URL为空 orderCode=%1").arg(orderCode));
-        emit reportResult(orderCode, false, "URL is empty");
+        // ★ 2026-09-22：未发出 → 无 HTTP 响应（httpStatus=0），说明写入 note 供响应留痕展示
+        emit reportResult(orderCode, false, 0, QString(),
+                          QString::fromUtf8("回传URL为空，未发送"));
         return;
     }
 
@@ -152,8 +154,11 @@ void HttpClient::onReplyFinished()
 
     // ★ status=0 时记录 Qt 网络层错误，方便排查连接失败原因
     // ★ 2026-09-04：日志与 UI 明确提示"回传地址不通/网络失败"，带 URL 与错误描述
+    // ★ 2026-09-22：errText 提到分支外取一次 —— 作为 reportResult 的 note 落库（响应留痕）
+    QString netErrText;
     if (statusCode == 0) {
         QString errText = reply->errorString();
+        netErrText = errText;
         HTTP_LOG_ERROR("回传网络层失败（地址不通或网络异常） url=%s orderCode=%s error=%d errorString=%s",
             pr.url.toLocal8Bit().data(),
             pr.orderCode.toLocal8Bit().data(),
@@ -182,7 +187,10 @@ void HttpClient::onReplyFinished()
             .arg(pr.orderCode).arg(success).arg(statusCode)
             .arg(QString::fromUtf8(respBody).left(RESP_BODY_LOG_TRUNCATE)));  // 截断防止日志过长
 
-    emit reportResult(pr.orderCode, success, QString::fromUtf8(respBody));
+    // ★ 2026-09-22 现场需求①：把 **完整响应体** + HTTP 状态 + 传输层说明回传出去
+    //   （HttpServer 原样落库到 outbox 的 resp_* 四列；此处不做任何截断）
+    emit reportResult(pr.orderCode, success, statusCode,
+                      QString::fromUtf8(respBody), netErrText);
     m_pending.erase(it);
 }
 
@@ -215,7 +223,9 @@ void HttpClient::onReplyTimeout()
                 pr.reply->deleteLater();
             }
             pr.timer->deleteLater();
-            emit reportResult(pr.orderCode, false, QString());
+            // ★ 2026-09-22：超时 = 未收到 HTTP 响应（httpStatus=0），说明写入 note 供响应留痕展示
+            emit reportResult(pr.orderCode, false, 0, QString(),
+                              QString::fromUtf8("超时（%1ms 无响应）").arg(m_timeoutMs));
             m_pending.erase(it);
             break;
         }

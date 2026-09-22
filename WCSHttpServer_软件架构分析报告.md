@@ -93,14 +93,14 @@ flowchart LR
 | 落格去重/超收             | —                                  | sortingEpcDedup=true；sortingAllowOverrecv=false；orderQtyValidate=strict；conflictPolicy=STRICT_EXCEPTION |
 | 波次与绑定参数             | —                                  | expectedBindCount=1；waveTimeoutMin=0；h7FromLocationSource=sobi；h7DefaultTargetLocation=66 |
 | HTTP 回传超时            | 3000 ms                            | 10000 ms                               |
-| 面板开关                | —                                  | showLivePage=false；showPlanAllocPage=false（仅启动时读取） |
+| 面板开关                | logEffPanelOn 默认 true（define.h）    | showLivePage=false；showPlanAllocPage=false；logEffPanelOn=true（三者均仅启动时读取；logEffPanelOn 控制运行日志页效率统计面板，原「效率统计」按钮已隐藏） |
 | WAVE_MAP 留痕闸门        | define.h:169 上限 5000 SKU，首尾各 30 行    | 同样常量；环境变量 WCS_WAVE_MAP_FULL=1 强制全量        |
 
 证据：[默认常量](D:/WCS/WCSApp/WCS_httpServer/WCS_httpServer/define.h:53)、[业务格口](D:/WCS/WCSApp/WCS_httpServer/WCS_httpServer/define.h:191)、[EPC 长度默认](D:/WCS/WCSApp/WCS_httpServer/WCS_httpServer/define.h:306)、[留痕闸门常量](D:/WCS/WCSApp/WCS_httpServer/WCS_httpServer/define.h:155)、[源码样例](D:/WCS/WCSApp/WCS_httpServer/WCS_httpServer/config/http_server.xml:129)、[发布配置](D:/WCS/WCSApp/WCS_httpServer/release_WcsHttpServer/config/http_server.xml:51)。这些是文件中的值；结合 2026-09-19 08:49 的 WCS.log 启动行（端口 8191/2000、env=test），发布配置当前呈「测试/联调形态」——feedbackTestUrl/rfidQueryUrl/RFID 推送/S7 均指向本机 127.0.0.1 的 mock 对端，不能据此断言现场正以正式 WMS 地址运行。
 
 发布目录还带 config_backup.zip、config_backup/ 下「启用mock前备份」与「还原正式前备份」两组快照（20260906–20260916 多时点），以及 mock_env/启用Mock配置.bat、还原正式配置.bat 两个切换工具；配置根目录存在 2026-09-08/09/15/17/19 多个 bak。这说明现场在「正式 ↔ mock」两套配置间切换已是常规操作，配置管理靠人工备份而非版本化发布。
 
-回传 URL/AppKey/method、环境、HTTP 超时、RFID 查询/心跳及部分波次参数可从 UI 应用热更新（2026-09-19 08:50:23 WCS.log 有「配置热生效」记录）；端口、设备连接地址、线程池、面板开关（showLivePage/showPlanAllocPage 仅启动读一次）需要重启生效。热更新涉及共享配置的并发风险，见第 5 节。[热更新范围](D:/WCS/WCSApp/WCS_httpServer/WCS_httpServer/MainWindow.cpp:2718)
+回传 URL/AppKey/method、环境、HTTP 超时、RFID 查询/心跳及部分波次参数可从 UI 应用热更新（2026-09-19 08:50:23 WCS.log 有「配置热生效」记录）；端口、设备连接地址、线程池、面板开关（showLivePage/showPlanAllocPage/logEffPanelOn 仅启动读一次）需要重启生效。热更新涉及共享配置的并发风险，见第 5 节。[热更新范围](D:/WCS/WCSApp/WCS_httpServer/WCS_httpServer/MainWindow.cpp:2718)
 
 ### 1.4 软件与构建依赖
 

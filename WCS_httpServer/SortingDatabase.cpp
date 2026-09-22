@@ -464,12 +464,29 @@ void SortingDatabase::createTables()
     q.exec(SQL_CREATE_TABLE_OUTBOX_FULLBOX);
     // ★ 2026-09-08 保险：outbox_fullbox 旧库缺 grid 列迁移（失败格口下拉读取用；重复列错误忽略）
     q.exec(SQL_ALTER_ADD_OB_GRID);
+    // ★ 2026-09-22 保险：outbox_fullbox 旧库缺"响应留痕"4 列迁移
+    //   （波次面板「回传次数 → 查看 → 双击」要显示 WMS 响应；缺列会让回填 SQL 报 no such column
+    //    而静默丢失响应信息 → 与 grid 列同样的教训，这里一并补上，重复列错误忽略）
+    q.exec(SQL_ALTER_ADD_OB_RESP_HTTP);
+    q.exec(SQL_ALTER_ADD_OB_RESP_BODY);
+    q.exec(SQL_ALTER_ADD_OB_RESP_NOTE);
+    q.exec(SQL_ALTER_ADD_OB_RESP_TIME);
     q.exec(SQL_CREATE_INDEX_OUTBOX_ORDER);
     q.exec(SQL_CREATE_INDEX_OUTBOX_RETRY);
     // 完结回传出站（H8）
     q.exec(SQL_CREATE_TABLE_OUTBOX_END);
+    q.exec(SQL_CREATE_INDEX_OUTBOX_END_ORDER);   // ★ 2026-09-22：按波次取 H8 出站消息加速
+    // ★ 2026-09-22 保险：outbox_end 旧库缺"响应留痕"4 列迁移（同上）
+    q.exec(SQL_ALTER_ADD_OE_RESP_HTTP);
+    q.exec(SQL_ALTER_ADD_OE_RESP_BODY);
+    q.exec(SQL_ALTER_ADD_OE_RESP_NOTE);
+    q.exec(SQL_ALTER_ADD_OE_RESP_TIME);
     // 异常记录
     q.exec(SQL_CREATE_TABLE_EXCEPTION_RECORD);
+    // ★ 2026-09-22 性能（现场反馈"点开按钮界面明显卡顿"）：异常表按波次索引 ——
+    //   波次列表/回传明细弹窗的波次下拉（getAllWaves）原对 exception_record 每波次全表扫描。
+    //   ★ 必须放在 CREATE TABLE exception_record **之后**（先建表再建索引；否则该 DDL 静默失败）。
+    q.exec(SQL_CREATE_INDEX_EXC_ORDER);
     // H4 原始报文单独落库（数据量大，独立表）
     q.exec(SQL_CREATE_TABLE_WAVE_RAW);
     // 每日峰值效率表（2026-09-07 波次面板峰值效率）
@@ -2086,6 +2103,42 @@ bool SortingDatabase::updateOutboxFullboxStatus(const QString& msgId, const QStr
     });
 }
 
+// ★ 2026-09-22 现场需求：只改状态、**不动 retry_count**（终态标记专用）
+//   口径：retry_count 严格等于"已发生的重发尝试次数"（首发不计，每次重发 +1）。
+//   因此"重试耗尽→failed / payload 解析失败→failed / 波次切出→cancelled"用本方法，
+//   避免把"不是一次尝试"的终态标记也算成一次重试（否则出现"日志重试2/2、库计数=3"的漂移）。
+bool SortingDatabase::setOutboxFullboxStatus(const QString& msgId, const QString& newStatus, const QString& nextRetry)
+{
+    return runOnDbThread([&]() -> bool {
+        if (!m_bOpened) return false;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return false;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SET_OUTBOX_STATUS);
+        q.addBindValue(newStatus);
+        q.addBindValue(nextRetry);
+        q.addBindValue(msgId);
+        return q.exec();
+    });
+}
+
+bool SortingDatabase::setOutboxEndStatus(const QString& msgId, const QString& newStatus, const QString& nextRetry)
+{
+    return runOnDbThread([&]() -> bool {
+        if (!m_bOpened) return false;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return false;
+
+        QSqlQuery q(db);
+        q.prepare(SQL_SET_OUTBOX_END_STATUS);
+        q.addBindValue(newStatus);
+        q.addBindValue(nextRetry);
+        q.addBindValue(msgId);
+        return q.exec();
+    });
+}
+
 bool SortingDatabase::markOutboxFullboxSuccess(const QString& msgId)
 {
     return runOnDbThread([&]() -> bool {
@@ -2097,6 +2150,54 @@ bool SortingDatabase::markOutboxFullboxSuccess(const QString& msgId)
         q.prepare(SQL_MARK_OUTBOX_SUCCESS);
         q.addBindValue(msgId);
         return q.exec();
+    });
+}
+
+// ============================================================================
+// ★ 2026-09-22 现场需求①：回传响应留痕回填（H7/H8 共用一份实现，避免两表口径漂移）
+//   调用时机：HttpServer 的三个回执入口（onFullboxReplyFinished / onEndReplyFinished /
+//   onOutboxResendReply）在拿到 HttpClient 的响应后立即调用——成功、失败、超时、网络层失败、
+//   手动重传全覆盖；同一 msgId 多次回传时**覆盖写"最近一次"响应**（不新增行 → 回传条目数不变）。
+//   写入口径：
+//     · resp_body = **完整响应体原文**（现场要求：报文内容必须完整可查 → 此处**绝不截断**；
+//       SQLite TEXT 上限 1e9 字符，WMS 侧正常响应为百字节级 JSON，无需设限）；
+//     · resp_http = HTTP 状态码（0 = 未收到 HTTP 响应：超时/网络不通，此时看 resp_note）；
+//     · resp_note = 传输层说明（"超时（3000ms 无响应）"/网络错误描述），无则空串；
+//     · resp_time = 本次响应落库时间（面板/弹窗展示"响应时间"用）。
+//   不影响状态机：本方法只写 resp_* 四列，**不改 status / retry_count / next_retry**。
+// ============================================================================
+bool SortingDatabase::saveOutboxResponse(const QString& msgId, bool isH7, int httpStatus,
+                                        const QString& body, const QString& note)
+{
+    if (msgId.isEmpty()) return false;   // 无幂等键 → 无可回填行（正常流程不会走到）
+
+    // ★ 空串归一（本项目已踩过的坑，见 rfid_raw 同款注释）：
+    //   Qt 会把 **null QString 绑定为 SQL NULL**，而 resp_body / resp_note 是 NOT NULL DEFAULT ''
+    //   → 直接绑 null 会 "NOT NULL constraint failed" 而写入失败（响应留痕静默丢失）。
+    //   超时/网络失败时 note 有值、body 为空；正常响应时 body 有值、note 为 null → 两者都必须归一。
+    const QString bodyText = body.isNull() ? QString::fromLatin1("") : body;
+    const QString noteText = note.isNull() ? QString::fromLatin1("") : note;
+
+    return runOnDbThread([&]() -> bool {
+        if (!m_bOpened) return false;
+        QSqlDatabase db = QSqlDatabase::database("SortingDB");
+        if (!db.isOpen()) return false;
+
+        QSqlQuery q(db);
+        q.prepare(isH7 ? SQL_UPDATE_OUTBOX_RESP : SQL_UPDATE_OUTBOX_END_RESP);
+        q.addBindValue(httpStatus);                 // 0 = 未收到 HTTP 响应
+        q.addBindValue(bodyText);                   // 完整响应体（不截断；null 已归一为 ""）
+        q.addBindValue(noteText);                   // 传输层说明（null 已归一为 ""）
+        q.addBindValue(currentTimeStr());           // resp_time
+        q.addBindValue(msgId);
+        if (!q.exec())
+        {
+            Data_WARN("[SortingDB] 回传响应留痕写入失败 kind=%s msgId=%s http=%d bodyLen=%d err=%s",
+                isH7 ? "H7" : "H8", msgId.toLocal8Bit().data(), httpStatus, bodyText.size(),
+                q.lastError().text().toLocal8Bit().data());
+            return false;
+        }
+        return true;
     });
 }
 
@@ -2210,6 +2311,11 @@ QVector<OutboxRecord> SortingDatabase::getOutboxFullboxByOrder(const QString& or
             rec.status = q.value(5).toString();
             rec.retryCount = q.value(6).toInt();
             rec.createdAt = q.value(7).toString();
+            // ★ 2026-09-22 响应留痕（完整原文，不做截断）
+            rec.respHttp = q.value(8).toInt();
+            rec.respBody = q.value(9).toString();
+            rec.respNote = q.value(10).toString();
+            rec.respTime = q.value(11).toString();
             result.append(rec);
         }
         return result;
@@ -2236,6 +2342,11 @@ QVector<OutboxRecord> SortingDatabase::getOutboxEndByOrder(const QString& orderC
             rec.status = q.value(3).toString();
             rec.retryCount = q.value(4).toInt();
             rec.createdAt = q.value(5).toString();
+            // ★ 2026-09-22 响应留痕（完整原文，不做截断）
+            rec.respHttp = q.value(6).toInt();
+            rec.respBody = q.value(7).toString();
+            rec.respNote = q.value(8).toString();
+            rec.respTime = q.value(9).toString();
             result.append(rec);
         }
         return result;
@@ -2251,7 +2362,7 @@ OutboxRecord SortingDatabase::getOutboxFullboxByMsgId(const QString& msgId)
         if (!db.isOpen()) return rec;
 
         QSqlQuery q(db);
-        // SELECT msg_id, order_code, boxcode, grid, payload, retry_count FROM outbox_fullbox WHERE msg_id = ?
+        // SELECT msg_id, order_code, boxcode, grid, payload, retry_count, status FROM outbox_fullbox WHERE msg_id = ?
         q.prepare(SQL_SELECT_OUTBOX_BY_MSGID);
         q.addBindValue(msgId);
         if (q.exec() && q.next()) {
@@ -2261,6 +2372,7 @@ OutboxRecord SortingDatabase::getOutboxFullboxByMsgId(const QString& msgId)
             rec.grid = q.value(3).toString();       // ★ 2026-09-08 格口号
             rec.payload = q.value(4).toString();
             rec.retryCount = q.value(5).toInt();
+            rec.status = q.value(6).toString();     // ★ 2026-09-22 真实状态（原缺失 → 恒为 pending）
         }
         return rec;
     });
@@ -2448,7 +2560,7 @@ OutboxRecord SortingDatabase::getOutboxEndByMsgId(const QString& msgId)
         if (!db.isOpen()) return rec;
 
         QSqlQuery q(db);
-        // SELECT msg_id, order_code, payload, retry_count FROM outbox_end WHERE msg_id = ?
+        // SELECT msg_id, order_code, payload, retry_count, status FROM outbox_end WHERE msg_id = ?
         q.prepare(SQL_SELECT_OUTBOX_END_BY_MSGID);
         q.addBindValue(msgId);
         if (q.exec() && q.next()) {
@@ -2456,6 +2568,7 @@ OutboxRecord SortingDatabase::getOutboxEndByMsgId(const QString& msgId)
             rec.orderCode = q.value(1).toString();
             rec.payload = q.value(2).toString();
             rec.retryCount = q.value(3).toInt();
+            rec.status = q.value(4).toString();     // ★ 2026-09-22 真实状态（原缺失 → 恒为 pending）
         }
         return rec;
     });

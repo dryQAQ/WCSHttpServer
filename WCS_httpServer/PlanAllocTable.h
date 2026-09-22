@@ -69,9 +69,13 @@
 // ──── 波次开始时一次性编译的不可变计划（运行期只读）────
 struct PlanCell
 {
-    qint16  grid     = 0;   // 内部格口号 1..BINDING_SLOT_COUNT
-    quint8  gridType = 0;   // 0=正常分拣(分类)  1=异常(66号)  2=发货
-    qint32  planQty  = 0;   // H4 对该 (SKU,格口) 的计划件数（同格口多行求和）
+    qint16  grid      = 0;  // 内部格口号 1..BINDING_SLOT_COUNT
+    quint8  gridType  = 0;  // 0=正常分拣(分类)  1=异常(66号)  2=发货  ← ★ 额度按此属性隔离
+    qint32  planQty   = 0;  // H4 对该 (SKU,格口) 的计划件数（同格口多行求和）
+    // ★ 2026-09-21 硬上限快照（不可变）：== build 时的 planQty。
+    //   额度消耗与封顶一律以 **(SKU,格口,属性)** 为单位，且不得超过本值；
+    //   planQty 若与本值不等，说明有人试图搬动额度 → 巡检会报违规并写异常表。
+    qint32  planQtyH4 = 0;
 };
 
 // 编译入参（解析期临时结构，编译后即释放，不驻留）
@@ -185,9 +189,16 @@ public:
                 lastGrid = g.grid;
 
                 PlanCell c;
-                c.grid     = g.grid;
-                c.gridType = g.type;
-                c.planQty  = g.qty;
+                c.grid      = g.grid;
+                c.gridType  = g.type;
+                c.planQty   = g.qty;
+                // ★ 2026-09-21 硬上限：H4 计划件数的**不可变快照**（编译期写入，此后任何路径都不得修改）。
+                //   现场问题（SKU 105301083212803：034(发货) 计划 2 件 → 实拣 83 件）根因是"缺口搬迁"
+                //   把 m_cells[].planQty 抬高了；本字段用于把"H4 计划"固化成唯一权威上限：
+                //     · claim 以 planQty 为额度（不再允许被抬高）；
+                //     · audit 断言 planQty == planQtyH4、landed ≤ planQtyH4（违反即异常表红线）；
+                //     · 发送侧/报文裁剪都用 planQtyH4 作为最终封顶。
+                c.planQtyH4 = g.qty;
                 m_cells.append(c);
 
                 CellQuota q;
@@ -250,6 +261,44 @@ public:
     {
         int si = -1, pi = -1;
         return locate(sku, gridKey, si, pi) ? m_cells[cellOf(si, pi)].planQty : 0;
+    }
+    // ★ 2026-09-21 硬上限：该 (SKU,格口) 的 **H4 计划件数快照**（不可变）。
+    //   发送侧封顶、报文裁剪、巡检红线一律以本值为准（planQty 可能被历史搬迁改过，
+    //   二者不等时巡检⑤会报违规；对外语义上"格口计划"永远等于本值）。
+    int planQtyH4Of(const QString& sku, const QString& gridKey) const
+    {
+        int si = -1, pi = -1;
+        return locate(sku, gridKey, si, pi) ? m_cells[cellOf(si, pi)].planQtyH4 : 0;
+    }
+    // ★ 2026-09-21 属性级合计（分类/发货各自独立封顶）：
+    //   landedSumOfType  = 该 SKU 在"该属性各格口"已落格合计（去重 EPC）
+    //   planQtyH4SumOfType = 该 SKU 在该属性各格口的 H4 计划合计
+    //   ⇒ 不变量：landed ≤ plan（跨属性借用额度会被立即暴露）
+    int landedSumOfType(const QString& sku, quint8 gridType) const
+    {
+        const int si = m_skuIndex.value(sku, -1);
+        if (si < 0) return 0;
+        const SkuPlan& sp = m_skus[si];
+        qint32 n = 0;
+        for (qint16 k = 0; k < sp.idxCount; ++k)
+        {
+            const qint32 ci = sp.idxFirst + k;
+            if (m_cells[ci].gridType == gridType) n += m_quota[ci].landed;
+        }
+        return n;
+    }
+    int planQtyH4SumOfType(const QString& sku, quint8 gridType) const
+    {
+        const int si = m_skuIndex.value(sku, -1);
+        if (si < 0) return 0;
+        const SkuPlan& sp = m_skus[si];
+        qint32 n = 0;
+        for (qint16 k = 0; k < sp.idxCount; ++k)
+        {
+            const qint32 ci = sp.idxFirst + k;
+            if (m_cells[ci].gridType == gridType) n += m_cells[ci].planQtyH4;
+        }
+        return n;
     }
     int landedOf(const QString& sku, const QString& gridKey) const
     {
@@ -498,29 +547,25 @@ public:
         return true;
     }
 
-    // ──── ⑤ 缺口搬迁（计划格口不可用时把未完成额度转给同 SKU 别的计划格口）────
-    // 保证"该 SKU 落进计划格口的总件数"不因换箱/锁格而流失；landed 不动。
-    // 返回实际搬迁件数（0 = 无需搬迁或非法入参）
+    // ──── ⑤ 缺口搬迁 —— ★ 2026-09-21 起**已停用**（保留函数以兼容既有调用点）────
+    //
+    //   为什么停用：搬迁会把源格口的 planQty 扣掉、把目标格口的 planQty 抬上去，
+    //   于是"某个 SKU 在某个格口计划 N 件"这条口径被打破 —— 现场实例（波次 PP202600000631，
+    //   SKU 105301083212583… 即 105301083212803）：034(发货) 计划 2 件被搬到 83 件、实拣 83 件；
+    //   040(分类) 176 → 95；且属于**跨属性**搬迁（分类额度搬进发货口）。
+    //   客户口径（2026-09-21）：每个格口严格按 H4 计划件数，额度**不再跨格口/跨属性搬迁**；
+    //   不可下发（未绑定容器 / 满箱未重绑）格口的剩余额度留在原格口，件改用其它格口自身额度，
+    //   都没有则改投异常口 66。
+    //
+    //   现状：本函数恒返回 0（不改任何数据）；配置项 allocGapMoveOnDisabled/Locked 仅为兼容
+    //   旧 XML 保留解析，启动时若为 true 会打 WARN "该开关已停用"。
+    //   返回值语义保持：0 = 无需搬迁/已停用。
     int moveGap(const QString& sku, qint16 fromGrid, qint16 toGrid)
     {
-        if (fromGrid == toGrid) return 0;
-        int siF = -1, piF = -1, siT = -1, piT = -1;
-        if (!locate(sku, gridKeyOf(fromGrid), siF, piF)) return 0;
-        if (!locate(sku, gridKeyOf(toGrid),   siT, piT)) return 0;
-        if (siF != siT) return 0;
-
-        const qint32 ciF = cellOf(siF, piF);
-        const qint32 ciT = cellOf(siT, piT);
-        const qint32 gap = m_quota[ciF].remain;      // 未完成额度（在途已被扣掉）
-        if (gap <= 0) return 0;
-
-        m_cells[ciF].planQty -= gap;
-        m_quota[ciF].remain   = 0;
-        m_cells[ciT].planQty += gap;
-        m_quota[ciT].remain  += gap;
-        // planTotal（SKU 总数）与 skuRemain（SKU 总余量）都不变：只是额度换了个格口
-        ++m_version;
-        return (int)gap;
+        Q_UNUSED(sku);
+        Q_UNUSED(fromGrid);
+        Q_UNUSED(toGrid);
+        return 0;
     }
 
     // ──── ⑥ 认领超时清扫（主线程，持锁；每 30s 一次）────
@@ -547,6 +592,10 @@ public:
     // ──── ⑦ 不变量巡检（只读，不修改任何状态）────
     //   ① landed ≤ planQty   ② landed+reserv ≤ planQty 且 remain 自洽
     //   ③ 每 SKU Σ planQty == planTotal   ④ Σ remain == skuRemain
+    //   ★ 2026-09-21 硬上限 + 属性隔离（现场问题：格口计划 2 件实拣 83 件）：
+    //   ⑤ planQty == planQtyH4            —— 额度绝不允许被搬动/抬高
+    //   ⑥ landed ≤ planQtyH4             —— 每 (SKU,格口) 实落不超过 H4 计划
+    //   ⑦ 每 (SKU,属性) Σ landed ≤ Σ planQtyH4 —— 分类/发货额度互不借用、互不顶账
     // 返回违规描述（空 = 全部通过），最多 20 条防日志爆炸
     QStringList audit() const
     {
@@ -561,6 +610,8 @@ public:
         {
             const SkuPlan& sp = m_skus[si];
             qint32 sumPlan = 0, sumRemain = 0;
+            // 属性级合计（分类/发货各自独立封顶）：key = gridType
+            QHash<int, qint32> landedByType, planByType;
             for (qint16 k = 0; k < sp.idxCount; ++k)
             {
                 const qint32 ci = sp.idxFirst + k;
@@ -568,6 +619,8 @@ public:
                 const PlanCell&  c = m_cells[ci];
                 sumPlan   += c.planQty;
                 sumRemain += q.remain;
+                landedByType[(int)c.gridType] += q.landed;
+                planByType[(int)c.gridType]   += c.planQtyH4;
                 if (q.landed > c.planQty)
                     bad << QStringLiteral("①SKU%1 格口%2 已落%3>计划%4")
                                .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(q.landed).arg(c.planQty);
@@ -579,6 +632,15 @@ public:
                     bad << QStringLiteral("②SKU%1 格口%2 余量%3≠计划%4-已落%5-在途%6")
                                .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(q.remain)
                                .arg(c.planQty).arg(q.landed).arg(q.reserv);
+                // ⑤ 额度被搬动（planQty 偏离 H4 快照）—— 现场"计划 2 件被抬到 83 件"就是这一条
+                if (c.planQty != c.planQtyH4)
+                    bad << QStringLiteral("⑤SKU%1 格口%2 当前计划%3≠H4计划%4（额度被搬动/抬高）")
+                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(c.planQty).arg(c.planQtyH4);
+                // ⑥ 每格口实落不超过 H4 计划（硬上限红线）
+                if (q.landed > c.planQtyH4)
+                    bad << QStringLiteral("⑥SKU%1 格口%2(%3) 已落%4>H4计划%5（严格不大于被突破）")
+                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(typeNameOf(c.gridType))
+                               .arg(q.landed).arg(c.planQtyH4);
             }
             if (sumPlan != sp.planTotal)
                 bad << QStringLiteral("③SKU%1 Σ计划%2≠总数%3")
@@ -586,6 +648,14 @@ public:
             if (sumRemain != sp.skuRemain)
                 bad << QStringLiteral("④SKU%1 Σ余量%2≠SKU余量%3")
                            .arg(skuNameAt(si)).arg(sumRemain).arg(sp.skuRemain);
+            // ⑦ 属性级：分类/发货互不借用
+            for (auto it = landedByType.constBegin(); it != landedByType.constEnd(); ++it)
+            {
+                if (it.value() > planByType.value(it.key()))
+                    bad << QStringLiteral("⑦SKU%1 %2属性 已落合计%3>计划合计%4（跨属性借用额度）")
+                               .arg(skuNameAt(si)).arg(typeNameOf((quint8)it.key()))
+                               .arg(it.value()).arg(planByType.value(it.key()));
+            }
         }
         return bad;
     }
@@ -613,6 +683,7 @@ public:
     {
         qint16 grid = 0; quint8 gridType = 0;
         qint32 planQty = 0, landed = 0, reserv = 0, remain = 0;
+        qint32 planQtyH4 = 0;      // ★ 2026-09-21：H4 计划快照（UI/报告用它显示"格口计划"；与 planQty 不等即异常）
     };
     struct UiRow
     {
@@ -639,6 +710,7 @@ public:
                 c.grid     = m_cells[ci].grid;
                 c.gridType = m_cells[ci].gridType;
                 c.planQty  = m_cells[ci].planQty;
+                c.planQtyH4 = m_cells[ci].planQtyH4;
                 c.landed   = m_quota[ci].landed;
                 c.reserv   = m_quota[ci].reserv;
                 c.remain   = m_quota[ci].remain;

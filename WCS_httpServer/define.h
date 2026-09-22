@@ -139,6 +139,41 @@
 #define SORTING_REQUIRE_BOUND_GRID true
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-22 现场需求（第2条）：锁格后立即保存并清理容器号（不等 H7 回传结果）
+//
+// 现场问题：格口没有绑定容器（箱子已被取走/格口已打开），衣服照样落进去。
+// 根因：PLC 锁格（=满箱）这条链路只发 H7 + 禁用格口，**完全不动容器号**；
+//   容器号只在 H7 回传"成功"时才被清掉（内存 erase + DB 归档）。
+//   于是 H7 失败/被 WMS 拒/被跳过时，内存与 DB 都残留一个物理上已不在场的旧箱号
+//   ⇒ 门禁"已解锁且已绑定容器"被这条残留记录骗过，件继续被导向没有箱子的格口；
+//   ⇒ 落格写库还会把件记到旧箱号上（串箱、账实不符）。
+//
+// 口径（现场确认）：
+//   · 锁格瞬间一次性完成：① 箱号快照（内存 + 解绑留痕 + H7 报文/outbox_fullbox.boxcode）
+//     ② 立即清理该格活跃绑定（内存 erase + DB active=0/unbind_time）
+//     ③ 不等 H7 回传结果；④ H7 报文与箱号**即使失败也保留**，失败自动重试，
+//        重试耗尽则记录留痕并进入「重传满箱切换(H7)」等人工回传。
+//
+// 稳定性：置 false 即逐字回退改造前行为（等 H7 成功才解绑；改 XML 后重启生效）。
+#define SORTING_CLEAR_BOX_ON_FULLBOX true
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ 2026-09-22 现场需求（完结顺序）：完结回传（H8）一定是最后一条报文
+//
+// 现场口径：点「结束任务」时，先把尚未满箱回传的格口数据补发成 H7，再根据 H7 的结果决定：
+//   · 全部成功                    → 立即生成并发送 H8（H8 即为最后一条报文）；
+//   · 仍有 pending（自动重试中）  → 暂缓 H8，等重试跑到终态（不打扰操作员）；
+//   · 有 failed/cancelled 或"报文未生成" → 暂缓 H8，**提示未成功的满箱回传及对应格口号**，
+//                                        由操作员选择「先去处理/人工重传」或「确认直接完结」。
+//   （不要求 H7 全部成功：人工重传成功后自动放行；人工确认则留痕后放行。）
+//
+// 稳定性：置 false 即逐字回退改造前行为（补发完立即发 H8，不等结果；改 XML 后重启生效）。
+#define END_FULLBOX_BARRIER true
+// 屏障策略：ask（默认，提示人工选择）/ auto（不询问直接完结并留痕）/ block（必须人工重传成功）
+#define END_FULLBOX_BARRIER_POLICY "ask"
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ★ 2026-09-14 计划分配表（落格结构优化）配置
 //
 // 背景（客户口径）：同一 SKU 可以同时计划到「正常分拣（分类）格口」与
@@ -153,8 +188,24 @@
 // ═══════════════════════════════════════════════════════════════════════════
 #define ALLOC_ENABLED              true   // 计划分配表总开关（false=逐字回退改造前行为：恒取首个格口）
 #define ALLOC_REQUIRE_PLAN_VALID   false  // true=开工预检发现「Σ每格口计划 ≠ H4 orderQty」即拒绝开工（默认只告警）
-#define ALLOC_GAP_MOVE_ON_DISABLED true   // 计划格口满箱未重绑(禁用)时，把未完成计划件转给同 SKU 其它可用计划格口
-#define ALLOC_GAP_MOVE_ON_LOCKED   true   // 计划格口物理锁格时同样转移（false=仅禁用格口转移）
+// ★ 2026-09-21 客户口径修正：**取消跨格口搬额度**（缺口搬迁默认关闭）
+//
+//   现场问题（SKU 105301083212803，波次 PP202600000631）：H4 计划为 034(发货) 2 件 + 040(分类) 176 件，
+//   但两个箱子轮流满箱（锁格→H7→禁用）时，缺口搬迁把"未完成计划件"在两个格口之间来回搬
+//   （日志窗口内 3 次：034→040 39件、040→034 21件、034→040 8件；全波次净搬入 034 81 件），
+//   于是 034 的"当前有效计划"变成 2+81=83、实拣 83；040 变成 176-81=95、实拣 95
+//   ⇒ 现场在查询页看到"计划 2 / 分拣记录 83"，与 H4 计划对不上（总量虽守恒 178=178，但分格口口径失真；
+//     且这次搬迁是**跨类型**的：分类口的额度被搬到发货口）。
+//
+//   新口径（客户确认 2026-09-21）：
+//     · **每个格口严格按 H4 计划件数**，额度**不再跨格口搬迁**（既不搬入也不搬出）；
+//     · 格口不可下发（未绑定容器 / 满箱未重绑(禁用)）时，其剩余额度**留在原格口**；
+//       件优先用**其它格口自身的剩余额度**承接（前提该格口可下发）；其它格口都没有可用额度
+//       → 改投异常口 66（不计已分拣、不消耗额度、留痕区分原因）；
+//     · 格口恢复可下发（H6 绑定容器 / 换箱重绑）后，原本留在该格口的额度**自动继续分配**。
+//   两个开关保留（可显式置 true 回退"搬迁"行为），但默认关闭。
+#define ALLOC_GAP_MOVE_ON_DISABLED false  // 计划格口满箱未重绑(禁用)时把未完成件转给同 SKU 其它计划格口（默认关闭）
+#define ALLOC_GAP_MOVE_ON_LOCKED   false  // 计划格口物理锁格时同样转移（默认关闭）
 #define ALLOC_MAX_INFLIGHT         2000   // 在途认领上限（超出→立即强制清扫 + 异常表留痕，防认领泄漏）
 #define ALLOC_AUDIT_INTERVAL_MS    30000  // 不变量巡检 + 认领超时清扫周期(ms)
 #define ALLOC_CLAIM_TIMEOUT_MS     30000  // 认领超时(ms)：下发后迟迟无落格反馈则释放额度（复用 PLC 在途超时口径）
@@ -407,6 +458,16 @@
 #define UI_SHOW_LIVE_PAGE_DEFAULT        false  // 实时面板页（默认隐藏）
 #define UI_SHOW_PLAN_ALLOC_PAGE_DEFAULT  false  // 计划分配表页（默认隐藏）
 
+// ──── ★ 2026-09-22 现场需求①：「运行日志」页右侧「效率统计」面板显隐 ────
+//   背景：原「任务接收控制」区的「效率统计」按钮（可勾选、默认按下）已按现场要求**隐藏**，
+//         按钮逻辑保留但不再可点 → 面板显隐改由本项（XML <logEffPanelOn>）控制。
+//   ★ 默认 true = 面板显示（与按钮隐藏前"默认按下"的行为完全一致，零回归：老配置无该项时照旧显示）。
+//   ★★ 与上面两个页面开关同口径：只在**启动时读取一次**（改 XML 需重启程序才生效）★★
+//   ★ 置 false 时：面板懒创建路径不执行（m_logEffPanel 保持 nullptr）→ 日志区吃满宽度，
+//     每秒的 tick()/宽度对齐内部直接返回 → 隐藏期间**零开销**。
+//   ★ 现场恢复按钮显示：删掉 MainWindow::setupUI 里 m_btnEffChart->setVisible(false) 那一行。
+#define UI_LOG_EFF_PANEL_DEFAULT         true   // 效率统计面板（默认显示）
+
 // ──── 建表：分拣记录表 ────
 // 创建分拣记录主表，存储每条 PLC 落格反馈的完整信息
 // 字段说明：
@@ -656,6 +717,18 @@
 // ★ 2026-09-08 保险：outbox_fullbox 旧库缺 grid 列（满箱回传对应格口号，供"失败格口下拉"直接读取，
 //   免去运行时解析 payload JSON）；重复执行报 duplicate column，忽略即可
 #define SQL_ALTER_ADD_OB_GRID       "ALTER TABLE outbox_fullbox ADD COLUMN grid TEXT NOT NULL DEFAULT ''"
+// ★ 2026-09-22 现场需求①：波次面板「回传次数 + 查看」需要**逐条报文的响应留痕**
+//   旧库 outbox_fullbox / outbox_end 没有这 4 列 → CREATE TABLE IF NOT EXISTS 不会补列，
+//   回填 SQL 会因 no such column 稳定失败（同上方 grid 列的教训）。重复执行报 duplicate column，忽略即可。
+//   口径：resp_body 为**完整响应体原文**，不做任何长度截断（SQLite TEXT 上限 1e9 字符，够用）。
+#define SQL_ALTER_ADD_OB_RESP_HTTP  "ALTER TABLE outbox_fullbox ADD COLUMN resp_http INTEGER NOT NULL DEFAULT 0"
+#define SQL_ALTER_ADD_OB_RESP_BODY  "ALTER TABLE outbox_fullbox ADD COLUMN resp_body TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_OB_RESP_NOTE  "ALTER TABLE outbox_fullbox ADD COLUMN resp_note TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_OB_RESP_TIME  "ALTER TABLE outbox_fullbox ADD COLUMN resp_time TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_OE_RESP_HTTP  "ALTER TABLE outbox_end ADD COLUMN resp_http INTEGER NOT NULL DEFAULT 0"
+#define SQL_ALTER_ADD_OE_RESP_BODY  "ALTER TABLE outbox_end ADD COLUMN resp_body TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_OE_RESP_NOTE  "ALTER TABLE outbox_end ADD COLUMN resp_note TEXT NOT NULL DEFAULT ''"
+#define SQL_ALTER_ADD_OE_RESP_TIME  "ALTER TABLE outbox_end ADD COLUMN resp_time TEXT NOT NULL DEFAULT ''"
 // ★ 2026-09-06 保险：return_wave 波次头旧库缺列迁移
 #define SQL_ALTER_ADD_RW_ORDER_QTY  "ALTER TABLE return_wave ADD COLUMN order_qty INTEGER NOT NULL DEFAULT 0"
 #define SQL_ALTER_ADD_RW_STATUS     "ALTER TABLE return_wave ADD COLUMN status INTEGER NOT NULL DEFAULT 0"
@@ -781,6 +854,11 @@
 // retry_count— 已重试次数
 // next_retry — 下次重试时间
 // created_at — 创建时间
+// ★ 2026-09-22 新增（现场需求①：波次面板「回传次数」→「查看」→ 双击看报文与响应）：
+//   resp_http  — 最近一次回传的 HTTP 状态码（0 = 未收到 HTTP 响应：超时/网络层失败）
+//   resp_body  — 最近一次回传的**完整响应体原文**（不做长度截断；空 = 无响应体）
+//   resp_note  — 传输层说明（"超时（3000ms 无响应）"/网络错误描述），无则空
+//   resp_time  — 响应落库时间（yyyy-MM-dd HH:mm:ss）
 #define SQL_CREATE_TABLE_OUTBOX_FULLBOX \
     "CREATE TABLE IF NOT EXISTS outbox_fullbox (" \
     "  msg_id      TEXT PRIMARY KEY," \
@@ -791,7 +869,11 @@
     "  status      TEXT    NOT NULL DEFAULT 'pending'," \
     "  retry_count INTEGER NOT NULL DEFAULT 0," \
     "  next_retry  TEXT    NOT NULL DEFAULT ''," \
-    "  created_at  TEXT    NOT NULL DEFAULT ''" \
+    "  created_at  TEXT    NOT NULL DEFAULT ''," \
+    "  resp_http   INTEGER NOT NULL DEFAULT 0," \
+    "  resp_body   TEXT    NOT NULL DEFAULT ''," \
+    "  resp_note   TEXT    NOT NULL DEFAULT ''," \
+    "  resp_time   TEXT    NOT NULL DEFAULT ''" \
     ")"
 
 // ──── 建表：完结回传（H8） 完结出站表 ────
@@ -805,7 +887,11 @@
     "  status      TEXT    NOT NULL DEFAULT 'pending'," \
     "  retry_count INTEGER NOT NULL DEFAULT 0," \
     "  next_retry  TEXT    NOT NULL DEFAULT ''," \
-    "  created_at  TEXT    NOT NULL DEFAULT ''" \
+    "  created_at  TEXT    NOT NULL DEFAULT ''," \
+    "  resp_http   INTEGER NOT NULL DEFAULT 0," \
+    "  resp_body   TEXT    NOT NULL DEFAULT ''," \
+    "  resp_note   TEXT    NOT NULL DEFAULT ''," \
+    "  resp_time   TEXT    NOT NULL DEFAULT ''" \
     ")"
 
 // ──── 建表：异常记录表 ────
@@ -844,6 +930,15 @@
 #define SQL_CREATE_INDEX_OUTBOX_ORDER     "CREATE INDEX IF NOT EXISTS idx_outbox_order     ON outbox_fullbox(order_code)"
 // 按状态+重试时间查询 — 加速 Outbox 重试调度（查询待发送且已到重试时间的消息）
 #define SQL_CREATE_INDEX_OUTBOX_RETRY     "CREATE INDEX IF NOT EXISTS idx_outbox_retry     ON outbox_fullbox(status, next_retry)"
+// ★ 2026-09-22 性能（现场反馈"点开按钮界面明显卡顿"）：
+//   ① 波次列表/波次下拉（getAllWaves）原对 exception_record 做**每波次一次全表扫描**
+//      （无 order_code 索引）—— 实测同一份现场库：无索引 ~150ms（冷读可达 ~500ms）→ 有索引 ~78ms；
+//   ② 完结回传按波次取数（outbox_end WHERE order_code=?）原先只有主键索引 → 加 order_code 索引。
+//   两条 DDL 均为 IF NOT EXISTS：旧库下次启动（createTables）自动补建，无需人工干预。
+#define SQL_CREATE_INDEX_EXC_ORDER \
+    "CREATE INDEX IF NOT EXISTS idx_exc_order        ON exception_record(order_code)"
+#define SQL_CREATE_INDEX_OUTBOX_END_ORDER \
+    "CREATE INDEX IF NOT EXISTS idx_outbox_end_order ON outbox_end(order_code)"
 
 // ──── 波次操作 ────
 // 插入/更新波次头 — INSERT OR REPLACE，支持幂等覆盖（未分拣时）
@@ -1167,30 +1262,56 @@
 // 查询待重试的 完结回传（H8） 出站消息
 #define SQL_SELECT_OUTBOX_END_PENDING \
     "SELECT msg_id, order_code, payload, retry_count FROM outbox_end WHERE status = 'pending' AND next_retry <= ? ORDER BY created_at ASC LIMIT ?"
-// 更新出站消息状态（满箱回传（H7））
+// 更新出站消息状态（满箱回传（H7））—— ★ 每次调用 = 消耗一次重试次数（每次"重发尝试"独立 +1）
 #define SQL_UPDATE_OUTBOX_STATUS \
     "UPDATE outbox_fullbox SET status = ?, retry_count = retry_count + 1, next_retry = ? WHERE msg_id = ?"
-// 更新出站消息状态（完结回传（H8））
+// 更新出站消息状态（完结回传（H8））—— 同上：每次调用 = 消耗一次重试次数
 #define SQL_UPDATE_OUTBOX_END_STATUS \
     "UPDATE outbox_end SET status = ?, retry_count = retry_count + 1, next_retry = ? WHERE msg_id = ?"
+// ★ 2026-09-22 现场需求：**只改状态、不动 retry_count**（终态标记专用）
+//   背景（现场口径）："每次失败回传都应该有独立消耗次数" —— retry_count 必须严格等于
+//   "已发生的重发尝试次数"（首发不计）。因此：
+//     · 自动重试重发（poll 调度）→ 用上面的 +1 版本（那一次确实是重发尝试）；
+//     · 终态标记（重试耗尽→failed / payload 解析失败→failed / 波次切出→cancelled）
+//       → 用本版本（不是一次尝试，不能再 +1，否则出现"重试 2/2 但计数=3"的口径漂移）；
+//     · 人工重传失败 → 也按一次尝试 +1（见 HttpServer::onOutboxResendReply）。
+#define SQL_SET_OUTBOX_STATUS \
+    "UPDATE outbox_fullbox SET status = ?, next_retry = ? WHERE msg_id = ?"
+#define SQL_SET_OUTBOX_END_STATUS \
+    "UPDATE outbox_end SET status = ?, next_retry = ? WHERE msg_id = ?"
 // 标记出站成功（满箱回传（H7））
 #define SQL_MARK_OUTBOX_SUCCESS \
     "UPDATE outbox_fullbox SET status = 'success' WHERE msg_id = ?"
 // 标记出站成功（完结回传（H8））
 #define SQL_MARK_OUTBOX_END_SUCCESS \
     "UPDATE outbox_end SET status = 'success' WHERE msg_id = ?"
+// ★ 2026-09-22 回传响应留痕回填（现场需求①：双击看报文的"响应信息"）
+//   每次收到回传响应（成功/失败/超时/网络失败/手动重传）都覆盖写入"最近一次"响应；
+//   resp_body 为完整响应体原文 —— **不做长度截断**（现场要求：报文内容必须完整可查）。
+//   绑定：?1=resp_http  ?2=resp_body  ?3=resp_note  ?4=resp_time  ?5=msg_id
+#define SQL_UPDATE_OUTBOX_RESP \
+    "UPDATE outbox_fullbox SET resp_http = ?, resp_body = ?, resp_note = ?, resp_time = ? WHERE msg_id = ?"
+#define SQL_UPDATE_OUTBOX_END_RESP \
+    "UPDATE outbox_end SET resp_http = ?, resp_body = ?, resp_note = ?, resp_time = ? WHERE msg_id = ?"
 // 按波次号查询所有出站消息（人工重发用）
 #define SQL_SELECT_OUTBOX_BY_ORDER \
     "SELECT msg_id, order_code, boxcode, payload, retry_count FROM outbox_fullbox WHERE order_code = ? AND status = 'pending'"
 // 按 msgId 查询单条出站消息（人工重发用）
+// ★ 2026-09-22：补上 status 列 —— 原语句不查 status，导致 OutboxRecord.status 恒为默认值 "pending"，
+//   调用方（如人工重传失败回写"保持原状态+消耗一次次数"）会拿不到真实状态而误写。
 #define SQL_SELECT_OUTBOX_BY_MSGID \
-    "SELECT msg_id, order_code, boxcode, grid, payload, retry_count FROM outbox_fullbox WHERE msg_id = ?"
-// 按 msgId 查询单条 完结回传（H8 完结出站消息（S6 人工重发用））
+    "SELECT msg_id, order_code, boxcode, grid, payload, retry_count, status FROM outbox_fullbox WHERE msg_id = ?"
+// 按 msgId 查询单条 完结回传（H8 完结出站消息（S6 人工重发用））—— 同上补 status 列
 #define SQL_SELECT_OUTBOX_END_BY_MSGID \
-    "SELECT msg_id, order_code, payload, retry_count FROM outbox_end WHERE msg_id = ?"
+    "SELECT msg_id, order_code, payload, retry_count, status FROM outbox_end WHERE msg_id = ?"
 // 查询某波次全部 满箱回传（H7）出站消息（含状态，供未完成波次面板展示/重传）
+// ★ 2026-09-22 列尾新增 4 列（resp_http/resp_body/resp_note/resp_time，下标 8..11）——
+//   供波次面板「回传次数 → 查看 → 双击看报文与响应」使用；**既有列序与下标保持不变**，
+//   重传/失败下拉等既有调用方零改动。本查询**无 LIMIT = 该波次全部条目**（不抽稀、不截断）。
 #define SQL_SELECT_OUTBOX_FULLBOX_BY_ORDER_ALL \
-    "SELECT msg_id, order_code, boxcode, grid, payload, status, retry_count, created_at FROM outbox_fullbox WHERE order_code = ? ORDER BY created_at DESC"
+    "SELECT msg_id, order_code, boxcode, grid, payload, status, retry_count, created_at, " \
+    "       resp_http, resp_body, resp_note, resp_time " \
+    "FROM outbox_fullbox WHERE order_code = ? ORDER BY created_at DESC"
 // ★ 2026-09-16 现场需求⑤「重传满箱切换旁的下拉框只显示本波次数据」
 //   （原"全部历史"宏 SQL_SELECT_FAILED_OUTBOX_FULLBOX 已随其唯一调用方一起删除）
 //   同一口径（status IN ('failed','cancelled')，列序完全一致）但**只取指定波次**：
@@ -1203,8 +1324,11 @@
 #define SQL_SELECT_FAILED_OUTBOX_END \
     "SELECT msg_id, order_code, payload, status, retry_count, created_at FROM outbox_end WHERE status IN ('failed','cancelled') ORDER BY created_at DESC LIMIT ?"
 // 查询某波次全部 完结回传（H8）出站消息（含状态，供未完成波次面板展示/重传）
+// ★ 2026-09-22 同 H7：列尾新增 4 列响应留痕（下标 6..9），既有列序不变；无 LIMIT = 该波次全部条目
 #define SQL_SELECT_OUTBOX_END_BY_ORDER_ALL \
-    "SELECT msg_id, order_code, payload, status, retry_count, created_at FROM outbox_end WHERE order_code = ? ORDER BY created_at DESC"
+    "SELECT msg_id, order_code, payload, status, retry_count, created_at, " \
+    "       resp_http, resp_body, resp_note, resp_time " \
+    "FROM outbox_end WHERE order_code = ? ORDER BY created_at DESC"
 
 // ──── 异常记录操作 ────
 // 插入异常记录

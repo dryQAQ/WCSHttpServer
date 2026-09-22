@@ -23,6 +23,9 @@
 #include <QColor>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonDocument>   // ★ 2026-09-22 回传报文明细：JSON 解析/缩进美化（原文全文展示，不截断）
+#include <QCheckBox>       // ★ 2026-09-22 回传报文明细：「原始单行 / 美化缩进」切换
+#include <algorithm>       // ★ 2026-09-22 回传明细：std::stable_sort（按生成时间倒序，全量不抽稀）
 #include <QTextCursor>
 #include <QDialog>
 #include <QPlainTextEdit>
@@ -984,6 +987,643 @@ private:
 };
 
 // ============================================================================
+// ★ 2026-09-22 现场需求①：OutboxDetailDialog — 「回传报文详情」弹窗（双击回传明细行打开）
+//   回答"这条报文到底发出去了什么、WMS 回了什么"：
+//     · 字段区：类型/波次/格口/容器/报文ID/状态/重试次数/生成时间/响应时间/响应结果/目标地址
+//     · 页签①请求报文：payload **全文**（默认缩进美化，可切"原始单行（与线上完全一致）"）
+//     · 页签②响应信息：resp_body **全文** + HTTP 状态/响应时间 + 传输层说明（超时/网络失败）
+//   ★ 硬约束（现场要求）：**报文与响应都完整显示，绝不截断** ——
+//     为此不使用任何字符上限；用 QPlainTextEdit（大文本友好、只读、可全选复制、不折行+横向滚动），
+//     并在页签标题上标明字符数，便于自证"没有少内容"。
+//   数据来源：OutboxRecord（由 OutboxListDialog 直接传入，全量，不经任何截断/裁剪）。
+// ============================================================================
+class OutboxDetailDialog : public QDialog
+{
+public:
+    OutboxDetailDialog(const OutboxRecord& rec, bool isH7, QWidget* parent = nullptr)
+        : QDialog(parent), m_rec(rec), m_isH7(isH7)
+    {
+        setWindowTitle(QString::fromUtf8("%1 — %2")
+            .arg(isH7 ? QString::fromUtf8("满箱切换报文(H7)") : QString::fromUtf8("完结回传报文(H8)"),
+                 rec.msgId));
+        resize(1080, 760);
+
+        QVBoxLayout* root = new QVBoxLayout(this);
+
+        // ── 字段区：一眼看全这条报文的来龙去脉 ──
+        QGroupBox* grpInfo = new QGroupBox(QString::fromUtf8("基本信息"));
+        QFormLayout* form = new QFormLayout(grpInfo);
+        form->setLabelAlignment(Qt::AlignRight);
+        auto addField = [&](const QString& title, QLabel*& out, const QString& text,
+                            const QString& color = "#1565C0") {
+            out = new QLabel(text.isEmpty() ? QString::fromUtf8("—") : text);
+            out->setStyleSheet(QString("font-size: 13px; font-weight: bold; color: %1;").arg(color));
+            out->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            out->setWordWrap(true);
+            form->addRow(new QLabel(title), out);
+        };
+        addField(QString::fromUtf8("类型："), m_lblType,
+                 isH7 ? QString::fromUtf8("满箱切换（H7 满箱回传）")
+                      : QString::fromUtf8("完结回传（H8 波次完结通知）"));
+        addField(QString::fromUtf8("波次号："), m_lblOrder, rec.orderCode);
+        addField(QString::fromUtf8("格口号："), m_lblGrid,
+                 isH7 ? (rec.grid.isEmpty() ? QString::fromUtf8("—") : rec.grid) : QString(),
+                 "#37474F");
+        addField(QString::fromUtf8("容器号："), m_lblBox,
+                 isH7 ? (rec.boxcode.isEmpty() ? QString::fromUtf8("—") : rec.boxcode) : QString(),
+                 "#37474F");
+        addField(QString::fromUtf8("报文ID(msgId)："), m_lblMsgId, rec.msgId, "#37474F");
+        addField(QString::fromUtf8("状态："), m_lblStatus, outboxStatusText(rec.status),
+                 rec.status == "success" ? "#2E7D32"
+                                         : (rec.status == "failed" ? "#D32F2F" : "#E65100"));
+        addField(QString::fromUtf8("重试次数："), m_lblRetry, QString::number(rec.retryCount), "#37474F");
+        addField(QString::fromUtf8("生成时间："), m_lblCreated,
+                 rec.createdAt.isEmpty() ? QString::fromUtf8("—") : rec.createdAt, "#37474F");
+        addField(QString::fromUtf8("响应时间："), m_lblRespTime,
+                 rec.respTime.isEmpty() ? QString::fromUtf8("—（尚无响应留痕）") : rec.respTime,
+                 rec.respTime.isEmpty() ? "#9E9E9E" : "#37474F");
+        {
+            // 响应结果：成功 / 失败 / 未收到 HTTP 响应 / 无留痕（升级前的历史报文或尚未回传）
+            QString text, color = "#37474F";
+            if (rec.respTime.isEmpty() && rec.respBody.isEmpty() && rec.respNote.isEmpty() && rec.respHttp == 0)
+            {
+                text  = QString::fromUtf8("—（无响应留痕：该报文早于本功能上线，或尚未回传）");
+                color = "#9E9E9E";
+            }
+            else if (rec.respHttp == 0)
+            {
+                text  = QString::fromUtf8("未收到 HTTP 响应%1")
+                            .arg(rec.respNote.isEmpty() ? QString()
+                                                        : QString::fromUtf8("：") + rec.respNote);
+                color = "#D32F2F";
+            }
+            else
+            {
+                const bool ok = responseSuccessFromBody(rec.respBody);
+                text = QString::fromUtf8("HTTP %1 · %2%3")
+                           .arg(rec.respHttp).arg(ok ? QString::fromUtf8("成功") : QString::fromUtf8("失败"))
+                           .arg(rec.respNote.isEmpty() ? QString()
+                                                       : QString::fromUtf8("（") + rec.respNote + QString::fromUtf8("）"));
+                color = ok ? "#2E7D32" : "#D32F2F";
+                // ★ 2026-09-22 现场要求：这里也直接带上 WMS 返回的 body 正文（单行；全文见「响应信息」页签）
+                QString one = rec.respBody;
+                one.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ');
+                while (one.contains(QString::fromUtf8("  ")))
+                    one.replace(QString::fromUtf8("  "), QString::fromUtf8(" "));
+                one = one.trimmed();
+                if (!one.isEmpty())
+                    text += QString::fromUtf8("　｜　") + one;
+            }
+            addField(QString::fromUtf8("响应结果："), m_lblRespResult, text, color);
+        }
+        {
+            // 目标地址：只显示"当前配置"（历史报文实际地址未逐条留痕，标注清楚避免误判）
+            AppConfig& cfg = ConfigManager::instance()->config();
+            const QString url = isH7 ? cfg.activeFeedbackUrl() : cfg.activeEndFeedbackUrl();
+            const QString method = isH7 ? cfg.feedbackMethod : cfg.feedbackEndMethod;
+            addField(QString::fromUtf8("目标地址："), m_lblUrl,
+                     QString::fromUtf8("%1（method=%2）　※ 当前配置，仅参考：历史报文实际地址未逐条留痕")
+                         .arg(url, method),
+                     "#616161");
+        }
+        root->addWidget(grpInfo);
+
+        // ── 页签：请求报文 / 响应信息（均全文，可切原始单行/美化缩进）──
+        m_tabs = new QTabWidget(this);
+
+        m_txtReq = makeFullTextEdit();
+        m_txtResp = makeFullTextEdit();
+        m_tabReqIdx  = m_tabs->addTab(m_txtReq,  QString::fromUtf8("请求报文"));
+        m_tabRespIdx = m_tabs->addTab(m_txtResp, QString::fromUtf8("响应信息"));
+        root->addWidget(m_tabs, 1);
+
+        // ── 底部：原文/美化切换 + 复制全文 + 关闭 ──
+        QHBoxLayout* bottom = new QHBoxLayout();
+        m_chkRawReq = new QCheckBox(QString::fromUtf8("请求报文：显示原始单行（与线上完全一致）"));
+        m_chkRawResp = new QCheckBox(QString::fromUtf8("响应信息：显示原始单行"));
+        m_chkRawReq->setToolTip(QString::fromUtf8(
+            "勾选 = 显示数据库里原样保存的紧凑单行 JSON（与 onWire 发送内容逐字符一致）；\n"
+            "不勾 = 缩进美化显示（仅排版不同，**内容完全相同、均不截断**）"));
+        m_chkRawResp->setToolTip(m_chkRawReq->toolTip());
+        connect(m_chkRawReq,  &QCheckBox::toggled, this, [this](bool) { renderTexts(); });
+        connect(m_chkRawResp, &QCheckBox::toggled, this, [this](bool) { renderTexts(); });
+        bottom->addWidget(m_chkRawReq);
+        bottom->addWidget(m_chkRawResp);
+        bottom->addStretch();
+
+        QPushButton* btnCopyReq = new QPushButton(QString::fromUtf8("复制请求报文（全文）"));
+        QPushButton* btnCopyResp = new QPushButton(QString::fromUtf8("复制响应（全文）"));
+        connect(btnCopyReq, &QPushButton::clicked, this, [this]() {
+            QApplication::clipboard()->setText(m_txtReq->toPlainText());
+        });
+        connect(btnCopyResp, &QPushButton::clicked, this, [this]() {
+            QApplication::clipboard()->setText(m_txtResp->toPlainText());
+        });
+        bottom->addWidget(btnCopyReq);
+        bottom->addWidget(btnCopyResp);
+
+        QDialogButtonBox* box = new QDialogButtonBox(QDialogButtonBox::Close, this);
+        box->button(QDialogButtonBox::Close)->setText(QString::fromUtf8("关闭"));
+        connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        bottom->addWidget(box);
+        root->addLayout(bottom);
+
+        renderTexts();
+    }
+
+private:
+    // 出站状态文案（与波次列表既有口径一致：成功/失败（重试耗尽）/已取消重试/待发）
+    static QString outboxStatusText(const QString& status)
+    {
+        if (status == "success")   return QString::fromUtf8("成功");
+        if (status == "failed")    return QString::fromUtf8("失败（重试耗尽）");
+        if (status == "cancelled") return QString::fromUtf8("已取消重试");
+        return QString::fromUtf8("待发");
+    }
+
+    // 从响应体解析 WMS 业务成功标记（解析不出 → 按失败展示，但仍原文全文可查）
+    static bool responseSuccessFromBody(const QString& body)
+    {
+        if (body.trimmed().isEmpty()) return false;
+        const QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8());
+        if (!doc.isObject()) return false;
+        return doc.object().value("success").toBool(false);
+    }
+
+    // 全文文本框：大文本友好、只读、可全选复制、不折行 + 横向滚动条
+    static QPlainTextEdit* makeFullTextEdit()
+    {
+        QPlainTextEdit* t = new QPlainTextEdit();
+        t->setReadOnly(true);
+        t->setLineWrapMode(QPlainTextEdit::NoWrap);
+        t->setFont(QFont("Consolas", 10));
+        t->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+        // 中文回退字体与既有弹窗一致（QFont 的族名不做逗号回退，故交给样式表）
+        t->setStyleSheet("QPlainTextEdit { font-size: 12px; font-family: Consolas,'Microsoft YaHei';"
+                         " background: #FAFAFA; }");
+        return t;
+    }
+
+    // 全文渲染（两种视图内容完全等价，只差缩进/换行）
+    void renderTexts()
+    {
+        const QString reqText  = m_chkRawReq  && m_chkRawReq->isChecked()
+            ? m_rec.payload  : prettyJson(m_rec.payload);
+        QString respText = m_chkRawResp && m_chkRawResp->isChecked()
+            ? m_rec.respBody : prettyJson(m_rec.respBody);
+        if (respText.trimmed().isEmpty())
+        {
+            // 空响应体：按"到底发生了什么"给明确说明，而不是留空白（同样不做任何裁剪）
+            if (m_rec.respHttp == 0)
+                respText = QString::fromUtf8("（未收到 HTTP 响应）%1\n\n"
+                    "可能原因：回传地址不通 / 网络异常 / 响应超过超时时间。\n"
+                    "完整排查线索见运行日志 log\\Run\\run.log 中该 msgId 的 [原始报文] [WMS出站响应] 行。")
+                    .arg(m_rec.respNote.isEmpty() ? QString() : QString::fromUtf8("\n说明：") + m_rec.respNote);
+            else if (!m_rec.respTime.isEmpty())
+                respText = QString::fromUtf8("（HTTP %1，响应体为空：服务端未返回内容）").arg(m_rec.respHttp);
+            else
+                respText = QString::fromUtf8("（尚无响应留痕：该报文早于本功能上线，或尚未回传）");
+        }
+        m_txtReq->setPlainText(reqText);
+        m_txtResp->setPlainText(respText);
+
+        // 页签标题带字符数（自证完整性；不改变内容）
+        if (m_tabs)
+        {
+            m_tabs->setTabText(m_tabReqIdx,  QString::fromUtf8("请求报文（%1 字符）").arg(m_rec.payload.size()));
+            m_tabs->setTabText(m_tabRespIdx, QString::fromUtf8("响应信息（%1 字符）").arg(m_rec.respBody.size()));
+        }
+    }
+
+    // JSON 缩进美化；非 JSON（网关 HTML/纯文本）→ 原文返回（**不裁剪、不省略**）
+    static QString prettyJson(const QString& raw)
+    {
+        if (raw.trimmed().isEmpty()) return raw;
+        QJsonParseError err{};
+        const QJsonDocument doc = QJsonDocument::fromJson(raw.toUtf8(), &err);
+        if (err.error != QJsonParseError::NoError || doc.isNull())
+            return raw;   // 非 JSON：照原样全文显示
+        return QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
+    }
+
+private:
+    OutboxRecord m_rec;
+    bool         m_isH7 = true;
+    QLabel* m_lblType = nullptr;
+    QLabel* m_lblOrder = nullptr;
+    QLabel* m_lblGrid = nullptr;
+    QLabel* m_lblBox = nullptr;
+    QLabel* m_lblMsgId = nullptr;
+    QLabel* m_lblStatus = nullptr;
+    QLabel* m_lblRetry = nullptr;
+    QLabel* m_lblCreated = nullptr;
+    QLabel* m_lblRespTime = nullptr;
+    QLabel* m_lblRespResult = nullptr;
+    QLabel* m_lblUrl = nullptr;
+    QTabWidget* m_tabs = nullptr;
+    QPlainTextEdit* m_txtReq = nullptr;
+    QPlainTextEdit* m_txtResp = nullptr;
+    QCheckBox* m_chkRawReq = nullptr;
+    QCheckBox* m_chkRawResp = nullptr;
+    int m_tabReqIdx = 0;
+    int m_tabRespIdx = 1;
+};
+
+// ============================================================================
+// ★ 2026-09-22 现场需求①：OutboxListDialog — 「回传明细」弹窗（波次面板「回传次数」右侧「查看」）
+//   回答"这个波次到底回传了哪些报文、每一条 WMS 回了什么"：
+//     · 顶部：口径说明 + **波次切换下拉**（默认停在当前/选中波次，可切到任意历史波次）
+//     · 汇总：满箱切换(H7) 成功/待发/失败 ｜ 完结回传(H8) 成功/待发/失败 ｜ 合计 N 次
+//     · 明细表：该波次**全部**回传条目（无 LIMIT、不抽稀、不截断）
+//     · 双击行 → OutboxDetailDialog 看该条报文的全文请求报文与响应信息
+//   与「查看处理」（ExceptionListDialog）同款交互：下拉切波次即重载、单实例复用、可导出到运行日志。
+//   数据来源：SortingDatabase::getOutboxFullboxByOrder / getOutboxEndByOrder（均无 LIMIT）。
+// ============================================================================
+class OutboxListDialog : public QDialog
+{
+public:
+    OutboxListDialog(SortingDatabase* db, const QString& defaultOrder, QWidget* parent = nullptr)
+        : QDialog(parent), m_db(db)
+    {
+        setWindowTitle(QString::fromUtf8("回传明细 — 波次 %1")
+            .arg(defaultOrder.isEmpty() ? QString::fromUtf8("(未指定)") : defaultOrder));
+        resize(1320, 720);
+
+        QVBoxLayout* root = new QVBoxLayout(this);
+
+        // ── 顶部：口径说明（一行看懂"回传次数"到底数什么）──
+        m_lblSummary = new QLabel();
+        m_lblSummary->setWordWrap(true);
+        m_lblSummary->setTextFormat(Qt::RichText);
+        m_lblSummary->setStyleSheet("font-size: 13px; color: #333; background: #FFF8E1;"
+                                    " border: 1px solid #FFE082; border-radius: 4px; padding: 8px;");
+        root->addWidget(m_lblSummary);
+
+        // ── 波次切换行（★ 现场要求：查看弹窗要有切换查看波次的波次下拉框）──
+        QHBoxLayout* condRow = new QHBoxLayout();
+        condRow->addWidget(new QLabel(QString::fromUtf8("波次：")));
+        m_cmbWave = new QComboBox();
+        m_cmbWave->setMinimumWidth(420);
+        m_cmbWave->setFont(QFont(font().family(), 13));
+        m_cmbWave->setToolTip(QString::fromUtf8(
+            "切换要查看的波次（列出全部波次；括号内 = 该波次状态与回传条目数）。\n"
+            "默认停在当前运行波次（或用「波次数据历史记录」里选中的那一行）。\n"
+            "切换后下表与汇总结论立即按该波次重建。"));
+        m_defaultOrder = defaultOrder;   // ★ 见构造函数末尾：先显示窗口，再加载数据
+        condRow->addWidget(m_cmbWave);
+
+        m_btnRefresh = new QPushButton(QString::fromUtf8("刷新"));
+        m_btnRefresh->setMinimumHeight(32);
+        m_btnRefresh->setFont(QFont(font().family(), 13));
+        m_btnRefresh->setToolTip(QString::fromUtf8("重新查询该波次的全部回传条目与最新响应留痕"));
+        condRow->addWidget(m_btnRefresh);
+
+        condRow->addStretch();
+        m_btnExport = new QPushButton(QString::fromUtf8("导出到运行日志"));
+        m_btnExport->setMinimumHeight(32);
+        m_btnExport->setFont(QFont(font().family(), 13));
+        m_btnExport->setToolTip(QString::fromUtf8("把下表（含完整请求报文与响应体）逐条写入运行日志，便于拷贝留存"));
+        condRow->addWidget(m_btnExport);
+        root->addLayout(condRow);
+
+        // ── 明细表（该波次全部回传条目）──
+        m_tbl = new QTableWidget();
+        m_tbl->setColumnCount(9);
+        m_tbl->setHorizontalHeaderLabels(QStringList()
+            << "序号" << "生成时间" << "类型" << "格口" << "容器号"
+            << "状态" << "重试次数" << "响应结果" << "报文ID(msgId)");
+        m_tbl->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        m_tbl->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_tbl->setSelectionMode(QAbstractItemView::SingleSelection);
+        m_tbl->setAlternatingRowColors(true);
+        m_tbl->verticalHeader()->setVisible(false);
+        // ★ 2026-09-22 现场反馈「按钮点开后界面明显卡顿」：
+        //   原用 ResizeToContents → 每次重载都要为**每个单元格**测文本宽高（9 列 × N 行，
+        //   且"响应结果"列现在要展示 WMS 响应体正文）→ 打开/刷新时明显卡顿。
+        //   改为固定列宽 + 仅"响应结果"列自适应余宽：布局一次到位，不再逐格测量。
+        m_tbl->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        m_tbl->horizontalHeader()->setStretchLastSection(false);
+        {
+            static const int kWidths[9] = { 54, 168, 112, 66, 118, 108, 78, 460, 300 };
+            for (int c = 0; c < 9; ++c) m_tbl->setColumnWidth(c, kWidths[c]);
+            m_tbl->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Stretch);  // 响应结果列吃余宽
+        }
+        m_tbl->verticalHeader()->setDefaultSectionSize(28);
+        m_tbl->setStyleSheet(
+            "QTableWidget { font-size: 13px; }"
+            "QTableWidget::item { padding: 3px 6px; }"
+            "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 5px; }");
+        m_tbl->setToolTip(QString::fromUtf8(
+            "本表 = 该波次**全部**回传条目（满箱切换 H7 + 完结回传 H8），不抽稀、不截断。\n"
+            "双击任意一行 → 查看该条报文的**完整请求报文**与 **WMS 响应信息**（全文）。"));
+        root->addWidget(m_tbl, 1);
+
+        QDialogButtonBox* box = new QDialogButtonBox(QDialogButtonBox::Close, this);
+        box->button(QDialogButtonBox::Close)->setText(QString::fromUtf8("关闭"));
+        connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        root->addWidget(box);
+
+        connect(m_cmbWave, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int) { reload(); });
+        connect(m_btnRefresh, &QPushButton::clicked, this, [this]() {
+            rebuildWaveCombo(m_cmbWave->currentData().toString());   // 同步刷新下拉里的计数标注
+            reload();
+        });
+        connect(m_btnExport, &QPushButton::clicked, this, [this]() { exportToLog(); });
+        // 双击 → 报文明细（全文请求报文 + 全文响应）
+        connect(m_tbl, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+            if (row < 0 || row >= m_rows.size()) return;
+            OutboxDetailDialog dlg(m_rows.at(row).second, m_rows.at(row).first, this);
+            dlg.exec();
+        });
+
+        // ★ 2026-09-22 现场反馈「按钮点开后界面明显卡顿」：**先显示窗口，再在下一拍加载数据**。
+        //   原因：打开瞬间要跑 3 个同步查询（波次列表 getAllWaves 实测 78~150ms、冷读可达 ~500ms，
+        //   另有 2 个计数查询）+ 整表重建 → 观感上"点了按钮窗口半天不出来"。
+        //   改为：构造函数只搭界面 → show() 立即出窗口 → 下一拍（0ms 定时）再填下拉与明细。
+        QTimer::singleShot(0, this, [this]() {
+            rebuildWaveCombo(m_defaultOrder);
+            reload();
+        });
+    }
+
+    // 主窗口注入：日志导出回调（与「查看处理」同款，避免弹窗直接依赖 MainWindow）
+    void setLogCallback(std::function<void(const QString&)> cb) { m_logCb = std::move(cb); }
+
+    // 响应留痕变化时由 MainWindow 调用（弹窗开着就即时刷新，看到 待发 → 成功 + 响应结果）
+    void reload()
+    {
+        if (!m_db || !m_tbl) return;
+        m_orderCode = m_cmbWave ? m_cmbWave->currentData().toString() : QString();
+
+        // 全量取数（两个查询都无 LIMIT）：H7 满箱切换 + H8 完结回传
+        QVector<OutboxRecord> h7 = m_db->getOutboxFullboxByOrder(m_orderCode);
+        QVector<OutboxRecord> h8 = m_db->getOutboxEndByOrder(m_orderCode);
+
+        OutboxStatusCount c7, c8;
+        for (const OutboxRecord& r : h7)
+        {
+            if (r.status == "success")     ++c7.success;
+            else if (r.status == "failed") ++c7.failed;
+            else                           ++c7.pending;
+        }
+        for (const OutboxRecord& r : h8)
+        {
+            if (r.status == "success")     ++c8.success;
+            else if (r.status == "failed") ++c8.failed;
+            else                           ++c8.pending;
+        }
+
+        // 合并成一张表：按生成时间倒序（同一时刻维持原顺序），H7/H8 混排但类型列可辨
+        m_rows.clear();
+        m_rows.reserve(h7.size() + h8.size());
+        for (const OutboxRecord& r : h7) m_rows.append(qMakePair(true, r));
+        for (const OutboxRecord& r : h8) m_rows.append(qMakePair(false, r));
+        std::stable_sort(m_rows.begin(), m_rows.end(),
+            [](const QPair<bool, OutboxRecord>& a, const QPair<bool, OutboxRecord>& b) {
+                return a.second.createdAt > b.second.createdAt;   // "yyyy-MM-dd HH:mm:ss" 字典序即时间序
+            });
+
+        // ── 填表（大列表：关排序/关重绘 → 一次性填 → 开重绘；不做任何行数上限）──
+        m_tbl->setSortingEnabled(false);
+        m_tbl->setUpdatesEnabled(false);
+        m_tbl->clearContents();
+        m_tbl->setRowCount(m_rows.size());
+        for (int i = 0; i < m_rows.size(); ++i)
+        {
+            const bool isH7 = m_rows.at(i).first;
+            const OutboxRecord& r = m_rows.at(i).second;
+            auto setCell = [&](int col, const QString& text, const QColor& color = QColor(),
+                               const QString& tip = QString()) {
+                QTableWidgetItem* it = new QTableWidgetItem(text);
+                if (color.isValid()) it->setForeground(color);
+                if (!tip.isEmpty()) it->setToolTip(tip);
+                m_tbl->setItem(i, col, it);
+                return it;
+            };
+            setCell(0, QString::number(i + 1));
+            setCell(1, r.createdAt.isEmpty() ? QString::fromUtf8("—") : r.createdAt);
+            setCell(2, isH7 ? QString::fromUtf8("满箱切换(H7)") : QString::fromUtf8("完结回传(H8)"),
+                    isH7 ? QColor("#00695C") : QColor("#6A1B9A"));
+            setCell(3, isH7 && !r.grid.isEmpty() ? r.grid : QString::fromUtf8("—"));
+            setCell(4, isH7 && !r.boxcode.isEmpty() ? r.boxcode : QString::fromUtf8("—"));
+
+            const QString stText = outboxStatusText(r.status);
+            const QColor  stColor = (r.status == "success") ? QColor("#2E7D32")
+                                  : (r.status == "failed")  ? QColor("#D32F2F")
+                                                            : QColor("#E65100");
+            setCell(5, stText, stColor);
+            setCell(6, QString::number(r.retryCount));
+
+            // ★ 2026-09-22 现场要求：响应结果列要**看得见 WMS 返回的 body**
+            //   · 单元格：`HTTP <code> · 成功/失败 ｜ <响应体单行正文>`
+            //     （压成单行便于阅读；超长仅做**显示层**截断并注明总字符数，数据本身永不删改）
+            //   · 悬停提示：完整响应体（仅防"巨型 tooltip 卡界面"做提示层截断）
+            //   · 双击详情「响应信息」页签 + 「导出到运行日志」= 响应体**全文**（可拷走核对）
+            auto oneLine = [](const QString& s) -> QString {
+                QString t = s;
+                t.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ');
+                while (t.contains(QString::fromUtf8("  ")))
+                    t.replace(QString::fromUtf8("  "), QString::fromUtf8(" "));
+                return t.trimmed();
+            };
+            QString respText;
+            QColor  respColor = QColor("#37474F");
+            QString respTip;
+            if (r.respTime.isEmpty() && r.respBody.isEmpty() && r.respNote.isEmpty() && r.respHttp == 0)
+            {
+                respText  = QString::fromUtf8("—（无响应留痕）");
+                respColor = QColor("#9E9E9E");
+                respTip   = QString::fromUtf8("该报文早于本功能上线，或尚未收到响应；双击可看请求报文全文");
+            }
+            else if (r.respHttp == 0)
+            {
+                respText  = QString::fromUtf8("未收到 HTTP 响应");
+                if (!r.respNote.isEmpty())
+                    respText += QString::fromUtf8(" ｜ ") + oneLine(r.respNote);
+                respColor = QColor("#D32F2F");
+                respTip   = r.respNote;
+            }
+            else
+            {
+                const bool ok = responseOk(r.respBody);
+                respText  = QString::fromUtf8("HTTP %1 · %2").arg(r.respHttp)
+                                .arg(ok ? QString::fromUtf8("成功") : QString::fromUtf8("失败"));
+                respColor = ok ? QColor("#2E7D32") : QColor("#D32F2F");
+
+                const QString bodyOne = oneLine(r.respBody);
+                if (!bodyOne.isEmpty())
+                {
+                    const int kCellMax = 240;   // 仅"单元格显示"截断（库内/详情/导出均为全文）
+                    respText += QString::fromUtf8(" ｜ ")
+                              + (bodyOne.size() > kCellMax
+                                     ? bodyOne.left(kCellMax)
+                                           + QString::fromUtf8("…（共 %1 字符，双击看全文）").arg(bodyOne.size())
+                                     : bodyOne);
+                }
+                else if (!r.respNote.isEmpty())
+                {
+                    respText += QString::fromUtf8(" ｜ ") + oneLine(r.respNote);
+                }
+
+                const int kTipMax = 12000;      // 仅"悬停提示"截断（防巨型 tooltip）
+                respTip = QString::fromUtf8("HTTP %1 ｜ 响应体 %2 字符\n%3")
+                              .arg(r.respHttp).arg(r.respBody.size())
+                              .arg(r.respBody.size() > kTipMax
+                                       ? r.respBody.left(kTipMax)
+                                             + QString::fromUtf8("\n…（提示仅显示前 %1 字符；全文见双击详情 / 导出到运行日志）").arg(kTipMax)
+                                       : r.respBody);
+            }
+            setCell(7, respText, respColor, respTip);
+
+            setCell(8, r.msgId, QColor("#616161"),
+                    QString::fromUtf8("报文ID(幂等键)：%1\n双击查看完整请求报文与响应").arg(r.msgId));
+        }
+        m_tbl->setUpdatesEnabled(true);
+
+        // ── 顶部汇总（与面板数字同源同口径）──
+        const int total = c7.total() + c8.total();
+        m_lblSummary->setText(QString::fromUtf8(
+            "口径：<b>回传次数 = 该波次已生成的出站报文条数</b>（每条报文独立计数）：\n"
+            "  · <b>满箱切换（H7 满箱回传）</b>：自动满箱 / 手动满箱 / 一键满箱 / 失败补发，各生成 1 条；\n"
+            "  · <b>完结回传（H8 波次完结通知）</b>：点「结束任务」生成 1 条；\n"
+            "  · 重试与重复发送<u>不新增条目</u>，只更新原条目的重试次数与响应留痕；"
+            "锁格回传不生成出站报文（无 msgId）→ 不计入。\n"
+            "  · 下表 = 该波次<b>全部</b>回传条目（不抽稀、不截断）；<b>双击任意一行</b>"
+            "可查看该条报文的<u>完整请求报文</u>与 <u>WMS 响应信息</u>（全文）。\n"
+            "当前筛选：波次 <b>%1</b> ｜ 满箱切换(H7) 成功%2/待发%3/失败%4 ｜ "
+            "完结回传(H8) 成功%5/待发%6/失败%7 ｜ <b>合计 %8 次</b>")
+            .arg(m_orderCode.isEmpty() ? QString::fromUtf8("(未指定)") : m_orderCode)
+            .arg(c7.success).arg(c7.pending).arg(c7.failed)
+            .arg(c8.success).arg(c8.pending).arg(c8.failed)
+            .arg(total));
+
+        setWindowTitle(QString::fromUtf8("回传明细 — 波次 %1（%2 条）")
+            .arg(m_orderCode.isEmpty() ? QString::fromUtf8("(未指定)") : m_orderCode)
+            .arg(m_rows.size()));
+    }
+
+    // ★ 2026-09-22 现场反馈「弹窗打开后界面明显卡顿」：
+    //   波次完结补发时几十条 H7 回执会在几秒内陆续落库，每条都触发一次整表重建
+    //   （clearContents + 9×N 单元格 + 布局）→ 弹窗开着时明显卡顿、滚动也发涩。
+    //   这里把"响应留痕落库 → 重载"合并：400ms 内的多次请求只重建一次（人眼无感）。
+    //   · 打开弹窗 / 手动点「刷新」/ 切换波次 → 仍走 reload() 立即重建（不受合并影响）
+    void scheduleReload()
+    {
+        if (!m_reloadTimer)
+        {
+            m_reloadTimer = new QTimer(this);
+            m_reloadTimer->setSingleShot(true);
+            connect(m_reloadTimer, &QTimer::timeout, this, [this]() {
+                if (isVisible()) reload();   // 弹窗已关：跳过（下次打开/复用时会立即重载）
+            });
+        }
+        m_reloadTimer->start(kReloadCoalesceMs);
+    }
+
+private:
+    static constexpr int kReloadCoalesceMs = 400;   // 响应留痕高频落库时的合并窗口
+    // 响应体是否表示 WMS 业务成功（解析不出 → 按失败显示；响应体全文仍可在详情里查看）
+    static bool responseOk(const QString& body)
+    {
+        if (body.trimmed().isEmpty()) return false;
+        const QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8());
+        if (!doc.isObject()) return false;
+        return doc.object().value("success").toBool(false);
+    }
+
+    static QString outboxStatusText(const QString& status)
+    {
+        if (status == "success")   return QString::fromUtf8("成功");
+        if (status == "failed")    return QString::fromUtf8("失败（重试耗尽）");
+        if (status == "cancelled") return QString::fromUtf8("已取消重试");
+        return QString::fromUtf8("待发");
+    }
+
+    // 波次下拉：列全部波次 + 状态 + 该波次回传次数标注（0 条标"无回传"），默认定位 defaultOrder
+    void rebuildWaveCombo(const QString& defaultOrder)
+    {
+        if (!m_cmbWave) return;
+        const QString keep = defaultOrder.isEmpty()
+            ? (m_cmbWave->count() > 0 ? m_cmbWave->currentData().toString() : QString())
+            : defaultOrder;
+
+        QMap<QString, int> h7All, h8All;
+        if (m_db)
+        {
+            // 批量统计（两次 GROUP BY 覆盖全部波次，与「波次数据记录」列表同源）
+            const QMap<QString, OutboxStatusCount> c7 = m_db->getFullboxStatusCountAll();
+            const QMap<QString, OutboxStatusCount> c8 = m_db->getEndStatusCountAll();
+            for (auto it = c7.begin(); it != c7.end(); ++it) h7All.insert(it.key(), it.value().total());
+            for (auto it = c8.begin(); it != c8.end(); ++it) h8All.insert(it.key(), it.value().total());
+        }
+
+        const QSignalBlocker blocker(m_cmbWave);
+        m_cmbWave->clear();
+        if (m_db)
+        {
+            const QVector<WaveRecordProgress> waves = m_db->getAllWaves();
+            for (const WaveRecordProgress& w : waves)
+            {
+                const int cnt = h7All.value(w.orderCode) + h8All.value(w.orderCode);
+                m_cmbWave->addItem(QString::fromUtf8("%1  [%2]  %3")
+                        .arg(w.orderCode, WaveSnapshot::statusToString(w.status),
+                             cnt > 0 ? QString::fromUtf8("回传 %1 次").arg(cnt)
+                                     : QString::fromUtf8("无回传")),
+                    w.orderCode);
+            }
+        }
+        const int idx = m_cmbWave->findData(keep);
+        m_cmbWave->setCurrentIndex(idx >= 0 ? idx : (m_cmbWave->count() > 0 ? 0 : -1));
+    }
+
+    // 导出到运行日志：逐条含**完整**请求报文与响应体（便于拷走核对，不做截断）
+    void exportToLog()
+    {
+        if (!m_logCb) return;
+        QStringList lines;
+        lines << QString::fromUtf8("[回传明细] 波次=%1 共 %2 条")
+            .arg(m_orderCode.isEmpty() ? QString::fromUtf8("(未指定)") : m_orderCode)
+            .arg(m_rows.size());
+        for (int i = 0; i < m_rows.size(); ++i)
+        {
+            const bool isH7 = m_rows.at(i).first;
+            const OutboxRecord& r = m_rows.at(i).second;
+            lines << QString::fromUtf8("%1. [%2] %3 格口=%4 容器=%5 状态=%6 重试=%7 响应=%8/%9")
+                .arg(i + 1)
+                .arg(isH7 ? QString::fromUtf8("满箱切换H7") : QString::fromUtf8("完结回传H8"))
+                .arg(r.createdAt)
+                .arg(r.grid.isEmpty() ? QString::fromUtf8("-") : r.grid)
+                .arg(r.boxcode.isEmpty() ? QString::fromUtf8("-") : r.boxcode)
+                .arg(outboxStatusText(r.status))
+                .arg(r.retryCount)
+                .arg(r.respHttp == 0 ? QString::fromUtf8("无HTTP响应") : QString::number(r.respHttp))
+                .arg(r.respTime.isEmpty() ? QString::fromUtf8("无留痕") : r.respTime);
+            lines << QString::fromUtf8("   msgId=%1").arg(r.msgId);
+            lines << QString::fromUtf8("   请求报文(全文, %1 字符)=%2").arg(r.payload.size()).arg(r.payload);
+            lines << QString::fromUtf8("   响应信息(全文, %1 字符)%2=%3")
+                .arg(r.respBody.size())
+                .arg(r.respNote.isEmpty() ? QString() : QString::fromUtf8(" 说明=") + r.respNote)
+                .arg(r.respBody);
+        }
+        m_logCb(lines.join("\n"));
+    }
+
+private:
+    SortingDatabase* m_db = nullptr;
+    QString          m_orderCode;
+    QVector<QPair<bool, OutboxRecord>> m_rows;   // (是否 H7, 记录)
+    QLabel*       m_lblSummary = nullptr;
+    QComboBox*    m_cmbWave = nullptr;
+    QPushButton*  m_btnRefresh = nullptr;
+    QPushButton*  m_btnExport = nullptr;
+    QTableWidget* m_tbl = nullptr;
+    QTimer*       m_reloadTimer = nullptr;   // ★ 响应留痕高频落库时的合并重载定时器
+    QString       m_defaultOrder;            // ★ 初始波次（延迟到窗口显示后再加载）
+    std::function<void(const QString&)> m_logCb;
+};
+
+// ============================================================================
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
@@ -1007,7 +1647,14 @@ MainWindow::MainWindow(QWidget* parent)
     // ★ 2026-09-16 需求④：「效率统计」按钮**默认开启** —— 面板是懒创建的，而 setChecked(true)
     //   发生在 setupUI 期间（那一刻 HttpServer 还没建），故这里在 setupCore() 之后显式应用一次，
     //   确保"开机即在运行日志页右侧显示效率面板"
+    // ★ 2026-09-22 现场需求①：按钮已隐藏，勾选态改由 XML <logEffPanelOn> 控制（默认 true=显示）；
+    //   这里仍按同一条路径显式应用一次，并打一条启动日志便于现场核对配置是否被读到。
     applyLogEffPanelVisible(m_btnEffChart && m_btnEffChart->isChecked());
+    {
+        const bool effOn = (m_btnEffChart && m_btnEffChart->isChecked());
+        WCS_LOG_INFO("启动：运行日志页效率统计面板%s（logEffPanelOn=%s；原「效率统计」按钮已隐藏，改 XML 需重启生效）",
+            effOn ? "已显示" : "已按配置隐藏", effOn ? "true" : "false");
+    }
 
 #if AUTO_START_RECEIVE_ON_BOOT
     appendLog("程序已启动：PLC/RFID 设备自动连接中；即将自动开始接收任务"
@@ -1311,10 +1958,18 @@ void MainWindow::setupUI()
     //           「RFID 推送效率统计（当日观察）」面板（面板按需懒创建，见日志页）
     //   · 口径与数据源完全复用既有统计接口（rfidPushPerMinute / peakPerMinuteToday /
     //     efficiencySeries / rfidPushTotal），不新增第二套统计逻辑
+    //   ★★ 2026-09-22 现场需求①：本按钮**已隐藏**，其状态（按下=面板显示）改由 XML 控制 ★★
+    //     · 勾选态 = config/http_server.xml 的 <logEffPanelOn>（true=显示，默认；false=隐藏）；
+    //       仅启动读取一次（改完要重启），与 <showLivePage>/<showPlanAllocPage> 同口径；
+    //     · 隐藏控件不参与布局 → 该行视觉为 [查看接收波次队列][回传结果][设置配置][新任务]，无空隙；
+    //     · 按钮逻辑/连接/面板实现**一行未动**（保留代码路径与日后可用性）；
+    //     · **恢复按钮显示 = 删掉下面 m_btnEffChart->setVisible(false) 这一行**。
     // ══════════════════════════════════════════════════════════════════════════
     m_btnEffChart = new QPushButton(QCoreApplication::translate("MainWindow", "效率统计"));
     m_btnEffChart->setCheckable(true);
-    m_btnEffChart->setChecked(true);        // ★ 默认为"开启"（按下态）
+    // ★ 2026-09-22：状态源由硬编码 true 改为 XML <logEffPanelOn>（缺项时默认 true = 保持现状）
+    m_btnEffChart->setChecked(ConfigManager::instance()->config().logEffPanelOn);
+    m_btnEffChart->setVisible(false);       // ★ 现场要求：按钮隐藏（状态仍生效；恢复显示删本行即可）
     m_btnEffChart->setMinimumHeight(30);
     m_btnEffChart->setStyleSheet(
         "QPushButton { background-color: #f5f5f5; color: #333; font-size: 12px; font-weight: bold;"
@@ -1322,13 +1977,38 @@ void MainWindow::setupUI()
         "QPushButton:hover { background-color: #e8f5ef; }"
         "QPushButton:checked { background-color: #26A96C; color: white; }");
     m_btnEffChart->setToolTip(QCoreApplication::translate("MainWindow",
-        "显示/隐藏「运行日志」页右侧的 RFID 推送效率统计面板（当日观察）：\n"
-        "  · 默认开启（按钮按下 = 面板显示）\n"
-        "  · 面板内容：当前(1分钟)/当日峰值/本小时累计/本次累计 + 最近30分钟柱状 / 今日0~23点折线\n"
+        "★ 本按钮已隐藏（现场要求）：面板显隐由 config/http_server.xml 的 <logEffPanelOn> 控制"
+        "（true=显示，默认；false=隐藏），改完需重启程序才生效。\n"
+        "面板内容（显示时）：「运行日志」页右侧的 RFID 推送效率统计（当日观察）——\n"
+        "  · 当前(1分钟)/当日峰值/本小时累计/本次累计 + 最近30分钟柱状 / 今日0~23点折线\n"
         "  · 关闭后日志区自动吃满宽度；面板不可见时不刷新，不影响分拣主流程"));
     connect(m_btnEffChart, &QPushButton::toggled, this, &MainWindow::applyLogEffPanelVisible);
 
-    // ── 第1行：查看接收波次队列 + 效率统计 + 设置配置 + 新任务（同一水平行）──
+    // ══════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-22 现场需求②：服务控制区新增「回传结果」
+    //   · 位置：「查看接收波次队列」**水平右侧**（隐藏的效率统计仍在其后，顺序不变）
+    //   · 功能：与波次信息面板「回传次数 → 查看」**完全相同**——弹出「回传明细」：
+    //           该波次全部回传条目（满箱切换 H7 + 完结回传 H8）+ 顶部波次切换下拉 +
+    //           双击任一行看该条报文的完整请求报文与 WMS 响应（全文，不截断）
+    //   · 实现：直接复用 onViewCallbacks()（单实例复用：已打开则置前并重载，不会开出两个窗口）
+    //   · 常驻可用（与「查看接收波次队列」一致）：无运行波次时弹窗默认落在最新波次
+    // ══════════════════════════════════════════════════════════════════════════
+    m_btnCallbackResult = new QPushButton(QCoreApplication::translate("MainWindow", "回传结果"));
+    m_btnCallbackResult->setMinimumHeight(30);
+    m_btnCallbackResult->setStyleSheet(
+        "QPushButton { background-color: #2196F3; color: white; font-size: 12px; font-weight: bold; "
+        "border-radius: 4px; padding: 4px 12px; }"
+        "QPushButton:hover { background-color: #1976D2; }");
+    m_btnCallbackResult->setToolTip(QCoreApplication::translate("MainWindow",
+        "查看回传明细（与波次信息面板「回传次数 → 查看」同一个弹窗）：\n"
+        "  · 该波次全部回传条目：满箱切换(H7) + 完结回传(H8)，不抽稀、不截断；\n"
+        "  · 弹窗顶部有波次下拉，可切换到任意历史波次查看；\n"
+        "  · 双击任一行 → 该条报文的完整请求报文（JSON 全文）与 WMS 响应信息"
+        "（HTTP 状态 + 响应体全文，超时/网络失败有明确说明）"));
+
+    // ── 第1行：查看接收波次队列 + 回传结果 + 效率统计(已隐藏) + 设置配置 + 新任务（同一水平行）──
+    //   ★ 2026-09-22 现场需求②：视觉顺序为 [查看接收波次队列][回传结果][设置配置][新任务]；
+    //     「效率统计」仍在布局里但已隐藏（不占位），既有顺序与行为不变。
     //   ★ 2026-09-17 现场要求：「新任务」按钮从「波次数据历史记录」页**移到「设置配置」旁边**
     //     （任务接收控制区同一行，紧邻「设置配置」右侧）——现场把"开新任务"当日常主操作，
     //      放这里伸手可及，不用先切到波次记录页。
@@ -1347,7 +2027,9 @@ void MainWindow::setupUI()
     QHBoxLayout* viewQueueRow = new QHBoxLayout();
     viewQueueRow->addStretch();
     viewQueueRow->addWidget(m_btnViewWaveQueue);
-    viewQueueRow->addWidget(m_btnEffChart);   // ★ 需求③：效率统计在「设置配置」左边
+    // ★ 2026-09-22 现场需求②：「回传结果」紧跟「查看接收波次队列」右侧（隐藏的效率统计仍在其后）
+    viewQueueRow->addWidget(m_btnCallbackResult);
+    viewQueueRow->addWidget(m_btnEffChart);   // ★ 需求③：效率统计在「设置配置」左边（★ 2026-09-22 已隐藏）
     viewQueueRow->addWidget(btnSettings);     // ★ 2026-09-08「设置配置」
     viewQueueRow->addWidget(m_btnNewTask);    // ★ 2026-09-17「新任务」紧邻「设置配置」
     viewQueueRow->addStretch();
@@ -1377,6 +2059,8 @@ void MainWindow::setupUI()
         connect(m_btnOneKeyFullbox, &QPushButton::clicked, this, &MainWindow::onOneKeyFullbox);
     connect(m_btnResendH8, &QPushButton::clicked, this, &MainWindow::onResendSelectedH8);
     connect(m_btnViewWaveQueue, &QPushButton::clicked, this, &MainWindow::onViewWaveQueue);
+    // ★ 2026-09-22 现场需求②：「回传结果」= 与波次面板「回传次数 → 查看」同一入口（复用 onViewCallbacks）
+    connect(m_btnCallbackResult, &QPushButton::clicked, this, &MainWindow::onViewCallbacks);
 
     // ═══════════════════════════════════════════
     // 第一行（中栏）：设备状态面板（PLC TCP / S7 / RFID，★ 2026-09-06 设备随程序启动常驻）
@@ -1627,7 +2311,45 @@ void MainWindow::setupUI()
         overplanLayout->addWidget(m_lblOverplanWarn);
         overplanLayout->addWidget(m_btnOverplanView);
         overplanLayout->addStretch();
-        addFieldPair("预警:", overplanCell, QString(), nullptr);
+
+        // ★ 2026-09-22 现场需求①：本行右列新增「回传次数」= 本波次已生成的出站报文条数
+        //   （满箱切换 H7 + 完结回传 H8）+「查看」按钮 → 回传明细弹窗（带波次切换下拉；
+        //    双击任一行看该条报文的**完整请求报文**与 **WMS 响应信息**，全文不截断）
+        QWidget* callbackCell = new QWidget();
+        QHBoxLayout* callbackLayout = new QHBoxLayout(callbackCell);
+        callbackLayout->setContentsMargins(0, 0, 0, 0);
+        callbackLayout->setSpacing(6);
+
+        m_lblCallbackCount = new QLabel("--");
+        m_lblCallbackCount->setStyleSheet("font-size: 15px; font-weight: bold; color: #2196F3;");
+        m_lblCallbackCount->setToolTip(QString::fromUtf8(
+            "回传次数 = 本波次已生成的出站报文条数（每条报文独立计数）：\n"
+            "  · 满箱切换（H7 满箱回传）：自动满箱 / 手动满箱 / 一键满箱 / 失败补发，各生成 1 条；\n"
+            "  · 完结回传（H8 波次完结通知）：点「结束任务」生成 1 条；\n"
+            "  · 重试与重复发送**不新增条目**（只更新原条目的重试次数与响应信息）；\n"
+            "  · 锁格回传不生成出站报文（无 msgId，仅记运行日志）→ 不计入本数。\n"
+            "点右侧「查看」→ 打开本波次**全部回传条目**（弹窗顶部可切换波次查看）；\n"
+            "双击任意一行 → 查看该条报文的**完整请求报文**与 **WMS 响应信息**（全文，不截断）。"));
+
+        m_btnCallbackView = new QPushButton(QCoreApplication::translate("MainWindow", "查看"));
+        m_btnCallbackView->setMinimumHeight(24);
+        m_btnCallbackView->setStyleSheet(
+            "QPushButton { font-size: 12px; padding: 2px 10px; "
+            "background-color: #BBDEFB; color: #0D47A1; border: 1px solid #64B5F6; border-radius: 3px; } "
+            "QPushButton:hover { background-color: #90CAF9; } "
+            "QPushButton:disabled { background-color: #EEEEEE; color: #AAAAAA; border-color: #DDDDDD; }");
+        m_btnCallbackView->setToolTip(QString::fromUtf8(
+            "查看本波次全部回传条目（满箱切换 H7 + 完结回传 H8）：\n"
+            "  · 弹窗顶部有**波次下拉**，可切换到任意历史波次查看；\n"
+            "  · 双击任一行 → 该条报文的完整请求报文（JSON 全文）与 WMS 响应信息（HTTP 状态 + 响应体全文）"));
+        m_btnCallbackView->setEnabled(false);
+        connect(m_btnCallbackView, &QPushButton::clicked, this, &MainWindow::onViewCallbacks);
+
+        callbackLayout->addWidget(m_lblCallbackCount);
+        callbackLayout->addWidget(m_btnCallbackView);
+        callbackLayout->addStretch();
+
+        addFieldPair("预警:", overplanCell, "回传次数:", callbackCell);
     }
     // ★ 2026-09-13 客户要求：**波次信息面板不再显示容器绑定数据**
     //   （容器绑定状态在第 0 页标签页完整展示；此处仅保留波次自身字段）
@@ -2989,9 +3711,12 @@ void MainWindow::setupCore()
 
     // ★ 回传结果处理：成功→已完成，失败→异常（避免状态卡在"回传中"）
     // S5 更新：区分完结回传（H8）和满箱回传（H7）
+    // ★ 2026-09-22 现场需求①：reportResult 扩为 5 参（+HTTP 状态 +完整响应体 +传输层说明），
+    //   三个回执入口原样透传 → HttpServer 落库到 outbox 的 resp_* 四列，
+    //   供波次面板「回传次数 → 查看 → 双击」展示该条报文的响应信息（全文，不截断）。
     connect(m_pClient, &HttpClient::reportResult, this,
-        [this](const QString& orderCode, bool success, const QString& body) {
-            Q_UNUSED(body);
+        [this](const QString& orderCode, bool success, int httpStatus,
+               const QString& body, const QString& note) {
 
             // ★ S5: 满箱回传（H7，context 以 "fullbox_" 开头）
             if (orderCode.startsWith("fullbox_"))
@@ -2999,18 +3724,19 @@ void MainWindow::setupCore()
                 QString msgId = orderCode.mid(8); // 去掉 "fullbox_" 前缀
                 if (m_pServer)
                 {
-                    m_pServer->onFullboxReplyFinished(msgId, success, body);
+                    m_pServer->onFullboxReplyFinished(msgId, success, httpStatus, body, note);
                 }
-                appendLog(QString("[满箱回传] 回传结果 msgId=%1 success=%2")
-                    .arg(msgId).arg(success));
+                appendLog(QString("[满箱回传] 回传结果 msgId=%1 success=%2 http=%3")
+                    .arg(msgId).arg(success).arg(httpStatus));
                 return;
             }
 
             // ★锁格回传（context 以 "lockGrid_" 开头）
+            //   注：锁格回传不生成 outbox 条目（无 msgId）→ 不进「回传次数」，仅日志留痕
             if (orderCode.startsWith("lockGrid_"))
             {
-                appendLog(QString("[锁格] 回传结果 grid=%1 success=%2")
-                    .arg(orderCode.mid(9)).arg(success));
+                appendLog(QString("[锁格] 回传结果 grid=%1 success=%2 http=%3")
+                    .arg(orderCode.mid(9)).arg(success).arg(httpStatus));
                 return;
             }
 
@@ -3020,26 +3746,26 @@ void MainWindow::setupCore()
                 QString msgId = orderCode.mid(4); // 去掉 "end_" 前缀
                 if (m_pServer)
                 {
-                    m_pServer->onEndReplyFinished(msgId, success, body);
+                    m_pServer->onEndReplyFinished(msgId, success, httpStatus, body, note);
                 }
-                appendLog(QString("[完结回传] 回传结果 success=%1")
-                    .arg(success));
+                appendLog(QString("[完结回传] 回传结果 success=%1 http=%2")
+                    .arg(success).arg(httpStatus));
                 return;
             }
 
-            // ★ 未完成波次面板手动重传（轻量，只更新 outbox 状态，不动波次状态/绑定）
+            // ★ 未完成波次面板手动重传（轻量，只更新 outbox 状态/响应留痕，不动波次状态/绑定）
             if (orderCode.startsWith("resendFullbox_"))
             {
                 QString msgId = orderCode.mid(QString("resendFullbox_").length());
-                if (m_pServer) m_pServer->onOutboxResendReply(msgId, true, success);
-                appendLog(QString("[未完成波次] H7重传结果 success=%1").arg(success));
+                if (m_pServer) m_pServer->onOutboxResendReply(msgId, true, success, httpStatus, body, note);
+                appendLog(QString("[未完成波次] H7重传结果 success=%1 http=%2").arg(success).arg(httpStatus));
                 return;
             }
             if (orderCode.startsWith("resendEnd_"))
             {
                 QString msgId = orderCode.mid(QString("resendEnd_").length());
-                if (m_pServer) m_pServer->onOutboxResendReply(msgId, false, success);
-                appendLog(QString("[未完成波次] H8重传结果 success=%1").arg(success));
+                if (m_pServer) m_pServer->onOutboxResendReply(msgId, false, success, httpStatus, body, note);
+                appendLog(QString("[未完成波次] H8重传结果 success=%1 http=%2").arg(success).arg(httpStatus));
                 return;
             }
 
@@ -3108,7 +3834,18 @@ void MainWindow::setupCore()
                 .arg(success ? "成功" : "失败")
                 .arg(orderCode));
             onRefreshWaveRecords();
+            refreshCallbackCount();   // ★ 2026-09-22 重传会改写状态/响应留痕 → 面板数字与拆分同步
         });
+
+    // ★ 2026-09-22 现场需求①：任一回传的**响应留痕**落库（成功/失败/超时/网络失败/手动重传）
+    //   → ① 回传明细弹窗开着就即时重载（现场能看到 待发 → 成功 + 响应结果列）
+    //     ② 面板「回传次数」的拆分（成功/待发/失败）随之刷新
+    connect(m_pServer, &HttpServer::outboxResponseSaved, this, [this]() {
+        // ★ 2026-09-22：改为**合并重载**（400ms 窗口）——波次完结补发几十条回执逐条重建整表
+        //   会让弹窗开着时明显卡顿；合并后仍是"即时可见"，但只重建一次。
+        if (m_cbDlg && m_cbDlg->isVisible() && m_cbDlgCoalesce) m_cbDlgCoalesce();
+        refreshCallbackCount();
+    });
 
     // ★ 上一波次恢复完成 → 刷新波次面板
     connect(m_pServer, &HttpServer::waveResumed, this,
@@ -3128,6 +3865,7 @@ void MainWindow::setupCore()
     connect(m_pServer, &HttpServer::outboxFailedChanged, this, [this]() {
         refreshFailedCombos();
         refreshFullboxCountLabel();   // ★ 需求④：失败/成功判定都会改变"本波次满箱回传"统计
+        refreshCallbackCount();   // ★ 2026-09-22 同上：状态变化会改变回传次数拆分（失败/待发）
     });
 
     // ★ 2026-09-16 需求④：某条 H7 报文**最终失败**（重试耗尽）→ 只对"本次一键生成的 msgId"计失败
@@ -3155,6 +3893,57 @@ void MainWindow::setupCore()
 
     // ★ 连接HttpServer日志信号到UI日志区
     connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ★ 2026-09-22 现场需求（完结顺序）：完结回传（H8）一定是最后一条报文
+    //   存在未成功的满箱回传（H7）时，HttpServer 会暂缓 H8 并发出本信号：
+    //   弹窗列出**对应格口号/箱号/状态/重试次数**，由操作员选择
+    //     · 「先去处理（暂不结束）」→ 不发送 H8；H7 报文保留在 Outbox（自动重试 + 可人工重传），
+    //        补齐后再次点「结束任务」即发送 H8（服务仍在运行时屏障会自动放行）；
+    //     · 「确认直接完结」→ 立即发送 H8（写异常留痕，未成功的 H7 仍可稍后补传）。
+    // ════════════════════════════════════════════════════════════════════════
+    connect(m_pServer, &HttpServer::endBarrierNeedDecision, this,
+        [this](const QString& orderCode, const QString& detailText) {
+            appendLog(QString("[完结屏障] 波次 %1：完结回传（H8）已暂缓 —— 存在未成功的满箱回传：%2")
+                          .arg(orderCode, detailText), true);
+
+            QMessageBox box(this);
+            box.setIcon(QMessageBox::Warning);
+            box.setWindowTitle(QCoreApplication::translate("MainWindow", "存在未成功的满箱回传（H7）"));
+            box.setText(QString::fromUtf8("波次 %1 的完结回传（H8）已暂缓，等待人工确认。\n\n"
+                                          "未完成的满箱回传（对应格口）：\n%2")
+                            .arg(orderCode, detailText));
+            box.setInformativeText(QString::fromUtf8(
+                "「先去处理（暂不结束）」：本次不发送完结回传；满箱回传报文与箱号已保留，"
+                "可在「重传满箱切换(H7)」补发，补齐后再次点「结束任务」即发送 H8。\n"
+                "「确认直接完结」：立即发送完结回传（会写异常留痕；未成功的满箱回传仍可稍后补传）。"));
+            QPushButton* btnHold = box.addButton(
+                QCoreApplication::translate("MainWindow", "先去处理（暂不结束）"), QMessageBox::RejectRole);
+            QPushButton* btnGo = box.addButton(
+                QCoreApplication::translate("MainWindow", "确认直接完结"), QMessageBox::AcceptRole);
+            box.setDefaultButton(btnHold);
+            box.exec();
+
+            if (box.clickedButton() == btnGo)
+            {
+                if (m_pServer)
+                    m_pServer->confirmEndReport(orderCode,
+                        QString::fromUtf8("操作员确认：带未成功满箱回传直接完结"));
+            }
+            else
+            {
+                appendLog("[完结屏障] 已选择「先去处理」：本次不发送完结回传；"
+                          "满箱回传报文保留在 Outbox（自动重试/可人工重传），补齐后再点「结束任务」发送 H8", true);
+            }
+        }, Qt::QueuedConnection);
+
+    // ★ 完结屏障状态变化（暂缓/通过/人工确认）→ 日志留痕，便于现场判断卡在哪条
+    connect(m_pServer, &HttpServer::endBarrierChanged, this, [this]() {
+        if (!m_pServer) return;
+        const QString s = m_pServer->endBarrierStateText();
+        if (!s.isEmpty())
+            appendLog(QString("[完结屏障] %1").arg(s), true);
+    });
 
     // ★ 容器绑定变更 → 即时刷新 UI + 持久化到 XML
     connect(m_pServer, &HttpServer::bindingUpdated, this, [this]() {
@@ -3519,6 +4308,7 @@ void MainWindow::onStartStop()
             // ★ 2026-09-16 需求④⑤：接收开始后刷新计数标签（本波次满箱回传）与 H7 失败下拉（仅本波次）
             refreshFullboxCountLabel();
             refreshFailedCombos();
+            refreshCallbackCount();   // ★ 2026-09-22 现场需求①：面板「回传次数」同步刷新
 
             // ★ 配置摘要日志（每次开始接收时打印一次，便于排查）
             {
@@ -3666,6 +4456,13 @@ void MainWindow::onRefreshTimer()
                 //   与「H7 失败格口」下拉（内容只含本波次，换波次必须重建）
                 refreshFullboxCountLabel();
                 refreshFailedCombos();
+                // ★ 2026-09-22 现场需求①：换波次立即重算「回传次数」（面板数字不能滞后一拍）
+                refreshCallbackCount();
+            }
+            else
+            {
+                // ★ 2026-09-22 现场需求①：「回传次数」与「留痕」同拍刷新（10 秒一次，不每秒查库）
+                refreshCallbackCount();
             }
         }
     }
@@ -3817,6 +4614,38 @@ void MainWindow::updateWavePanel()
 
     // ★ 2026-09-13 超计划预警：数字 = 超计划条目数（格口+SKU 粒度），有值时红色加粗并激活「查看」
     refreshOverplanWarning();
+
+    // ★ 2026-09-22 现场需求①：「回传次数」数值/按钮只读缓存渲染（**不查库**）
+    //   缓存由 onRefreshTimer 以 10 秒周期 + 换波次/回传事件强制刷新（见 refreshCallbackCount）
+    {
+        const int cbN = m_cachedCallbackCount;
+        m_lblCallbackCount->setText(cbN < 0 ? QString("--") : QString::fromUtf8("%1 次").arg(cbN));
+        m_lblCallbackCount->setStyleSheet(cbN < 0
+            ? "font-size: 15px; font-weight: bold; color: #9E9E9E;"
+            : (m_cachedCallbackFailed > 0
+                   ? "font-size: 15px; font-weight: bold; color: #D32F2F;"
+                   : "font-size: 15px; font-weight: bold; color: #2196F3;"));
+        if (m_btnCallbackView)
+        {
+            // ★ 启用口径：**有波次就可查看**（即使本波次暂为 0 条）——
+            //   弹窗顶部有波次下拉，可切换到历史波次核对；无波次时才置灰。
+            m_btnCallbackView->setEnabled(cbN >= 0);
+            m_btnCallbackView->setText(cbN > 0
+                ? QString::fromUtf8("查看(%1)").arg(cbN)
+                : QString::fromUtf8("查看"));
+        }
+        if (!m_cachedCallbackBreak.isEmpty())
+        {
+            m_lblCallbackCount->setToolTip(QString::fromUtf8(
+                "回传次数 = 本波次已生成的出站报文条数（每条报文独立计数；重试不新增条目）：\n"
+                "  · 满箱切换（H7 满箱回传）：自动满箱 / 手动满箱 / 一键满箱 / 失败补发，各生成 1 条；\n"
+                "  · 完结回传（H8 波次完结通知）：点「结束任务」生成 1 条；\n"
+                "  · 锁格回传不生成出站报文（无 msgId，仅记运行日志）→ 不计入本数。\n"
+                "本波次明细：%1\n"
+                "点右侧「查看」→ 全部回传条目（顶部可切换波次）；双击行看完整报文与 WMS 响应（全文）")
+                .arg(m_cachedCallbackBreak));
+        }
+    }
 
     // ★ 2026-09-14 计划分配表页：内部自带"本页不在前台直接返回 + 2 秒节流 + 版本未变不重建"，
     //   因此这里每秒调用是安全的（空闲时只读一个原子版本号）
@@ -4773,6 +5602,7 @@ void MainWindow::onFullboxMessageFailed(const QString& msgId, const QString& ord
     ++m_oneKeyFails;
     appendLog(QString::fromUtf8("[一键满箱] 其中 1 条报文最终失败（重试耗尽）——本次一键失败数 +1"), true);
     refreshFullboxCountLabel();
+    refreshCallbackCount();   // ★ 2026-09-22：失败判定会改变回传次数拆分（失败数）
 }
 
 // ============================================================================
@@ -5732,6 +6562,125 @@ void MainWindow::renderPlanAllocRows()
                                "「已落」红色=已达计划，「余量」绿色=仍可落");
         m_lblPlanAllocHint->setText(h.join(QString::fromUtf8(" ｜ ")));
     }
+}
+
+// ============================================================================
+// ★ 2026-09-22 现场需求①：波次面板「回传次数」的**唯一取数与缓存入口**
+//   口径：回传次数 = 本波次已生成的出站报文条数 = outbox_fullbox(H7 满箱切换) + outbox_end(H8 完结回传)
+//         口径与「波次数据记录」列表、以及「回传明细」弹窗汇总**完全同源**
+//         （getFullboxStatusCountAll / getEndStatusCountAll，两次 GROUP BY 覆盖全部波次）。
+//   ★ 性能：与「留痕」同款 —— 只在 10 秒周期 / 换波次 / 回传事件时取值并写缓存，
+//     面板每秒渲染只读缓存（分拣关键路径与 UI 同线程，不能每秒查库）。
+//   force=true 用于"换了波次 / 收到回传响应 / 手动重传 / 一键满箱 / 启停接收"等必须立即准确的时机。
+// ============================================================================
+void MainWindow::refreshCallbackCount()
+{
+    if (!m_lblCallbackCount) return;
+
+    const QString order = (m_pServer && m_pServer->waveManager())
+        ? m_pServer->waveManager()->orderCode() : QString();
+
+    // 换波次 → 必须立即重算（缓存值属于上一个波次，直接显示会张冠李戴）
+    const bool orderChanged = (order != m_cachedCallbackOrder);
+    if (orderChanged) m_cachedCallbackOrder = order;
+
+    // ★ 突发合并（250ms）：一键满箱 66 个容器会在一两秒内收到一屏响应，若每条都查一次库，
+    //   主线程（与分拣同线程）会白跑上百次 GROUP BY。合并后：换波次立即生效，
+    //   其余刷新最多 250ms 一次；最终数值最迟 10 秒（周期拍）必然一致。
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!orderChanged && (nowMs - m_cbRefreshLastMs) < 250) return;
+    m_cbRefreshLastMs = nowMs;
+
+    if (order.isEmpty())
+    {
+        m_cachedCallbackCount  = -1;      // 无波次 → 面板显示 --
+        m_cachedCallbackFailed = 0;
+        m_cachedCallbackBreak.clear();
+        return;
+    }
+
+    int h7s = 0, h7p = 0, h7f = 0, h8s = 0, h8p = 0, h8f = 0;
+    if (SortingDatabase* db = m_pServer ? m_pServer->sortingDb() : nullptr)
+    {
+        if (db->isOpen())
+        {
+            const OutboxStatusCount c7 = db->getFullboxStatusCountAll().value(order);
+            const OutboxStatusCount c8 = db->getEndStatusCountAll().value(order);
+            h7s = c7.success; h7p = c7.pending; h7f = c7.failed;
+            h8s = c8.success; h8p = c8.pending; h8f = c8.failed;
+        }
+    }
+    m_cachedCallbackCount  = h7s + h7p + h7f + h8s + h8p + h8f;
+    m_cachedCallbackFailed = h7f + h8f;
+    m_cachedCallbackBreak  = QString::fromUtf8(
+        "满箱切换(H7) 成功%1/待发%2/失败%3 ｜ 完结回传(H8) 成功%4/待发%5/失败%6")
+        .arg(h7s).arg(h7p).arg(h7f).arg(h8s).arg(h8p).arg(h8f);
+
+    // 数值/按钮的最终渲染在 updateWavePanel（每秒一次，只读缓存）；
+    // 这里若面板正处于"未运行但需显示终态"的场景也能立刻生效：主动渲一次
+    const int cbN = m_cachedCallbackCount;
+    m_lblCallbackCount->setText(QString::fromUtf8("%1 次").arg(cbN));
+    m_lblCallbackCount->setStyleSheet(m_cachedCallbackFailed > 0
+        ? "font-size: 15px; font-weight: bold; color: #D32F2F;"
+        : "font-size: 15px; font-weight: bold; color: #2196F3;");
+    if (m_btnCallbackView)
+    {
+        // ★ 启用口径：有波次就可查看（0 条也允许——弹窗内可切换波次查历史）；无波次才置灰
+        m_btnCallbackView->setEnabled(cbN >= 0);
+        m_btnCallbackView->setText(cbN > 0 ? QString::fromUtf8("查看(%1)").arg(cbN)
+                                           : QString::fromUtf8("查看"));
+    }
+}
+
+// ============================================================================
+// ★ 2026-09-22 现场需求①：onViewCallbacks — 打开「回传明细」弹窗（波次面板「回传次数」右侧「查看」）
+//   默认波次：波次列表选中行优先 → 当前内存波次（便于回看历史波次的回传条目）
+//   弹窗内**带波次切换下拉**，可逐个波次切换查看；双击行 → 完整请求报文 + WMS 响应（全文，不截断）
+//   单实例复用：已打开则置前；关闭即销毁（WA_DeleteOnClose）
+// ============================================================================
+void MainWindow::onViewCallbacks()
+{
+    if (!m_pQueryDb) return;
+
+    if (!m_pQueryDb->isOpen())
+    {
+        const QString dbPath = QCoreApplication::applicationDirPath() + "/" + SORTING_DB_FILE;
+        if (!m_pQueryDb->open(dbPath))
+        {
+            appendLog("[回传] 数据库未就绪，无法查看回传明细", true);
+            return;
+        }
+    }
+
+    if (m_cbDlg)
+    {
+        if (m_cbDlgRefresh) m_cbDlgRefresh();   // 复用前先按当前数据重载一次
+        m_cbDlg->show();
+        m_cbDlg->raise();
+        m_cbDlg->activateWindow();
+        return;
+    }
+
+    // 目标波次：列表选中行优先 → 当前内存波次
+    QString order = selectedOrCurrentWaveOrder();
+    if (order.isEmpty() && m_pServer && m_pServer->waveManager())
+        order = m_pServer->waveManager()->orderCode();
+
+    OutboxListDialog* dlg = new OutboxListDialog(m_pQueryDb, order, this);
+    dlg->setLogCallback([this](const QString& text) { appendLog(text); });
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    m_cbDlg = dlg;
+    // 响应留痕落库后（outboxResponseSaved）由 setupConnections 里的 lambda 调这里即时重载
+    m_cbDlgRefresh  = [dlg]() { dlg->reload(); };          // 打开/复用：立即重建
+    m_cbDlgCoalesce = [dlg]() { dlg->scheduleReload(); };   // 高频回执：400ms 合并重建
+    connect(dlg, &QDialog::destroyed, this, [this]() {
+        m_cbDlg = nullptr;
+        m_cbDlgRefresh = nullptr;
+        m_cbDlgCoalesce = nullptr;
+    });
+    dlg->show();
+    appendLog(QString::fromUtf8("[回传] 打开回传明细：波次=%1")
+        .arg(order.isEmpty() ? QString::fromUtf8("(未指定)") : order));
 }
 
 // ============================================================================
@@ -6873,6 +7822,7 @@ void MainWindow::onOneKeyFullbox()
 
     // ★ 需求④：刷新按钮旁的计数文字（本波次总数 + 本次一键成功/失败），并追加同源计数日志
     refreshFullboxCountLabel();
+    refreshCallbackCount();   // ★ 2026-09-22 现场需求①：一键批量入 Outbox → 面板「回传次数」立即 +N
     appendLog(QString::fromUtf8(
         "[一键满箱] 计数：%1")
         .arg(m_lblFullboxCount ? m_lblFullboxCount->text() : QString()));

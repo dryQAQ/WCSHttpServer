@@ -118,6 +118,11 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "sortingAllowOverrecv")    sortingAllowOverrecv = (xml.readElementText().trimmed().toLower() == "true");
         // ★ 2026-09-20 现场问题④：解锁且未绑定容器的格口不下发（改投异常口）
         else if (name == "sortingRequireBoundGrid") sortingRequireBoundGrid = (xml.readElementText().trimmed().toLower() == "true");
+        // ★ 2026-09-22 现场需求：锁格即保存+清理容器号（不等 H7 回执）
+        else if (name == "sortingClearBoxOnFullbox") sortingClearBoxOnFullbox = (xml.readElementText().trimmed().toLower() == "true");
+        // ★ 2026-09-22 现场需求：完结回传（H8）最后进行（H7 未成功时暂缓 + 人工决策）
+        else if (name == "endFullboxBarrier")       endFullboxBarrier = (xml.readElementText().trimmed().toLower() == "true");
+        else if (name == "endFullboxBarrierPolicy") endFullboxBarrierPolicy = xml.readElementText().trimmed().toLower();
         // ★ 2026-09-11 同波次重扫重投
         else if (name == "rescanResendEnabled")     rescanResendEnabled = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "rescanResendCooldownMs")  rescanResendCooldownMs = xml.readElementText().toInt();
@@ -136,6 +141,27 @@ bool AppConfig::loadFromFile(const QString& path)
         // ★ 2026-09-17 界面页显隐（仅在启动时读取一次；改 XML 需重启生效）
         else if (name == "showLivePage")            showLivePage = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "showPlanAllocPage")       showPlanAllocPage = (xml.readElementText().trimmed().toLower() == "true");
+        // ★ 2026-09-22「运行日志」页右侧效率统计面板显隐（原「效率统计」按钮状态；仅启动时读取一次）
+        //   取值 true/1 = 显示，false/0 = 隐藏（兼容现场把开关写成 1/0 的习惯）；
+        //   其它（空/拼写错）→ 保持默认 true 并告警：避免"写错一个词 → 现场效率面板凭空消失"。
+        else if (name == "logEffPanelOn")
+        {
+            const QString raw = xml.readElementText().trimmed().toLower();
+            if (raw == "true" || raw == "1")
+            {
+                logEffPanelOn = true;
+            }
+            else if (raw == "false" || raw == "0")
+            {
+                logEffPanelOn = false;
+            }
+            else
+            {
+                logEffPanelOn = UI_LOG_EFF_PANEL_DEFAULT;
+                LOG_WARN("[配置] logEffPanelOn 取值非法(\"%s\")，已保持默认 %s（运行日志页效率统计面板）",
+                    raw.toLocal8Bit().constData(), UI_LOG_EFF_PANEL_DEFAULT ? "true=显示" : "false=隐藏");
+            }
+        }
         else if (name == "binding")
         {
             // 容器绑定: <binding grid="00001">BOX001</binding>
@@ -294,6 +320,10 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("showLivePage",            showLivePage ? "true" : "false");
     xml.writeComment(" ★ 计划分配表页是否显示（false=隐藏该页，默认 false）。★★ 仅启动时读取一次：改这里要重启程序才生效 ★★ ");
     xml.writeTextElement("showPlanAllocPage",       showPlanAllocPage ? "true" : "false");
+    // ★ 2026-09-22 效率统计面板显隐（原「效率统计」按钮已隐藏，改由本项控制；仅启动读取一次）
+    xml.writeComment(" ★ 运行日志页右侧「RFID 推送效率统计」面板是否显示（true=显示，默认 true；false=隐藏，日志区吃满宽度）"
+                     "。★★ 仅启动时读取一次：改这里要重启程序才生效 ★★（原「效率统计」按钮已按现场要求隐藏，改由本项控制） ");
+    xml.writeTextElement("logEffPanelOn",           logEffPanelOn ? "true" : "false");
 
     // ──── S7 分拣增强配置 ────
     xml.writeComment(" EPC 任务内防重（true/false） ");
@@ -312,6 +342,12 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("sortingAllowOverrecv",     sortingAllowOverrecv ? "true" : "false");
     xml.writeComment(" ★ 下发前置条件：格口必须已解锁且已绑定容器（true=未绑定容器不下发到该格、改投异常口且不消耗额度；false=回退改造前照发行为） ");
     xml.writeTextElement("sortingRequireBoundGrid",  sortingRequireBoundGrid ? "true" : "false");
+    xml.writeComment(" ★ 锁格(=满箱)/完结补发时立即保存并清理容器号（true=不等H7回执即清绑定，件改投异常口；false=回退为等H7成功才解绑） ");
+    xml.writeTextElement("sortingClearBoxOnFullbox", sortingClearBoxOnFullbox ? "true" : "false");
+    xml.writeComment(" ★ 完结回传(H8)最后进行：先补发H7并等其到终态，有失败则暂缓并提示人工（true/false） ");
+    xml.writeTextElement("endFullboxBarrier",        endFullboxBarrier ? "true" : "false");
+    xml.writeComment(" 屏障策略：ask=提示人工选择(默认) / auto=不询问直接完结并留痕 / block=必须人工重传成功 ");
+    xml.writeTextElement("endFullboxBarrierPolicy",  endFullboxBarrierPolicy);
     // ──── ★ 2026-09-11 同波次重扫重投 ────
     xml.writeComment(" 重扫重投开关（true=已落格件重新上料仍按原格口下发；false=旧行为不再下发） ");
     xml.writeTextElement("rescanResendEnabled",      rescanResendEnabled ? "true" : "false");
