@@ -126,16 +126,18 @@
 //   落格反馈侧才发现该格无绑定（type=no_bind，仍计已分拣）⇒ 该件不属于任何容器、
 //   不进任何容器的 H7 ⇒ 换箱后新容器"满箱回传成功，但人工复核多出一件"。
 //
-//   整改口径（客户确认 2026-09-20）：下发分拣指令前必须先判定格口可落格——
+//   整改口径（客户确认 2026-09-20）→ ★ 2026-09-26 现场口径（最终，**无条件生效**）：
+//     下发前置条件 = **未禁用 且 未锁格（含锁格状态未知） 且 已绑定容器**
 //     · 已解锁 且 已绑定容器  → 正常下发（再叠加既有条件：执行态/有映射/有额度/PLC 已连接）；
 //     · 已解锁 且 未绑定容器  → **不下发到该格口**，改投异常口(exceptionGrid)并留痕，
 //                               该件不计已分拣、不写箱内明细、不进 H7、**不消耗计划额度**；
-//     · 锁格                  → **完全按原有逻辑处理**（锁格边沿→H7+禁用→不进候选；
-//                               未被禁用时按既有优先级/单格口兜底照发），本次不新增判定；
-//     · 满箱未重绑(禁用)      → 原有逻辑（不下发 + 无可用格口留痕）。
-//   异常口自身不可下发（未绑定/禁用）时退回原有"不下发指令"路径。
+//     · 锁格 / 锁格状态未知    → **不下发**（★ 2026-09-26：锁格不落件，无论什么情况；
+//                               含"程序启动时锁格位已经是 1"与"S7 首次快照未就绪"两种情形）；
+//     · 满箱未重绑(禁用)      → **不下发** + 无可用格口留痕。
+//   异常口自身共用同一判据：异常口锁格/未绑定容器/禁用时同样"不发指令 + 留痕"。
 //
-//   稳定性：置 false 即逐字回退改造前行为（改 XML 后重启生效）。
+//   ★ 本宏已**废弃（恒 true）**：不再有"置 false 逐字回退"的口子 —— 旧 XML 里写 false
+//     只会打一行 WARN "已废弃、不生效"（见 ConfigManager::loadFromFile）。
 #define SORTING_REQUIRE_BOUND_GRID true
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -154,23 +156,30 @@
 //     ③ 不等 H7 回传结果；④ H7 报文与箱号**即使失败也保留**，失败自动重试，
 //        重试耗尽则记录留痕并进入「重传满箱切换(H7)」等人工回传。
 //
-// 稳定性：置 false 即逐字回退改造前行为（等 H7 成功才解绑；改 XML 后重启生效）。
+// 稳定性：置 false = 锁格/完结补发都**不**清容器号（容器号只在 H6 换绑、启动归档、
+//   清空格口绑定、关闭软件切出、新任务、波次取消时变化）。改 XML 后重启生效。
+//   ★ 无论开关取值，满箱回传（H7）的成功/失败/重试/人工重传**一律不改容器绑定**（结果独立）。
 #define SORTING_CLEAR_BOX_ON_FULLBOX true
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ★ 2026-09-22 现场需求（完结顺序）：完结回传（H8）一定是最后一条报文
+// ★ 2026-09-22 现场口径（最终定稿） → ★ 2026-09-26 修订：延迟由 1 秒改为 **2 秒**
 //
-// 现场口径：点「结束任务」时，先把尚未满箱回传的格口数据补发成 H7，再根据 H7 的结果决定：
-//   · 全部成功                    → 立即生成并发送 H8（H8 即为最后一条报文）；
-//   · 仍有 pending（自动重试中）  → 暂缓 H8，等重试跑到终态（不打扰操作员）；
-//   · 有 failed/cancelled 或"报文未生成" → 暂缓 H8，**提示未成功的满箱回传及对应格口号**，
-//                                        由操作员选择「先去处理/人工重传」或「确认直接完结」。
-//   （不要求 H7 全部成功：人工重传成功后自动放行；人工确认则留痕后放行。）
+// 流程（点一次「结束任务」）：
+//   ① 对**当前所有已绑定容器**做一次「一键满箱回传」（H7）：逐格口生成报文（含当前箱号）入
+//      outbox_fullbox 并立即异步发出（不看结果、不阻塞）；有分拣记录才生成报文，无记录跳过；
+//      未绑定容器但仍有未上传落格记录的格口：跳过并写 exception_record 留痕（等人工手输格口号补传）；
+//   ② **固定延迟 END_REPORT_DELAY_MS（默认 2 秒）后，不论 H7 是否成功**，生成并发送完结回传（H8）
+//      —— H8 始终是本波次最后一条报文（H7 全部先发出，留 2 秒给 WMS/网络处理；
+//      补发范围从"有记录的格口"扩到"全部已绑定容器"，报文更多，1 秒窗口偏紧）；
+//   ③ **结果与完结回传分开**：H7 的成功/失败/自动重试/人工重传**只影响它自己那条报文**——
+//      失败自动重试（上限 OUTBOX_RETRY_MAX_H7），耗尽落 failed 并在「重传满箱切换(H7)」等人工补传；
+//      全程**不阻塞、不改写、不取消** H8；H8 自己按 outbox_end 重试（上限 OUTBOX_RETRY_MAX_DEFAULT）。
+//   未成功的 H7 会在发 H8 前写一条 exception_record 留痕（附格口号/箱号/状态/已重试次数）+ 界面提示，
+//   纯记录用途，**不做任何等待或拦截**。
 //
-// 稳定性：置 false 即逐字回退改造前行为（补发完立即发 H8，不等结果；改 XML 后重启生效）。
-#define END_FULLBOX_BARRIER true
-// 屏障策略：ask（默认，提示人工选择）/ auto（不询问直接完结并留痕）/ block（必须人工重传成功）
-#define END_FULLBOX_BARRIER_POLICY "ask"
+// 说明：本版**取消了"完结屏障/策略/人工决策"**（原 ask/block 策略、holdEndReport 人工接管、
+//   120 秒等待上限、完结弹窗均已整体移除）。
+#define END_REPORT_DELAY_MS 2000   // 满箱补发完成 → 完结回传之间的固定间隔（毫秒；0=补发完立即发）
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -197,15 +206,18 @@
 //   ⇒ 现场在查询页看到"计划 2 / 分拣记录 83"，与 H4 计划对不上（总量虽守恒 178=178，但分格口口径失真；
 //     且这次搬迁是**跨类型**的：分类口的额度被搬到发货口）。
 //
-//   新口径（客户确认 2026-09-21）：
-//     · **每个格口严格按 H4 计划件数**，额度**不再跨格口搬迁**（既不搬入也不搬出）；
-//     · 格口不可下发（未绑定容器 / 满箱未重绑(禁用)）时，其剩余额度**留在原格口**；
-//       件优先用**其它格口自身的剩余额度**承接（前提该格口可下发）；其它格口都没有可用额度
-//       → 改投异常口 66（不计已分拣、不消耗额度、留痕区分原因）；
-//     · 格口恢复可下发（H6 绑定容器 / 换箱重绑）后，原本留在该格口的额度**自动继续分配**。
-//   两个开关保留（可显式置 true 回退"搬迁"行为），但默认关闭。
-#define ALLOC_GAP_MOVE_ON_DISABLED false  // 计划格口满箱未重绑(禁用)时把未完成件转给同 SKU 其它计划格口（默认关闭）
-#define ALLOC_GAP_MOVE_ON_LOCKED   false  // 计划格口物理锁格时同样转移（默认关闭）
+//   新口径（客户确认 2026-09-21）→ ★ 2026-09-26 现场口径（最终）：**搬迁能力整体删除**
+//     · 计划额度的单元 = **(SKU, 格口, 分拣类型)**；单元计划多少就落多少、**不能多**；
+//     · 额度**不因任何原因搬迁**（锁格 / 未绑定容器 / 禁用 / 分类-发货互借 一律不允许）；
+//       不可用单元的剩余额度**留在原单元**（不清零、不搬出、不借出）；
+//     · 件优先用**其它单元自身的剩余额度**承接（前提该单元可下发）；都没有可用额度
+//       → 改投异常口 66（不计已分拣、不消耗额度、留痕区分原因）或按根因不发指令；
+//     · 单元恢复可下发（H6 绑定容器 / 换箱重绑 / PLC 解锁）后，留在该单元的额度**自动继续分配**。
+//   ★ 两个开关**已删除**：`PlanAllocTable::moveGap` / `HttpServer::moveAllocGap` /
+//     `PlcMoveGapCallback` 已从代码中整体移除（不是默认关掉），下述两个宏仅为兼容旧 XML 保留，
+//     程序恒按 false 处理并在读到 true 时打 WARN。
+#define ALLOC_GAP_MOVE_ON_DISABLED false  // 【已删除】恒 false（搬迁能力已移除）
+#define ALLOC_GAP_MOVE_ON_LOCKED   false  // 【已删除】恒 false（搬迁能力已移除）
 #define ALLOC_MAX_INFLIGHT         2000   // 在途认领上限（超出→立即强制清扫 + 异常表留痕，防认领泄漏）
 #define ALLOC_AUDIT_INTERVAL_MS    30000  // 不变量巡检 + 认领超时清扫周期(ms)
 #define ALLOC_CLAIM_TIMEOUT_MS     30000  // 认领超时(ms)：下发后迟迟无落格反馈则释放额度（复用 PLC 在途超时口径）
@@ -482,6 +494,10 @@
 //   volu       — 来源库位，货物在原仓库的存放位置
 //   sort_time  — 分拣完成时间，PLC 反馈落格的时间戳
 //   create_time— 记录创建时间，写入数据库的时间
+// ★ 2026-09-26 grid_type：本次落格**记账单元的分拣类型**（0=分类 1=异常 2=发货）
+//   为什么必须落库：业务确认"同一 (SKU,格口) 可以存在多种 grid_type"，切回/断电恢复时
+//   必须按类型逐件复原各单元已落数 —— 否则只能按"首个有余量单元"猜，会把两个属性的余量填错位。
+//   旧库由 SQL_ALTER_SORTING_ADD_GRID_TYPE 自动补列；未进计划单元的件（66/落错格/无计划）留空。
 #define SQL_CREATE_TABLE_SORTING \
     "CREATE TABLE IF NOT EXISTS sorting_records (" \
     "  id          INTEGER PRIMARY KEY AUTOINCREMENT," \
@@ -496,12 +512,17 @@
     "  volu        TEXT    NOT NULL DEFAULT ''," \
     "  sort_time   TEXT    NOT NULL DEFAULT ''," \
     "  create_time TEXT    NOT NULL DEFAULT ''," \
-    "  boxcode     TEXT    NOT NULL DEFAULT ''" \
+    "  boxcode     TEXT    NOT NULL DEFAULT ''," \
+    "  grid_type   TEXT    NOT NULL DEFAULT ''" \
     ")"
 
 // ★ 2026-09-09 需求6：旧库兼容——启动时检测缺 boxcode 列则补加（行进中换容器的记录容器号）
 #define SQL_ALTER_SORTING_ADD_BOXCODE \
     "ALTER TABLE sorting_records ADD COLUMN boxcode TEXT NOT NULL DEFAULT ''"
+
+// ★ 2026-09-26：旧库兼容——补加 grid_type（落格单元类型 0/1/2），重复列错误忽略
+#define SQL_ALTER_SORTING_ADD_GRID_TYPE \
+    "ALTER TABLE sorting_records ADD COLUMN grid_type TEXT NOT NULL DEFAULT ''"
 
 // ──── 索引：加速常用查询 ────
 // 按EPC编码查询索引 — 加速按EPC编码搜索历史分拣记录
@@ -514,14 +535,15 @@
 // ──── 公共查询字段列表（SELECT 子句复用）────
 // 查询所有字段，用于各种 SELECT 语句拼接，避免重复书写字段列表
 // ★ 2026-09-09 需求6：末尾新增 boxcode（容器号）——保持既有字段序号不变，解析处只需追加读取
-#define SQL_SELECT_FIELDS  "SELECT id, order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time, boxcode "
+// ★ 2026-09-26：再追加 grid_type（落格单元类型）——同样只动末尾，既有下标解析不受影响
+#define SQL_SELECT_FIELDS  "SELECT id, order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time, boxcode, grid_type "
 
 // ──── 插入记录：PLC 落格反馈时写入一条分拣记录 ────
 // 使用参数化查询（?占位符），防止 SQL 注入，字段顺序与建表语句一致
 #define SQL_INSERT_RECORD \
     "INSERT INTO sorting_records " \
-    "(order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time, boxcode) " \
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "(order_code, barcode, sku, grid_num, car_num, first_car, last_car, grid_count, volu, sort_time, create_time, boxcode, grid_type) " \
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 // ──── 查询：按不同条件检索分拣记录 ────
 // 按EPC编码查询 — 输入EPC编码，返回该EPC编码的所有分拣历史（按时间倒序）→ 状态=已分拣
@@ -990,8 +1012,9 @@
 //     · H7 满箱明细 / 落格去重集合 → key = (格口, EPC)（换箱重投时旧箱件不再进明细）
 //     · 计划额度 / 封顶计数          → key = (格口, SKU, EPC)（跨容器累计，换箱不重置额度）
 //   ★ 历史库中的重复行（09-14 之前写入）由调用方按上述键合并，不会重复计数。
+//   ★ 2026-09-26：追加 s.grid_type（落格单元类型；旧行为空 ⇒ 调用方回退"首个有余量单元"并留痕）
 #define SQL_SELECT_LANDINGS_BY_ORDER \
-    "SELECT s.barcode, s.sku, s.grid_num, s.boxcode, s.volu, s.sort_time FROM sorting_records s " \
+    "SELECT s.barcode, s.sku, s.grid_num, s.boxcode, s.volu, s.sort_time, s.grid_type FROM sorting_records s " \
     "WHERE s.order_code = ? AND s.barcode <> '' " \
     "ORDER BY s.rowid ASC LIMIT ?"
 // 查询某波次是否存在成功满箱回传（H7）

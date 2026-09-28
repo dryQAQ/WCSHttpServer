@@ -52,6 +52,15 @@ struct GridSortRecord
     qint64  timeMs   = 0;  // 分拣时间
 };
 
+// ★ 2026-09-26：「一键满箱回传 / 结束任务统一补发」的逐格口结果（供按钮计数与结束任务留痕共用）
+struct FullboxBatchEntry
+{
+    QString grid;    // 格口号（内部 3 位 key）
+    QString box;     // 本次使用的容器号（当前绑定）
+    QString msgId;   // 成功生成的 H7 报文号；空 = 未生成（原因见 reason）
+    QString reason;  // 未生成的原因（"无待上传的分拣记录" / "异常口不上传WMS" / 其它=真失败）
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 // ★ 2026-09-14 计划分配表「计划分配表」独立窗口页的只读数据（供 MainWindow 使用）
 //   表头口径：**一行 = 一个产品（SKU）**，横向按格口展开；
@@ -218,6 +227,12 @@ public:
     //     重新导向一个没有箱子的格口 —— 正是本次整改要消除的账实不符来源。
     //     内存绑定表由 H6/波次恢复/归档三条链路维护，是"当前有效绑定"的唯一真相。
     bool hasBoundContainer(int grid) const;
+    // ★ 2026-09-26 现场口径（B 方案）兜底对账：把"已绑定容器 + 锁格位已=0 + 仍被禁用"的格口恢复收件。
+    //   为什么需要：B 方案把"H6 已到但 PLC 还锁着"的格口恢复收件推迟到解锁边沿；
+    //   若该边沿丢失（S7 掉线期间发生，重连时 PlcManager 会 memset 上次锁格状态 ⇒ 不产生下降沿），
+    //   格口会一直卡在禁用（面板红/橙、件不收）。由 10s 健康检查周期调用 ⇒ 最迟 10s 内自愈。
+    //   返回本次恢复的格口数（0 = 无需处理）。
+    int  reconcileStrandedDisabledGrids();
     // 某 EPC 是否仍在途（已下发 PLC、未收到落格反馈）——实时面板判定"待落格/超时未反馈"用
     bool isPlcSendInFlight(const QString& epc) const;
     // ★ 2026-09-20 现场问题④：当前在途件数（已下发、未收到落格反馈；含 plcInFlightTimeoutMs 超时判定，只读）
@@ -301,12 +316,19 @@ public:
     qint64 rfidRawFlushedRows() const { return m_rfidRawFlushed; }
     qint64 rfidRawDroppedRows() const { return m_rfidRawDropped; }
     void resendOutbox(const QString& orderCode, bool resendH7, bool resendH8); // 手动重传选中波次的 H7/H8
-    // ★ 2026-09-22 现场需求（H8 完结屏障）：存在未成功的满箱回传（H7）时，完结回传先暂缓，
-    //   由操作员选择「先去处理/人工重传」或「确认直接完结」。本方法 = 后者的唯一入口：
-    //   立即生成并发送 H8（H8 始终是最后一条报文），并写异常留痕 + 红色告警以便追溯。
-    void confirmEndReport(const QString& orderCode, const QString& reason);
-    // 完结屏障当前状态文本（空串=无暂缓；供 UI 状态条显示"待满箱回传 N 条 → 完结回传已暂缓"）
-    QString endBarrierStateText();
+    // ★ 2026-09-22 现场口径（最终定稿） → ★ 2026-09-26 修订：点「结束任务」=
+    //   ① 对**当前所有已绑定容器**做一次「一键满箱回传」（同一实现 reportFullboxAllBoundGrids：
+    //      有分拣记录才生成报文、无记录跳过、箱号取当前绑定）→ 成功后按完结口径清该格绑定；
+    //      未绑定容器但仍有未上传记录的格口：跳过 + exception_record 留痕（等人工手输格口号补传）；
+    //   ② 固定 END_REPORT_DELAY_MS（默认 **2 秒**）后，**不论 H7 是否成功**发送 H8；
+    //   H7 的结果只影响它自己那条报文（自动重试/耗尽落 failed/人工补传），全程不阻塞、不改写 H8。
+    //   本版**取消完结屏障**：原 ask/block 策略、holdEndReport 人工接管、等待硬上限、完结弹窗已移除。
+    //   （H7 失败清单仍会在发 H8 前写 exception_record + 界面提示，纯留痕，不等待、不拦截。）
+    // ★ 2026-09-26：「一键满箱回传」的**唯一实现**（MainWindow 按钮与「结束任务」共用，
+    //   口径：遍历当前所有已绑定容器 → manualFullbox（有记录才发报文）→ 异常口/无记录跳过；
+    //   detachOnSuccess=true 仅"结束任务"用：报文发出即清该格绑定 + 归档留痕（容器离场口径））。
+    QVector<FullboxBatchEntry> reportFullboxAllBoundGrids(const QString& reasonTag,
+                                                          bool detachOnSuccess = false);
     // ★ 2026-09-22 手动重传结果（轻量，不动波次状态/绑定）；补齐 HTTP 状态/完整响应体/传输层说明，
     //   入口即落库到 outbox 的 resp_* 四列（重传后"查看 → 双击"能看到最新一次响应）
     void onOutboxResendReply(const QString& msgId, bool isH7, bool success, int httpStatus,
@@ -462,6 +484,14 @@ public:
     bool hasLandingDetail(const QString& epc) const;
     // 该 EPC 最近一次落格明细所属的格口号（无记录返回空串）
     QString lastDetailGridOf(const QString& epc) const;
+    // ★ 2026-09-25 去重实物件数（= 本波次"真正写进落格明细"的去重 EPC 数）
+    //   取值 = m_lastDetailGridByEpc.size()，与 sorting_records 的 COUNT(DISTINCT barcode)
+    //   **严格同源**（两处写入点：实际落格写明细、切回波次按 DB 明细重建；同一件在 2 个格口
+    //   各 1 条明细仍只算 1 件 —— 与历史列表的 DISTINCT 口径一致）。
+    //   现场用途：波次信息面板「分拣件数」标签 —— 与「波次数据历史记录」页「已分拣」列同值。
+    //   ★ 不含"只计件、不写明细"的件：落格时格口无容器绑定(no_bind)、识别码无匹配(no_match)、
+    //     落错格、超计划超出件 —— 这些件计入 WaveManager::sorted()（件次），但不进本值。
+    int sortedDetailCount() const;
     // 清空按格口落格计数（H4 新波次重下发/波次清理时调用，与计划件数一同重置）
     void clearGridLandedCount();
 
@@ -491,17 +521,22 @@ public:
     bool claimAlloc(const QString& sku, qint16* claimGrid, quint64* claimId, qint16* planIdx);
     // 认领登记（PLC 指令发出后立即调用；幂等，避免重复挂账导致额度泄漏）
     void noteAllocIssued(const QString& epc, int skuIdx, qint16 planIdx, quint64 claimId);
-    // 释放认领（发送失败时立即释放，保证"缺件可由人工重投异常件补上"）
-    void releaseAlloc(const QString& epc);
     // 落格登记（**唯一跨线程入口**：PLC 反馈线程池）
     // 返回 false = 该 (SKU,格口) 不在计划内（落错格）；mismatchOut = 认领不匹配（留痕用）
+    //   ★ 2026-09-26 新增出参/入参（默认值，既有调用点无需改）：
+    //     lateStubUsedOut  = true：该件认领已被释放、按**归属存根**记回了原认领单元（未串属性）；
+    //     unitGuessedOut   = true：该格口有多个单元却无法判定归属，已按"首个有余量单元"记账（需留痕）；
+    //     gridTypeHint     = 恢复路径专用：按落格明细里持久化的**单元类型**精确归属（0xFF = 无提示）；
+    //     landedTypeOut    = 本次真正记账单元的类型（0/1/2）—— 供落格明细持久化，切回时精确归属。
     bool commitLandedAlloc(const QString& sku, const QString& gridKey, const QString& epc,
-                           quint64 claimId, bool* mismatchOut, int* landedNowOut, int* planQtyOut);
-    // 计划格口不可用时的缺口搬迁（把未完成计划件转给同 SKU 其它可用计划格口）
-    //   ★ 2026-09-21 客户口径：**取消跨格口搬额度**（allocGapMoveOnDisabled/Locked 默认 false）
-    //     —— 每个格口严格按 H4 计划；不可用格口的额度留在原地，件改用其它格口自身额度，
-    //     都没有则改投异常口 66。本接口保留供配置显式回退时使用。
-    int  moveAllocGap(const QString& sku, qint16 fromGrid, qint16 toGrid);
+                           quint64 claimId, bool* mismatchOut, int* landedNowOut, int* planQtyOut,
+                           bool* lateStubUsedOut = nullptr, bool* unitGuessedOut = nullptr,
+                           quint8 gridTypeHint = 0xFF, quint8* landedTypeOut = nullptr);
+    // ★ 2026-09-26：缺口搬迁接口（moveAllocGap）**已整体删除** ——
+    //   现场口径：不允许因锁格或其它原因搬迁计划额度；计划是"（SKU,格口,分拣类型）多少件就落多少件、
+    //   不能多"。不可用单元的额度留在原单元，件改用其它单元自身剩余额度，都没有则改投异常口或不发指令。
+    //   防回归：PlanAllocTable::audit() ⑤ planQty==planQtyH4 / ⑥ landed≤planQtyH4 /
+    //   ⑦ 每 (SKU,类型) Σlanded≤ΣplanQtyH4，由每 30s 巡检报违规并写异常表。
     // 该 EPC 是否已在本 (SKU,格口) 落格（重投回原格口的放行依据）
     bool epcLandedInPlan(const QString& sku, const QString& gridKey, const QString& epc) const;
     // 分配表是否已生效（false=退回老逻辑）
@@ -510,6 +545,11 @@ public:
     void auditPlanAlloc();
     // 认领超时清扫 + 在途上限保护（每 30s 一次，主线程）
     void sweepPlanAllocClaims();
+    // ★ 2026-09-26（现场口径：额度消耗与归还均以 **PLC 落格反馈**为准）
+    //   件没进计划格口（落异常口 66 / PLC 报无格口·信息不全 / 落错格）时，认领额度**立即归还**，
+    //   不再等 30s 超时清扫 —— 该件不计分拣、不消耗计划额度，重投按新件判定。
+    //   线程：反馈线程只发信号（allocClaimReleaseRequested），本槽在主线程执行（表写操作主线程独占）。
+    void releaseAllocClaimsOnMissedLanding(const QStringList& epcs);
     // 波次报告（完结/切出/恢复/开工各输出一条聚合日志，不是每件）
     void reportPlanAlloc(const QString& tag);
 
@@ -533,6 +573,11 @@ signals:
     // ★ 2026-09-14 落格即计时归零：PLC 反馈线程池内判定"已落格"的 EPC 集合，
     //   经本信号回主线程执行（在途语义容器仅主线程可访问）
     void epcsLanded(const QStringList& epcs);
+    // ★ 2026-09-26 额度即时归还：PLC 反馈线程池内判定"该件没进计划格口"的 EPC 集合
+    //   （落异常口 66 / PLC 报 status=2 无格口或 status=3 信息不全 / 落错格）→ 主线程释放认领额度。
+    //   为什么必须走信号回主线程：分配表的写操作统一主线程独占（与选格同线程）。
+    //   ★ 发出顺序必须晚于 epcsLanded：后者先清"在途"标志，归还逻辑据此避免误释放重投件的新认领。
+    void allocClaimReleaseRequested(const QStringList& epcs);
 
     // ──── 未完成波次手动重传面板信号 ────
     // outboxResendReady: 请求发送一条历史出站报文（kind: "fullbox"|"end"），由 MainWindow 中继到 HttpClient
@@ -555,11 +600,8 @@ signals:
     //   "面板显示已绑定、库里一行都没有"（切回该波次时无绑定可恢复）。
     //   发出后 UI 红字提示 + 显示未落库计数，运维可当场重发 H6 / 排查磁盘。
     void bindPersistFailed(const QString& grid, const QString& box, const QString& orderCode);
-    // ★ 2026-09-22 现场需求（H8 完结屏障）：存在未成功的满箱回传（H7）→ 完结回传暂缓，
-    //   需要操作员决策。detailText 含"格口号/箱号/状态/已重试次数"清单，供弹窗/面板原样展示。
-    void endBarrierNeedDecision(const QString& orderCode, const QString& detailText);
-    // 屏障状态变化（暂缓 / 通过 / 人工确认）→ UI 刷新状态条
-    void endBarrierChanged();
+    // ★ 2026-09-22 现场口径（最终定稿）：满箱补发完成后固定延迟 END_REPORT_DELAY_MS 发送 H8
+    //   （不论 H7 是否成功；未成功清单只留痕提示，不等待、不拦截）。见 define.h 说明。
 
 protected:
     // CHttpServerListener 回调
@@ -613,19 +655,19 @@ private:
     //   reason：留痕用语（"锁格满箱(H7待回传)" / "完结补发(H7待回传)"）
     //   返回 true = 本次确实清掉了一条活跃绑定（供调用方判断是否打印"容器离场"汇总）
     bool    detachContainerOnFullbox(const QString& grid, const QString& box, const QString& reason);
+    //   ★ 2026-09-22 现场口径（最终）：**满箱回传结果与容器绑定彻底解耦（各自独立）**——
+    //     容器号只在"锁格(=满箱)/完结补发"这一刻由本函数清理；H7 的成功/失败/重试/人工重传
+    //     一律不改容器绑定（因此不存在"迟到回执清掉换绑后新容器"的问题，也不需要兜底解绑链路）。
 
-    // ── H8 完结屏障 ──
-    //   分类当前波次的满箱回传完成情况：
-    //     0 = None      全部 success 且无未上传记录 → 可以直接发 H8
-    //     1 = Inflight  仍有 pending（重试中）→ 暂缓等待，不打扰操作员
-    //     2 = NeedDecision 存在 failed/cancelled 或"报文未生成"的记录 → 暂缓 + 提示人工决策
-    int     classifyEndBarrier(const QString& orderCode, QString* detailOut);
-    void    checkEndBarrier();      // 复检（H7 回执/人工重传成功后调用）：清了就自动发 H8
-    bool    emitEndReportNow();     // H8 的唯一生成+发送出口（sendEnd / 屏障通过 / 人工确认 共用）
-    void    onEndBarrierTick();     // 屏障期间进度扫描（5s）
-    void    stopEndBarrier(const QString& why);   // 收敛：停表 + 清登记
-    // 屏障留痕：把"未成功的满箱回传清单 + 处理方式"写异常表（人工确认/auto 策略/超时都留痕）
-    void    writeEndBarrierException(const QString& orderCode, const QString& detail, const QString& action);
+    // ── H8 完结回传（固定延迟后强制发送，与 H7 结果完全分开）──
+    bool    emitEndReportNow();     // H8 的唯一生成+发送出口（sendEnd 直发 / 延迟到点 共用）
+    void    onEndDelayTimeout();    // 满箱补发后的固定延迟到点 → 留痕（如有未成功 H7）+ 发送 H8
+    void    cancelPendingEndReport(const QString& why);  // 取消尚未到点的延迟发送（切出/取消/新任务）
+    //   统计当前波次"未成功的满箱回传（H7）"清单（格口号/箱号/状态/已重试次数），
+    //   返回条数（含"报文未生成"的内存记录）。**纯展示/留痕用，不做等待或拦截**。
+    int     collectUnfinishedFullbox(const QString& orderCode, QString* detailOut);
+    // 留痕：把"未成功的满箱回传清单"写异常表（发 H8 前调用，记录用，不改变发送与否）
+    void    writeUnfinishedFullboxNotice(const QString& orderCode, const QString& detail);
 
     // ──── 完结前兜底补发（2026-09-07）：H8 前把未满箱格口数据补发 H7 ────
     QString lookupGridBoxCode(const QString& grid);        // 格口当前容器号（内存→DB 兜底，sendFullbox/补发共用）
@@ -844,10 +886,9 @@ private:
     //   供 H7 报文重建与留痕使用；H6 重绑 / 批量清空绑定时一并清除。同受 m_containerMutex 保护。
     QMap<QString, QString>  m_boxSnapshot;
     // ★ 2026-09-22 H8 完结屏障（H7 未全部成功时暂缓完结回传，等人工决策）
-    QTimer*                 m_endBarrierTimer = nullptr;   // 屏障期间进度扫描（5s）
-    QString                 m_endBarrierOrderCode;         // 已暂缓完结的波次（空=无）
-    bool                    m_endBarrierPrompted = false;  // 是否已就"需人工决策"提示过（防重复弹窗）
-    int                     m_endBarrierTicks = 0;         // 已扫描拍数（每 6 拍≈30s 打一次进度）
+    // ★ 2026-09-22 现场口径（最终定稿）：满箱补发 → 固定延迟 → 强制发送 H8（与 H7 结果分开）
+    QTimer*                 m_endDelayTimer = nullptr;     // 单次触发：满箱补发后等待 END_REPORT_DELAY_MS
+    QString                 m_endDelayOrderCode;           // 本次延迟发送归属的波次（防切波次后误发）
     int                      m_expectedBindCount = DEFAULT_EXPECTED_BIND_COUNT;  // 期望绑定数量（波次下发时校验全部绑定用，默认1）
 
     // ──── 格口分拣记录（锁格回传用）────
@@ -916,7 +957,7 @@ private:
     //     杜绝改造前"先查已落数、再另行登记"造成的超计划；
     //   · 只记"在途"认领 → 常驻内存 O(在途)，与波次件数无关。
     //
-    // 线程：编译/认领/释放/搬迁/清空/快照 = 主线程；commitLandedAlloc = PLC 反馈线程池。
+    // 线程：编译/认领/释放/清空/快照 = 主线程；commitLandedAlloc = PLC 反馈线程池。
     //       全表由 m_allocMutex 串行化，锁内完成"判定 + 改数"。
     // 失效隔离：m_allocValid=false（未编译/编译失败/开关关闭）→ 所有查表路径
     //       立即退回改造前老逻辑，**绝不因分配表异常而不发指令或阻塞投线**。
@@ -924,17 +965,24 @@ private:
     PlanAllocTable          m_alloc;
     mutable std::mutex      m_allocMutex;
     std::atomic<bool>       m_allocValid{false};     // 分配表是否生效（false=退回老逻辑）
-    // ★ 2026-09-20 现场问题④：本次"不可认领/不可下发"格口掩码
+    // ★ 2026-09-20 现场问题④ → ★ 2026-09-26：本次"不可认领/不可下发"单元掩码
     //   判据与发送侧**完全同源**（PlcManager::isGridDispatchable）：只有"可下发格口"能被认领 ——
-    //   已解锁且未绑定容器 / 满箱未重绑(禁用) 均不可认领；锁格可认领（按原有逻辑）。
+    //   锁格（含锁格状态未知） / 已解锁且未绑定容器 / 满箱未重绑(禁用) 均不可认领。
     //   ⇒ 多格口 SKU 优先用"其它可用计划格口"的剩余额度承接；都没有可用额度时由 PlcManager
-    //     按根因改投异常口（额度原样留在原格口）。
+    //     按根因改投异常口或不发指令（**额度原样留在原单元，绝不搬迁**）。
     //   ★★ 必须在 m_allocMutex **之外**构建（内部要取 m_containerMutex / S7 状态锁），
     //      否则会形成 alloc→container 的锁嵌套（与其它路径的加锁顺序不一致，存在死锁风险）。
     PlanAllocTable::GridMask allocBlockedMask() const;
-    // 单格口版判据（与掩码同源；供 moveAllocGap 等单点判定复用）
+    // 单格口版判据（与掩码同源；供单点判定复用）
     bool isGridDispatchableHere(int grid) const;
     std::atomic<int>        m_allocAuditBad{0};      // 不变量巡检违规条数（UI 显示用）
+    // ★ 2026-09-26 单元归属诊断计数（波次报告输出；落格在 PLC 反馈线程写，故用 atomic）
+    //   lateStub  = 迟到反馈按归属存根记回原认领单元的件数（属性未串）
+    //   unitGuess = 该格口多单元却无法判定归属、按"首个有余量单元"记账的件数（已留痕，请人工核对）
+    //   releasedOnMissed = 件未进计划格口（66/无格口/落错格）→ 按 PLC 反馈即时归还额度的条数
+    std::atomic<int>        m_allocLateStubCnt{0};
+    std::atomic<int>        m_allocUnitGuessCnt{0};
+    std::atomic<int>        m_allocReleasedOnMissedCnt{0};
     QString                 m_allocOrderCode;        // 分配表对应的波次号（仅主线程读写）
     int                     m_allocPlanLogCnt = 0;   // 选格成功日志节流计数（仅主线程）
     QTimer*                 m_allocSweepTimer = nullptr;  // 认领超时清扫 + 不变量巡检定时器

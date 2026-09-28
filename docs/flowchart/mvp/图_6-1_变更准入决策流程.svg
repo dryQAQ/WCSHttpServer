@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1107 1813" width="1107" height="1813" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1107" height="1813" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M49.0,188.4 L49.0,266.4"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,531.4 L49.0,609.4"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,531.4 L49.0,570.4 L209.0,570.4 L209.0,609.4"/>
+<path class="fw" marker-end="url(#ah)" d="M209.0,874.4 L209.0,952.4"/>
+<path class="fw" marker-end="url(#ah)" d="M209.0,874.4 L209.0,913.4 L369.0,913.4 L369.0,952.4"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,874.4 L49.0,952.4"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,874.4 L49.0,913.4 L209.0,913.4 L209.0,952.4"/>
+<path class="fw" marker-end="url(#ah)" d="M369.0,1238.9 L369.0,619.1 L529.0,619.1 L529.0,-0.8"/>
+<path class="fw" marker-end="url(#ah)" d="M369.0,1238.9 L369.0,619.1 L529.0,619.1 L529.0,-0.8"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,1238.9 L49.0,781.4 L529.0,781.4 L529.0,323.9"/>
+<path class="fw" marker-end="url(#ah)" d="M209.0,1238.9 L209.0,781.4 L529.0,781.4 L529.0,323.9"/>
+<path class="fw" marker-end="url(#ah)" d="M529.0,189.2 L529.0,323.9"/>
+<path class="fw" marker-end="url(#ah)" d="M529.0,189.2 L529.0,323.9"/>
+<path class="fw" marker-end="url(#ah)" d="M529.0,473.9 L529.0,609.4"/>
+<path class="fw" marker-end="url(#ah)" d="M529.0,874.4 L529.0,936.5 L678.0,936.5 L678.0,998.7"/>
+<path class="fw" marker-end="url(#ah)" d="M529.0,874.4 L529.0,936.5 L678.0,936.5 L678.0,998.7"/>
+<rect class="elb" x="116.4" y="558.4" width="25.2" height="24" rx="4"/>
+<text class="el" x="129.0" y="570.4" text-anchor="middle">是</text>
+<rect class="elb" x="77.2" y="558.4" width="25.2" height="24" rx="4"/>
+<text class="el" x="89.8" y="570.4" text-anchor="middle">否</text>
+<rect class="elb" x="116.4" y="901.4" width="25.2" height="24" rx="4"/>
+<text class="el" x="129.0" y="913.4" text-anchor="middle">否</text>
+<rect class="elb" x="276.4" y="901.4" width="25.2" height="24" rx="4"/>
+<text class="el" x="289.0" y="913.4" text-anchor="middle">是</text>
+<rect class="elb" x="41.9" y="901.4" width="25.2" height="24" rx="4"/>
+<text class="el" x="54.5" y="913.4" text-anchor="middle">是</text>
+<rect class="elb" x="77.2" y="901.4" width="25.2" height="24" rx="4"/>
+<text class="el" x="89.8" y="913.4" text-anchor="middle">否</text>
+<rect class="elb" x="436.4" y="607.1" width="25.2" height="24" rx="4"/>
+<text class="el" x="449.0" y="619.1" text-anchor="middle">能</text>
+<rect class="elb" x="377.4" y="607.1" width="38.4" height="24" rx="4"/>
+<text class="el" x="396.6" y="619.1" text-anchor="middle">不能</text>
+<rect class="elb" x="596.4" y="924.5" width="25.2" height="24" rx="4"/>
+<text class="el" x="609.0" y="936.5" text-anchor="middle">是</text>
+<rect class="elb" x="551.7" y="924.5" width="25.2" height="24" rx="4"/>
+<text class="el" x="564.3" y="936.5" text-anchor="middle">否</text>
+<rect x="22.5" y="0.0" width="53.0" height="188.39999999999998" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="49.0" y="94.2" text-anchor="middle" fill="#212121">新需求 / 现场问题</text>
+<polygon points="49.0,266.4 98.0,398.9 49.0,531.4 0.0,398.9" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="49.0" y="387.4" text-anchor="middle" fill="#795548">是否属于</text>
+<text class="nl" x="49.0" y="410.4" text-anchor="middle" fill="#795548">五步主线？</text>
+<polygon points="49.0,609.4 98.0,741.9 49.0,874.4 0.0,741.9" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="49.0" y="730.4" text-anchor="middle" fill="#795548">是否改变了</text>
+<text class="nl" x="49.0" y="753.4" text-anchor="middle" fill="#795548">业务不变量？</text>
+<polygon points="209.0,609.4 258.0,741.9 209.0,874.4 160.0,741.9" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="209.0" y="730.4" text-anchor="middle" fill="#795548">现场是否真实</text>
+<text class="nl" x="209.0" y="753.4" text-anchor="middle" fill="#795548">复现过？</text>
+<rect x="171.0" y="952.4" width="76.0" height="286.5" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="209.0" y="1084.2" text-anchor="middle" fill="#212121">记录到需求池</text>
+<text class="nl" x="209.0" y="1107.2" text-anchor="middle" fill="#212121">暂不实现</text>
+<polygon points="369.0,952.4 418.0,1095.7 369.0,1238.9 320.0,1095.7" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="369.0" y="1084.2" text-anchor="middle" fill="#795548">能否抽成</text>
+<text class="nl" x="369.0" y="1107.2" text-anchor="middle" fill="#795548">无 IO 无锁的纯判据？</text>
+<rect x="11.0" y="952.4" width="76.0" height="286.5" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="49.0" y="1084.2" text-anchor="middle" fill="#212121">先更新不变量清单</text>
+<text class="nl" x="49.0" y="1107.2" text-anchor="middle" fill="#212121">再改实现</text>
+<rect x="171.0" y="952.4" width="76.0" height="286.5" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="209.0" y="1084.2" text-anchor="middle" fill="#212121">直接在主线实现</text>
+<text class="nl" x="209.0" y="1107.2" text-anchor="middle" fill="#212121">补验收判据</text>
+<rect x="491.0" y="-0.8" width="76.0" height="190" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="529.0" y="82.7" text-anchor="middle" fill="#212121">新建策略头</text>
+<text class="nl" x="529.0" y="105.7" text-anchor="middle" fill="#212121">+ 单测 + 离线仿真</text>
+<rect x="491.0" y="-0.8" width="76.0" height="190" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="529.0" y="82.7" text-anchor="middle" fill="#212121">先重构出边界</text>
+<text class="nl" x="529.0" y="105.7" text-anchor="middle" fill="#212121">再实现功能</text>
+<rect x="502.5" y="323.9" width="53.0" height="150" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="529.0" y="398.9" text-anchor="middle" fill="#212121">提交前自检</text>
+<polygon points="529.0,609.4 578.0,741.9 529.0,874.4 480.0,741.9" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="529.0" y="730.4" text-anchor="middle" fill="#795548">是否新增了</text>
+<text class="nl" x="529.0" y="753.4" text-anchor="middle" fill="#795548">编译期不用的资产？</text>
+<rect x="640.0" y="998.7" width="76.0" height="194" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="678.0" y="1084.2" text-anchor="middle" fill="#212121">拒绝合入</text>
+<text class="nl" x="678.0" y="1107.2" text-anchor="middle" fill="#212121">或同步登记删除计划</text>
+<rect x="651.5" y="998.7" width="53.0" height="194" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="678.0" y="1095.7" text-anchor="middle" fill="#212121">合入并纳入回归</text>
+</g></svg>

@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 706 2034" width="706" height="2034" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="706" height="2034" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M60.5,302.5 L60.5,341.5 L243.5,341.5 L243.5,380.5"/>
+<path class="fw" marker-end="url(#ah)" d="M60.5,302.5 L60.5,380.5"/>
+<path class="fw" marker-end="url(#ah)" d="M60.5,645.5 L60.5,723.5"/>
+<path class="fw" marker-end="url(#ah)" d="M60.5,645.5 L60.5,1080.3"/>
+<path class="fw" marker-end="url(#ah)" d="M60.5,1002.3 L60.5,1080.3"/>
+<path class="fw" marker-end="url(#ah)" d="M60.5,1402.8 L60.5,696.4 L243.5,696.4 L243.5,-10.0"/>
+<path class="fw" marker-end="url(#ah)" d="M60.5,1402.8 L60.5,696.4 L243.5,696.4 L243.5,-10.0"/>
+<path class="fw" marker-end="url(#ah)" d="M243.5,312.5 L243.5,368.3 L392.5,368.3 L392.5,424.0"/>
+<path class="fw" marker-end="url(#ah)" d="M243.5,312.5 L243.5,550.2 L392.5,550.2 L392.5,787.9"/>
+<path class="fw" marker-end="url(#ah)" d="M392.5,602.0 L392.5,787.9"/>
+<rect class="elb" x="119.6" y="293.5" width="64.8" height="96" rx="4"/>
+<text class="el" x="152.0" y="305.5" text-anchor="middle">&quot;没有 </text>
+<text class="el" x="152.0" y="323.5" text-anchor="middle">→ 立刻</text>
+<text class="el" x="152.0" y="341.5" text-anchor="middle">回到主线</text>
+<text class="el" x="152.0" y="359.5" text-anchor="middle">重新定义</text>
+<text class="el" x="152.0" y="377.5" text-anchor="middle">&quot;</text>
+<rect class="elb" x="28.1" y="311.5" width="64.8" height="60" rx="4"/>
+<text class="el" x="60.5" y="323.5" text-anchor="middle">&quot;有 → </text>
+<text class="el" x="60.5" y="341.5" text-anchor="middle">进入第二</text>
+<text class="el" x="60.5" y="359.5" text-anchor="middle">问&quot;</text>
+<rect class="elb" x="119.6" y="627.5" width="64.8" height="114" rx="4"/>
+<text class="el" x="152.0" y="639.5" text-anchor="middle">&quot;分支 </text>
+<text class="el" x="152.0" y="657.5" text-anchor="middle">→ 必须</text>
+<text class="el" x="152.0" y="675.5" text-anchor="middle">出主文件</text>
+<text class="el" x="152.0" y="693.5" text-anchor="middle">、进策略</text>
+<text class="el" x="152.0" y="711.5" text-anchor="middle">头、配单</text>
+<text class="el" x="152.0" y="729.5" text-anchor="middle">测&quot;</text>
+<rect class="elb" x="119.6" y="814.9" width="64.8" height="96" rx="4"/>
+<text class="el" x="152.0" y="826.9" text-anchor="middle">&quot;主线 </text>
+<text class="el" x="152.0" y="844.9" text-anchor="middle">→ 允许</text>
+<text class="el" x="152.0" y="862.9" text-anchor="middle">进主链路</text>
+<text class="el" x="152.0" y="880.9" text-anchor="middle">，但需可</text>
+<text class="el" x="152.0" y="898.9" text-anchor="middle">验收&quot;</text>
+<rect class="elb" x="198.4" y="648.4" width="64.8" height="96" rx="4"/>
+<text class="el" x="230.8" y="660.4" text-anchor="middle">&quot;没有 </text>
+<text class="el" x="230.8" y="678.4" text-anchor="middle">→ 补验</text>
+<text class="el" x="230.8" y="696.4" text-anchor="middle">证资产，</text>
+<text class="el" x="230.8" y="714.4" text-anchor="middle">禁止继续</text>
+<text class="el" x="230.8" y="732.4" text-anchor="middle">叠规则&quot;</text>
+<rect class="elb" x="40.8" y="666.4" width="64.8" height="60" rx="4"/>
+<text class="el" x="73.2" y="678.4" text-anchor="middle">&quot;有 → </text>
+<text class="el" x="73.2" y="696.4" text-anchor="middle">进入第四</text>
+<text class="el" x="73.2" y="714.4" text-anchor="middle">问&quot;</text>
+<rect class="elb" x="302.6" y="329.3" width="64.8" height="78" rx="4"/>
+<text class="el" x="335.0" y="341.3" text-anchor="middle">&quot;有 → </text>
+<text class="el" x="335.0" y="359.3" text-anchor="middle">做减法：</text>
+<text class="el" x="335.0" y="377.3" text-anchor="middle">删除或默</text>
+<text class="el" x="335.0" y="395.3" text-anchor="middle">认关闭&quot;</text>
+<rect class="elb" x="304.3" y="511.2" width="61.5" height="78" rx="4"/>
+<text class="el" x="335.0" y="523.2" text-anchor="middle">&quot;没有 </text>
+<text class="el" x="335.0" y="541.2" text-anchor="middle">→ 本轮</text>
+<text class="el" x="335.0" y="559.2" text-anchor="middle"> MVP 守</text>
+<text class="el" x="335.0" y="577.2" text-anchor="middle">持成立&quot;</text>
+<polygon points="60.5,0.0 121.0,151.3 60.5,302.5 0.0,151.3" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="60.5" y="128.3" text-anchor="middle" fill="#795548">第一问</text>
+<text class="nl" x="60.5" y="151.3" text-anchor="middle" fill="#795548">有没有一条能一句话说清</text>
+<text class="nl" x="60.5" y="174.3" text-anchor="middle" fill="#795548">并能端到端验证的主线？</text>
+<polygon points="60.5,380.5 121.0,513.0 60.5,645.5 0.0,513.0" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="60.5" y="490.0" text-anchor="middle" fill="#795548">第二问</text>
+<text class="nl" x="60.5" y="513.0" text-anchor="middle" fill="#795548">新增能力是主线必需</text>
+<text class="nl" x="60.5" y="536.0" text-anchor="middle" fill="#795548">还是分支场景？</text>
+<polygon points="60.5,1080.3 121.0,1241.6 60.5,1402.8 0.0,1241.6" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="60.5" y="1218.6" text-anchor="middle" fill="#795548">第三问</text>
+<text class="nl" x="60.5" y="1241.6" text-anchor="middle" fill="#795548">每条业务规则是否</text>
+<text class="nl" x="60.5" y="1264.6" text-anchor="middle" fill="#795548">有独立于实现的验证手段？</text>
+<polygon points="243.5,-10.0 304.0,151.3 243.5,312.5 183.0,151.3" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="243.5" y="128.3" text-anchor="middle" fill="#795548">第四问</text>
+<text class="nl" x="243.5" y="151.3" text-anchor="middle" fill="#795548">是否还有编译进去</text>
+<text class="nl" x="243.5" y="174.3" text-anchor="middle" fill="#795548">但不产生当前价值的资产？</text>
+<rect x="217.0" y="380.5" width="53.0" height="265" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="243.5" y="513.0" text-anchor="middle" fill="#212121">危险信号：需求失焦</text>
+<rect x="22.5" y="723.5" width="76.0" height="278.80000000000007" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="60.5" y="851.4" text-anchor="middle" fill="#212121">纪律：纯逻辑头 + 单测 + 离线</text>
+<text class="nl" x="60.5" y="874.4" text-anchor="middle" fill="#212121">仿真</text>
+<rect x="217.0" y="-10.0" width="53.0" height="322.5" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="243.5" y="151.3" text-anchor="middle" fill="#212121">危险信号：规则进代码不进策略</text>
+<rect x="366.0" y="424.0" width="53.0" height="178" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="392.5" y="513.0" text-anchor="middle" fill="#212121">纪律：死代码出局</text>
+<rect x="366.0" y="787.9" width="53.0" height="150" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="392.5" y="862.9" text-anchor="middle" fill="#212121">可以继续迭代</text>
+</g></svg>

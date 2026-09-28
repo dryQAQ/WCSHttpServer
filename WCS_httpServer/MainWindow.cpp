@@ -508,6 +508,31 @@ private:
 };
 
 // ============================================================================
+// ★ 2026-09-22 现场要求：**异常类型一律用中文表述**（界面/导出不出现 plc_no_grid、no_bind 等内部代号）
+//   · 库内 type 仍是稳定代号（处理数统计口径依赖它，不能改字面量）；
+//   · 所有展示点统一经本函数翻译（查看处理明细、EPC 全信息、实时面板、导出到日志）；
+//   · 兼容历史库里已写入中文的旧行（含非 ASCII 即原样返回，不重复翻译）；
+//   · 未知/遗留代号 → 中文兜底并附原标识，便于工程排查。
+//   文件级共用（多个弹窗类都要用；代号与中文的对照表只维护这一份）。
+// ============================================================================
+static QString exceptionTypeLabel(const QString& type)
+{
+    const QString t = type.trimmed();
+    if (t.isEmpty()) return QString::fromUtf8("未分类异常");
+    for (const QChar& c : t)
+        if (c.unicode() > 127) return t;          // 已是中文（历史行/新写法）→ 原样
+    if (t == "plc_no_grid")         return QString::fromUtf8("PLC反馈无格口");
+    if (t == "plc_info_incomplete") return QString::fromUtf8("PLC反馈信息不全");
+    if (t == "no_bind")             return QString::fromUtf8("落格时格口未绑定容器");
+    if (t == "no_match")            return QString::fromUtf8("无匹配计划格口");
+    if (t == "wrong_grid")          return QString::fromUtf8("落错格口（不在该SKU计划内）");
+    if (t == "read_fail")           return QString::fromUtf8("读码失败（未读到条码/EPC）");
+    if (t == "conflict")            return QString::fromUtf8("落格冲突");
+    if (t == "device_fail")         return QString::fromUtf8("设备故障");
+    return QString::fromUtf8("其他异常（内部标识：%1）").arg(t);
+}
+
+// ============================================================================
 // ★ 2026-09-13 EpcDetailDialog — 「EPC 全信息」弹窗
 //   数据来源（全部只读查询，走 SortingDatabase 的线程局部只读连接，不占用 DB 写线程）：
 //     · sorting_records   → 该 EPC 的全部分拣/落格历史（波次、格口、容器、首尾车、时间）
@@ -659,7 +684,7 @@ private:
         {
             const ExceptionRecord& e = excs[i];
             fill(m_tblExc, QStringList()
-                << QString::number(i + 1) << e.time << e.type
+                << QString::number(i + 1) << e.time << exceptionTypeLabel(e.type)
                 << (e.sku.isEmpty() ? "--" : e.sku)
                 << e.reason
                 << (isCountedException(e.type) ? QString::fromUtf8("计入处理") : QString::fromUtf8("仅留痕"))
@@ -740,7 +765,7 @@ private:
                 if (isCountedException(e.type)) ++counted;
             }
             parts << QString::fromUtf8("留痕 %1 条（其中计入处理数 %2 条）").arg(excs.size()).arg(counted);
-            parts << QString::fromUtf8("最新：%1 — %2").arg(excs.first().type, excs.first().reason);
+            parts << QString::fromUtf8("最新：%1 — %2").arg(exceptionTypeLabel(excs.first().type), excs.first().reason);
             m_lblExc->setText(parts.join(QString::fromUtf8("；")));
             m_lblExc->setStyleSheet("font-size: 13px; font-weight: bold; color: #D32F2F;");
         }
@@ -913,7 +938,16 @@ private:
             };
             setCell(0, QString::number(i + 1), QColor(), true);
             setCell(1, e.time);
-            setCell(2, e.type, isCounted ? QColor("#D32F2F") : QColor("#616161"));
+            // ★ 2026-09-22 现场要求：「异常类型」一律用中文表述，不出现 plc_no_grid / no_bind 这类内部代号
+            //   （代号仅保留在 tooltip 里，供工程排查/搜索用；统计口径仍按代号判定，不受显示影响）
+            {
+                QTableWidgetItem* typeIt = setCell(2, exceptionTypeLabel(e.type),
+                                                   isCounted ? QColor("#D32F2F") : QColor("#616161"));
+                if (typeIt)
+                    typeIt->setToolTip(QString::fromUtf8("内部标识（工程用）：%1\n"
+                                                         "「计入处理数」= PLC 判定失败件（无格口 / 信息不全），同一 EPC 只计 1 件")
+                                           .arg(e.type));
+            }
             setCell(3, e.epc.isEmpty() ? "--" : e.epc);
             setCell(4, e.sku.isEmpty() ? "--" : e.sku);
             setCell(5, e.reason);
@@ -938,7 +972,7 @@ private:
             "该 EPC 之后<u>成功落格</u>即视为已处理，立即 −1（不会一直保留）。\n"
             "  · 异常口（波次面板）= <b>与「处理」同一个量</b>（同一批待处理件，去重 EPC）；成功落格时同步减少。\n"
             "  · 异常留痕（下表）= exception_record 记录条数：其中只有 PLC 主动判定失败的 "
-            "plc_no_grid / plc_info_incomplete <b>计入处理数</b>；\n"
+            "「PLC反馈无格口 / PLC反馈信息不全」<b>计入处理数</b>；\n"
             "    未匹配/未绑定/冲突/重扫超限/发送超时等属于<u>仅留痕</u>（PLC 报成功、已计已分拣），不增加处理数。\n"
             "  · 本波次实时对照：%1    ｜ 当前筛选：留痕 %2 条（计入处理 %3 条，已闭环 %4 条）%5")
             .arg(memText).arg(m_rows.size()).arg(counted).arg(resolved)
@@ -957,7 +991,7 @@ private:
         {
             const ExceptionRecord& e = m_rows[i];
             lines << QString("%1. %2 [%3] EPC=%4 SKU=%5 %6 | %7")
-                .arg(i + 1).arg(e.time, e.type)
+                .arg(i + 1).arg(e.time, exceptionTypeLabel(e.type))
                 .arg(e.epc.isEmpty() ? "--" : e.epc)
                 .arg(e.sku.isEmpty() ? "--" : e.sku)
                 .arg(e.handled ? QString::fromUtf8("[已闭环]") : QString::fromUtf8("[未闭环]"))
@@ -2599,8 +2633,11 @@ void MainWindow::setupUI()
     //   列头、取数口径与「查看绑定」弹窗全部保留：恢复显示只需把那一行的 true 改成 false。
     m_tblWaveRecords->setColumnCount(WAVE_RECORDS_COLUMN_COUNT);
     // ★ 2026-09-13 列头显式化口径（客户口径：「处理」= 仍在异常口待处理件数；异常口同值）
+    // ★ 2026-09-25 列头口径修正：本列取值一直是 sorting_records 的 COUNT(DISTINCT barcode)
+    //   （= 去重**实物**件数），原列头写「已分拣(件次)」与实际取值自相矛盾（件次是 PLC 反馈累计，
+    //   含重复反馈/重投）→ 改为「已分拣(件)」，与波次面板「分拣件数」同一个数。
     m_tblWaveRecords->setHorizontalHeaderLabels(
-        QStringList() << "波次号" << "状态" << "计划件数" << "已分拣(件次)" << "处理(件)"
+        QStringList() << "波次号" << "状态" << "计划件数" << "已分拣(件)" << "处理(件)"
                       << "异常口(件)" << "H7满箱" << "H8完结" << "更新时间" << "格口绑定");
     // ★ 2026-09-17 现场要求：隐藏「格口绑定」列（做成"可一键恢复"的隐藏，而不是删代码）
     m_tblWaveRecords->setColumnHidden(WAVE_RECORDS_BIND_COL, true);
@@ -2618,10 +2655,14 @@ void MainWindow::setupUI()
         "QHeaderView::section { background-color: #e0e0e0; font-weight: bold; padding: 6px; font-size: 13px; }");
     m_tblWaveRecords->setToolTip(QString::fromUtf8(
         "口径说明：\n"
-        "  已分拣(件次) = PLC 落格反馈累计件次（含重复反馈与重投）\n"
+        "  已分拣(件)   = **去重实物件数** = 真正写进落格明细(sorting_records) 的不重复 EPC 数\n"
+        "                 （与波次面板「分拣件数」同一个数、同源；也是 H7 满箱明细/箱内实落口径）\n"
+        "                 ★ 面板「已分拣」是**件次**口径（PLC 每次报成功 +1，含重复反馈/重投，\n"
+        "                   还含『只计件没写明细』的件：格口未绑定容器/识别码无匹配/落错格/超计划超出件），\n"
+        "                   故面板已分拣 ≥ 本列，差额就是那几件 —— 不是丢数据，两者口径不同\n"
         "  处理(件)     = 仍在异常口、尚未处理完的件数（去重 EPC）——该 EPC 之后成功落格即视为已处理，立即减少\n"
         "  异常口(件)   = 与「处理」同一个量（同源同值），成功落格时同步减少\n"
-        "  当前波次取内存实时值；历史波次取数据库未闭环计数\n"
+        "  当前波次取内存实时值；历史波次取数据库计数\n"
         "  需要「本波次曾掉入异常口的总量」请看波次面板的「异常留痕」或异常明细弹窗\n"
         "  格口绑定：本列表与界面**不显示**该列/入口（现场要求）；需要核对该波次绑了哪些容器时，\n"
         "            用只读脚本 docs/wave_bind_audit.py（只读、不改数据）\n"
@@ -3895,55 +3936,13 @@ void MainWindow::setupCore()
     connect(m_pServer, &HttpServer::logMessage, this, &MainWindow::appendLog);
 
     // ════════════════════════════════════════════════════════════════════════
-    // ★ 2026-09-22 现场需求（完结顺序）：完结回传（H8）一定是最后一条报文
-    //   存在未成功的满箱回传（H7）时，HttpServer 会暂缓 H8 并发出本信号：
-    //   弹窗列出**对应格口号/箱号/状态/重试次数**，由操作员选择
-    //     · 「先去处理（暂不结束）」→ 不发送 H8；H7 报文保留在 Outbox（自动重试 + 可人工重传），
-    //        补齐后再次点「结束任务」即发送 H8（服务仍在运行时屏障会自动放行）；
-    //     · 「确认直接完结」→ 立即发送 H8（写异常留痕，未成功的 H7 仍可稍后补传）。
+    // ★ 2026-09-22 现场口径（最终定稿）：完结回传（H8）**固定延迟后强制发送，与满箱回传结果完全分开**。
+    //   点「结束任务」→ 当前所有有数据的格口统一做一遍满箱回传（H7）→ 等 endReportDelayMs（默认 1 秒）
+    //   → **不论 H7 是否成功**都发送 H8（H8 始终是最后一条报文）。
+    //   ⇒ 因此这里**不再有任何"完结弹窗/人工选择/状态条"**：原完结屏障的两个信号与那个二选一对话框
+    //     已随屏障一并移除（无残留接线、无残留文案）；
+    //     H7 未成功时只写异常留痕 + 日志提示（见 HttpServer::onEndDelayTimeout）。
     // ════════════════════════════════════════════════════════════════════════
-    connect(m_pServer, &HttpServer::endBarrierNeedDecision, this,
-        [this](const QString& orderCode, const QString& detailText) {
-            appendLog(QString("[完结屏障] 波次 %1：完结回传（H8）已暂缓 —— 存在未成功的满箱回传：%2")
-                          .arg(orderCode, detailText), true);
-
-            QMessageBox box(this);
-            box.setIcon(QMessageBox::Warning);
-            box.setWindowTitle(QCoreApplication::translate("MainWindow", "存在未成功的满箱回传（H7）"));
-            box.setText(QString::fromUtf8("波次 %1 的完结回传（H8）已暂缓，等待人工确认。\n\n"
-                                          "未完成的满箱回传（对应格口）：\n%2")
-                            .arg(orderCode, detailText));
-            box.setInformativeText(QString::fromUtf8(
-                "「先去处理（暂不结束）」：本次不发送完结回传；满箱回传报文与箱号已保留，"
-                "可在「重传满箱切换(H7)」补发，补齐后再次点「结束任务」即发送 H8。\n"
-                "「确认直接完结」：立即发送完结回传（会写异常留痕；未成功的满箱回传仍可稍后补传）。"));
-            QPushButton* btnHold = box.addButton(
-                QCoreApplication::translate("MainWindow", "先去处理（暂不结束）"), QMessageBox::RejectRole);
-            QPushButton* btnGo = box.addButton(
-                QCoreApplication::translate("MainWindow", "确认直接完结"), QMessageBox::AcceptRole);
-            box.setDefaultButton(btnHold);
-            box.exec();
-
-            if (box.clickedButton() == btnGo)
-            {
-                if (m_pServer)
-                    m_pServer->confirmEndReport(orderCode,
-                        QString::fromUtf8("操作员确认：带未成功满箱回传直接完结"));
-            }
-            else
-            {
-                appendLog("[完结屏障] 已选择「先去处理」：本次不发送完结回传；"
-                          "满箱回传报文保留在 Outbox（自动重试/可人工重传），补齐后再点「结束任务」发送 H8", true);
-            }
-        }, Qt::QueuedConnection);
-
-    // ★ 完结屏障状态变化（暂缓/通过/人工确认）→ 日志留痕，便于现场判断卡在哪条
-    connect(m_pServer, &HttpServer::endBarrierChanged, this, [this]() {
-        if (!m_pServer) return;
-        const QString s = m_pServer->endBarrierStateText();
-        if (!s.isEmpty())
-            appendLog(QString("[完结屏障] %1").arg(s), true);
-    });
 
     // ★ 容器绑定变更 → 即时刷新 UI + 持久化到 XML
     connect(m_pServer, &HttpServer::bindingUpdated, this, [this]() {
@@ -4577,15 +4576,24 @@ void MainWindow::updateWavePanel()
     m_lblExcTrace->setText(excTrace < 0 ? QString("--") : QString("%1 条").arg(excTrace));
     m_lblExcTrace->setToolTip(QString::fromUtf8(
         "留痕条数 = exception_record 记录数（含下列两类）：\n"
-        "  · 计入处理的：plc_no_grid(无格口) / plc_info_incomplete(信息不全)\n"
-        "  · 仅留痕（PLC 报成功、已计为已分拣，不增加处理数）：无匹配/无绑定/冲突/重扫超限/发送超时等\n"
+        "  · 计入处理的：PLC反馈无格口 / PLC反馈信息不全（信息不全会写明缺哪个字段）\n"
+        "  · 仅留痕（PLC 报成功、已计为已分拣，不增加处理数）：无匹配计划格口/落格时未绑定容器/落错格口/重扫超限/发送超时等\n"
         "点右侧「查看处理」查看明细与「是否计入 / 是否已闭环」标注"));
 
-    m_lblSumLocation->setText(QString::number(snap.sumLocation));
+    // ★ 2026-09-25 口径统一（现场反馈："历史记录里的已分拣总比面板少几件"）：
+    //   本标签改用 **去重实物件数** = 真正写进落格明细(sorting_records) 的去重 EPC 数，
+    //   与「波次数据历史记录」页「已分拣」列（COUNT(DISTINCT barcode)）**同源同值**。
+    //   原实现取波次快照的 sumLocation 字段（= WaveManager::sorted() = PLC 反馈**件次**累计）：
+    //   件次含重复反馈/重投，且含"计了件但没写明细"的四类件（落格时格口无容器绑定 no_bind、
+    //   识别码无匹配 no_match、落错格、超计划超出件）⇒ 面板比历史列多出这几件。
+    m_lblSumLocation->setText(QString::number(m_pServer->sortedDetailCount()));
     m_lblSumLocation->setToolTip(QString::fromUtf8(
-        "分拣件数（去重 EPC） = 已落格的不重复实物件数：\n"
-        "  · 「已分拣」是件次口径（含重复反馈/重投），本值是件口径，两者不同\n"
-        "  · WMS 完结回传（H8）的 sumLocation 用此值"));
+        "分拣件数（件口径） = 真正写进落格明细的不重复实物件数：\n"
+        "  · 与「波次数据历史记录」页的「已分拣」列**同一个数**（同源：sorting_records 去重 EPC）\n"
+        "  · 也是每格口 H7 满箱明细 / 箱内实落 / 上报 WMS 的件数口径\n"
+        "  · 左侧「已分拣」是件次口径（PLC 每次报成功 +1，含重复反馈与重投），故 ≥ 本值；\n"
+        "    差额 = 只计件但没写明细的件（落格时格口无容器绑定 / 识别码无匹配 / 落错格 / 超计划超出件）\n"
+        "  · WMS 完结回传（H8）的 sumLocation 目前仍取件次口径，与本值不等（待现场确认后统一）"));
 
     // ★ 2026-09-13 新增：RFID 扫描次数 = RFID 推送 EPC 次数（重复 EPC 重复计数）
     const quint64 rfidScans = m_pServer->rfidPushTotal();
@@ -5099,7 +5107,7 @@ void MainWindow::onClearAllGridBinds()
     {
         warnExtra = QString::fromUtf8(
             "\n\n⚠ 当前有 %1 件**在途**（已下发 PLC、尚未收到落格反馈）：\n"
-            "   · 清空后这些件仍会落到原格口，但那时格口已无容器绑定 → 只能留痕（no_bind），\n"
+            "   · 清空后这些件仍会落到原格口，但那时格口已无容器绑定 → 只能留痕（异常类型：落格时格口未绑定容器），\n"
             "     不计入任何容器的 H7 报文、不消耗计划额度，需人工清出/核对；\n"
             "   · 建议等这些件落格完成（或在异常口场景先停止投线）后再清空。").arg(inFlight);
     }
@@ -5121,7 +5129,7 @@ void MainWindow::onClearAllGridBinds()
     appendLog("[清空绑定] 执行清空格口容器绑定 ...", true);
     if (inFlight > 0)
         appendLog(QString::fromUtf8("[清空绑定] ⚠ 当前在途 %1 件：清空后这些件落格时格口已无绑定，"
-                                    "只留痕(no_bind)、不进任何容器 H7、不消耗额度，请人工清出/核对").arg(inFlight), true);
+                                    "只留痕（异常类型：落格时格口未绑定容器）、不进任何容器 H7、不消耗额度，请人工清出/核对").arg(inFlight), true);
     m_pServer->clearAllGridBinds();   // 内部：内存清空 + DB归档留史 + enableAllGrids + bindingUpdated + 日志
     updateBindingPanel();
     m_bindingDirty = true;
@@ -7775,35 +7783,33 @@ void MainWindow::onOneKeyFullbox()
 
     appendLog(QString("[一键满箱] 开始执行：已绑定容器 %1 个，波次 %2").arg(total).arg(orderCode));
 
+    // ★ 2026-09-26：改走 HttpServer 的**唯一实现** reportFullboxAllBoundGrids（与「结束任务」同一口径/同一
+    //   代码路径：遍历已绑定容器 → 有记录才生成报文 → 无记录/异常口跳过；detachOnSuccess=false
+    //   ⇒ 按钮不动容器绑定）。逐格口结果回传后，这里只做计数与日志（口径与改造前逐字一致）。
     int sent = 0, empty = 0, failed = 0;
     QStringList sentGrids, emptyGrids, failedGrids;
-    for (auto it = binds.constBegin(); it != binds.constEnd(); ++it)
+    const QVector<FullboxBatchEntry> entries =
+        m_pServer->reportFullboxAllBoundGrids(QString::fromUtf8("一键满箱回传"), /*detachOnSuccess=*/false);
+    for (const FullboxBatchEntry& e : entries)
     {
-        const QString grid = it.key();
-        const QString box  = it.value();
-
-        // manualFullbox（★ 需求④）：成功返回本次生成的 H7 msgId（已入 Outbox）；失败返回空串 + 原因
-        //   原因区分："无待上传的分拣记录" = 正常跳过（该格已满箱或未落格）；
-        //             其余（无容器绑定/缺SKU/Outbox 写入失败/异常口…）= 真失败，计入失败数
-        QString reason;
-        const QString msgId = m_pServer->manualFullbox(grid, &reason);
-        if (!msgId.isEmpty())
+        if (!e.msgId.isEmpty())
         {
             ++sent;
-            m_oneKeyMsgIds.insert(msgId);   // ★ 需求④：登记本次一键生成的报文，供失败回执归因
-            sentGrids << QString::fromUtf8("%1(%2)").arg(grid, box);
+            m_oneKeyMsgIds.insert(e.msgId);   // ★ 需求④：登记本次一键生成的报文，供失败回执归因
+            sentGrids << QString::fromUtf8("%1(%2)").arg(e.grid, e.box);
         }
-        else if (reason == QString::fromUtf8("无待上传的分拣记录"))
+        else if (e.reason == QString::fromUtf8("无待上传的分拣记录")
+                 || e.reason == QString::fromUtf8("异常口不上传WMS"))
         {
-            ++empty;                        // 正常跳过（不算失败，沿用既有日志口径）
-            emptyGrids << grid;
+            ++empty;                          // 正常跳过（无记录 / 异常口，沿用既有日志口径）
+            emptyGrids << e.grid;
         }
         else
         {
-            ++failed;                       // ★ 需求④：真失败（未能生成报文）
+            ++failed;                         // ★ 需求④：真失败（未能生成报文）
             ++m_oneKeyFails;
-            failedGrids << QString::fromUtf8("%1(%2)").arg(grid).arg(
-                reason.isEmpty() ? QString::fromUtf8("未知原因") : reason);
+            failedGrids << QString::fromUtf8("%1(%2)").arg(e.grid).arg(
+                e.reason.isEmpty() ? QString::fromUtf8("未知原因") : e.reason);
         }
     }
     m_oneKeyBatches += sent;                // ★ 需求④：本次一键成功生成报文数（会话累计）

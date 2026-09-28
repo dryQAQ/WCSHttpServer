@@ -187,12 +187,18 @@ void ParseWorker::run()
                 //   ★ key 统一用 normalizeGridKey（3 位内部 key，如 "034"）：选格侧按 3 位 key 查表，
                 //     早期写成裸数字 "34" 会查不到、分配失效。
                 const QString gKey = normalizeGridKey(gridNum);
-                ent.planQtyPerGrid[gKey] += gridNumber;   // 同格口多行累加
+                ent.planQtyPerGrid[gKey] += gridNumber;   // 格口级合计（派生视图，供旧报表/兜底）
                 // ★ 每格口类型一并保存（同品可同时计划到"正常分拣(分类)"与"发货"格口，各格口数量不同）
                 if (!gridType.isEmpty())
                     ent.gridTypePerGrid.insert(gKey, gridType);
+                // ★ 2026-09-26 现场口径：额度的唯一单元 = **(SKU, 格口, 分拣类型)** ——
+                //   同一 (SKU,格口) 的两行（分类一份 + 发货一份）必须**分别保额**：
+                //   按单元累加（同单元重复行才累加），类型不再被后一行覆盖。
+                const QString cellKey = makeCellKey(gKey, gridType);
+                ent.planQtyPerCell[cellKey] += gridNumber;
+                ent.gridTypePerCell.insert(cellKey, cellKeyTypeOf(cellKey));
                 int sum = 0;
-                for (auto pit = ent.planQtyPerGrid.constBegin(); pit != ent.planQtyPerGrid.constEnd(); ++pit)
+                for (auto pit = ent.planQtyPerCell.constBegin(); pit != ent.planQtyPerCell.constEnd(); ++pit)
                     sum += pit.value();
                 ent.gridCount = sum;
             }
@@ -208,6 +214,12 @@ void ParseWorker::run()
                 //   key = 3 位内部 key（normalizeGridKey），与选格侧查表口径一致
                 entry.planQtyPerGrid.insert(normalizeGridKey(gridNum), gridNumber);
                 entry.gridTypePerGrid.insert(normalizeGridKey(gridNum), entry.gridType);
+                // ★ 2026-09-26：单元明细（(SKU,格口,类型)）—— 额度/封顶的权威来源
+                {
+                    const QString ck = makeCellKey(normalizeGridKey(gridNum), entry.gridType);
+                    entry.planQtyPerCell.insert(ck, gridNumber);
+                    entry.gridTypePerCell.insert(ck, cellKeyTypeOf(ck));
+                }
                 // 批次信息：每个SKU编码都关联到所属批次
                 entry.orderCode = orderCode;
                 entry.orderQty  = orderQty;
@@ -237,14 +249,28 @@ void ParseWorker::run()
             for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it)
             {
                 const GridEntry& e = it.value();
-                if (e.planQtyPerGrid.size() < 2)
+                // ★ 2026-09-26：多格口判定改看**单元数**（同格口两类型 = 2 个单元，也要打出来）
+                const int unitCnt = e.planQtyPerCell.isEmpty() ? e.planQtyPerGrid.size()
+                                                               : e.planQtyPerCell.size();
+                if (unitCnt < 2)
                     continue;
                 ++multiSku;
                 QStringList one;
-                for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+                if (!e.planQtyPerCell.isEmpty())
                 {
-                    const QString t = e.gridTypePerGrid.value(pit.key(), e.gridType);
-                    one << QString("%1(%2):%3件").arg(pit.key()).arg(typeName(t)).arg(pit.value());
+                    // ★ 2026-09-26：按单元列出（同格口两类型各一份）；**保持原日志格式**
+                    //   "格口(类型):件数"，不引入新的输出样式（界面运行日志沿用旧观感）。
+                    for (auto cit = e.planQtyPerCell.constBegin(); cit != e.planQtyPerCell.constEnd(); ++cit)
+                        one << QString("%1(%2):%3件").arg(cellKeyGridOf(cit.key()))
+                                   .arg(typeName(cellKeyTypeOf(cit.key()))).arg(cit.value());
+                }
+                else
+                {
+                    for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+                    {
+                        const QString t = e.gridTypePerGrid.value(pit.key(), e.gridType);
+                        one << QString("%1(%2):%3件").arg(pit.key()).arg(typeName(t)).arg(pit.value());
+                    }
                 }
                 if (multiDetail.size() < 50)
                     multiDetail << QString("%1→[%2]").arg(it.key()).arg(one.join("+"));
@@ -387,22 +413,43 @@ void ParseWorker::run()
         for (auto it = newMap->constBegin(); it != newMap->constEnd(); ++it)
         {
             const GridEntry& e = it.value();
-            if (e.planQtyPerGrid.isEmpty()) continue;
+            if (e.planQtyPerGrid.isEmpty() && e.planQtyPerCell.isEmpty()) continue;
 
             QVector<PlanGridInput> gs;
-            gs.reserve(e.planQtyPerGrid.size());
-            for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+            if (!e.planQtyPerCell.isEmpty())
             {
-                PlanGridInput gi;
-                const QString gk = pit.key();
-                bool okG = false;
-                gi.grid = (qint16)gk.toInt(&okG);
-                if (!okG) continue;
-                gi.qty = (qint32)pit.value();
-                const QString t = e.gridTypePerGrid.value(gk, e.gridType);
-                gi.type = (quint8)t.toInt();      // 0=正常分拣(分类) 1=异常 2=发货
-                if (gi.type > 2) gi.type = 0;     // 脏数据兜底为"正常分拣"
-                gs.append(gi);
+                // ★ 2026-09-26：**单元口径**（(SKU,格口,类型)）—— 分配表的输入单位就是单元，
+                //   一个格口的分类行与发货行各自成为一个单元（各有一份额度、互不借用）。
+                gs.reserve(e.planQtyPerCell.size());
+                for (auto cit = e.planQtyPerCell.constBegin(); cit != e.planQtyPerCell.constEnd(); ++cit)
+                {
+                    PlanGridInput gi;
+                    bool okG = false;
+                    gi.grid = (qint16)cellKeyGridOf(cit.key()).toInt(&okG);
+                    if (!okG) continue;
+                    gi.qty  = (qint32)cit.value();
+                    gi.type = (quint8)cellKeyTypeNumOf(cit.key());
+                    if (gi.type > 2) gi.type = 0;     // 脏数据兜底为"正常分拣"
+                    gs.append(gi);
+                }
+            }
+            else
+            {
+                // 兜底（旧数据/无单元表）：按格口口径编译（与改造前逐字一致）
+                gs.reserve(e.planQtyPerGrid.size());
+                for (auto pit = e.planQtyPerGrid.constBegin(); pit != e.planQtyPerGrid.constEnd(); ++pit)
+                {
+                    PlanGridInput gi;
+                    const QString gk = pit.key();
+                    bool okG = false;
+                    gi.grid = (qint16)gk.toInt(&okG);
+                    if (!okG) continue;
+                    gi.qty = (qint32)pit.value();
+                    const QString t = e.gridTypePerGrid.value(gk, e.gridType);
+                    gi.type = (quint8)t.toInt();      // 0=正常分拣(分类) 1=异常 2=发货
+                    if (gi.type > 2) gi.type = 0;     // 脏数据兜底为"正常分拣"
+                    gs.append(gi);
+                }
             }
             if (!gs.isEmpty())
                 skuPlans.append(qMakePair(it.key(), gs));

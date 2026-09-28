@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1688 491" width="1688" height="491" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1688" height="491" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M225.2,49.5 L264.2,49.5 L264.2,210.5 L303.2,210.5"/>
+<path class="fw" marker-end="url(#ah)" d="M225.2,210.5 L303.2,210.5"/>
+<path class="fw" marker-end="url(#ah)" d="M592.4,210.5 L670.4,210.5"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M670.4,210.5 L269.2,210.5 L269.2,210.5 L303.2,210.5"/>
+<path class="fw" marker-end="url(#ah)" d="M874.8,210.5 L952.8,210.5"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M952.8,210.5 L12.0,210.5 L12.0,49.5 L0.0,49.5"/>
+<rect class="elb" x="249.5" y="100.0" width="73.4" height="60" rx="4"/>
+<text class="el" x="286.2" y="112.0" text-anchor="middle">&quot;解除在途</text>
+<text class="el" x="286.2" y="130.0" text-anchor="middle"> / 更新进</text>
+<text class="el" x="286.2" y="148.0" text-anchor="middle">度&quot;</text>
+<rect class="elb" x="-30.7" y="100.0" width="73.4" height="60" rx="4"/>
+<text class="el" x="6.0" y="112.0" text-anchor="middle">&quot;账实不符</text>
+<text class="el" x="6.0" y="130.0" text-anchor="middle"> → 补传 </text>
+<text class="el" x="6.0" y="148.0" text-anchor="middle">/ 返工&quot;</text>
+<rect x="0.0" y="0.0" width="225.2" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="112.6" y="26.5" text-anchor="middle" fill="#212121">① 建立计划上下文</text>
+<text class="nl" x="112.6" y="49.5" text-anchor="middle" fill="#212121">波次 / SKU / 计划数量</text>
+<text class="nl" x="112.6" y="72.5" text-anchor="middle" fill="#212121">格口分配 / 容器归属</text>
+<rect x="0.0" y="161.0" width="225.2" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="112.6" y="187.5" text-anchor="middle" fill="#212121">② 补齐单件信息</text>
+<text class="nl" x="112.6" y="210.5" text-anchor="middle" fill="#212121">EPC 身份 + 小车号</text>
+<text class="nl" x="112.6" y="233.5" text-anchor="middle" fill="#212121">+ 异步查询到的 SKU</text>
+<rect x="303.2" y="161.0" width="289.2" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="447.8" y="187.5" text-anchor="middle" fill="#212121">③ 形成设备动作</text>
+<text class="nl" x="447.8" y="210.5" text-anchor="middle" fill="#212121">综合波次 / 额度 / 锁格 / 禁用</text>
+<text class="nl" x="447.8" y="233.5" text-anchor="middle" fill="#212121">产出 PLC 指令</text>
+<rect x="670.4" y="161.0" width="204.4" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="772.6" y="187.5" text-anchor="middle" fill="#212121">④ 接收执行事实</text>
+<text class="nl" x="772.6" y="210.5" text-anchor="middle" fill="#212121">落格成功或异常</text>
+<text class="nl" x="772.6" y="233.5" text-anchor="middle" fill="#212121">解除在途 · 更新进度</text>
+<rect x="952.8" y="161.0" width="193.2" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1049.4" y="187.5" text-anchor="middle" fill="#212121">⑤ 形成业务确认</text>
+<text class="nl" x="1049.4" y="210.5" text-anchor="middle" fill="#212121">箱单 H7 + 完结 H8</text>
+<text class="nl" x="1049.4" y="233.5" text-anchor="middle" fill="#212121">回执或人工处置</text>
+</g></svg>

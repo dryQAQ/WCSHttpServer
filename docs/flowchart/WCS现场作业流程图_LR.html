@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WCS 现场作业流程图（开机 → 循环）</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin:0; background:#fff; font-family:'Microsoft YaHei','PingFang SC',sans-serif; color:#212121; }
+  header { padding:14px 20px 10px; border-bottom:2px solid #1565C0; }
+  header h1 { margin:0; font-size:20px; color:#0D47A1; }
+  header p { margin:6px 0 0; font-size:12px; line-height:1.7; color:#546E7A; }
+  .bar { padding:8px 20px; font-size:12px; color:#607D8B; background:#F5F7FA; border-bottom:1px solid #E0E0E0; }
+  .bar b { color:#1565C0; }
+  .wrap { padding:16px 20px 32px; overflow:auto; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; padding:10px 20px 0; font-size:12px; color:#37474F; }
+  .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-right:5px; vertical-align:-2px; }
+  @media print {
+    header { border-bottom-color:#ccc; }
+    .bar { display:none; }
+    .wrap { padding:0; }
+    @page { margin:12mm; size:A4 landscape; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>WCS 现场作业流程图（开机 → 循环）</h1>
+  <p>开机 → 软件自启动 → 等待接收任务 → WMS 下发(H4) → 绑定(人工/H6) → 开始分拣 → 运行日志+效率统计 → 一键满箱回传(H7) → WMS 确认 → 结束任务(H8) → WMS 接收完结 → 再次开始接收任务（循环）</p>
+</header>
+<div class="bar">版本：2026-09-17 ｜ 软件：WCS_httpServer.exe ｜ 本页<b>离线自包含</b>（无需联网），可直接打印或另存 PDF ｜ 配套文档：docs/WCS现场操作手册.md、docs/WCS现场作业流程图.md</div>
+<div class="legend">
+  <span><i style="background:#E3F2FD;border:2px solid #1565C0"></i>现场人工操作（须点击）</span>
+  <span><i style="background:#F5F5F5;border:1px solid #9E9E9E"></i>软件自动完成</span>
+  <span><i style="background:#E8F5E9;border:2px solid #2E7D32"></i>WMS / 上位系统</span>
+  <span><i style="background:#FFFDE7;border:2px solid #F9A825"></i>判断 / 等待</span>
+  <span><i style="border:2px dashed #FB8C00"></i>回环（虚线箭头）</span>
+</div>
+<div class="wrap">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1687 706" width="1687" height="706" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1687" height="706" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(98,98) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M252.4,49.5 L330.4,49.5"/>
+<path class="fw" marker-end="url(#ah)" d="M554.0,49.5 L632.0,49.5"/>
+<path class="fw" marker-end="url(#ah)" d="M897.0,49.5 L975.0,49.5"/>
+<path class="fw" marker-end="url(#ah)" d="M1145.8,49.5 L547.9,49.5 L547.9,210.0 L-50.1,210.0"/>
+<path class="fw" marker-end="url(#ah)" d="M302.5,210.0 L309.7,210.0"/>
+<path class="fw" marker-end="url(#ah)" d="M574.7,210.0 L646.3,210.0"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M309.7,210.0 L275.7,210.0 L275.7,49.5 L330.4,49.5"/>
+<path class="fw" marker-end="url(#ah)" d="M882.7,210.0 L974.2,210.0"/>
+<path class="fw" marker-end="url(#ah)" d="M1146.6,210.0 L570.2,210.0 L570.2,370.0 L-6.3,370.0"/>
+<path class="fw" marker-end="url(#ah)" d="M258.7,370.0 L356.0,370.0"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M-6.3,370.0 L12.0,370.0 L12.0,210.0 L974.2,210.0"/>
+<path class="fw" marker-end="url(#ah)" d="M528.4,370.0 L632.0,370.0"/>
+<path class="fw" marker-end="url(#ah)" d="M897.0,370.0 L985.4,370.0"/>
+<path class="fw" marker-end="url(#ah)" d="M897.0,370.0 L985.4,370.0"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M985.4,370.0 L296.4,370.0 L296.4,49.5 L330.4,49.5"/>
+<rect class="elb" x="903.6" y="118.0" width="64.8" height="24" rx="4"/>
+<text class="el" x="936.0" y="130.0" text-anchor="middle">收到任务</text>
+<rect class="elb" x="267.1" y="109.0" width="78.0" height="42" rx="4"/>
+<text class="el" x="306.1" y="121.0" text-anchor="middle">绑定完成（</text>
+<text class="el" x="306.1" y="139.0" text-anchor="middle">面板绿色）</text>
+<rect class="elb" x="571.5" y="100.0" width="78.0" height="60" rx="4"/>
+<text class="el" x="610.5" y="112.0" text-anchor="middle">下发分拣指</text>
+<text class="el" x="610.5" y="130.0" text-anchor="middle">令：点击开</text>
+<text class="el" x="610.5" y="148.0" text-anchor="middle">始分拣</text>
+<rect class="elb" x="253.7" y="56.3" width="78.0" height="42" rx="4"/>
+<text class="el" x="292.7" y="68.3" text-anchor="middle">下发取消任</text>
+<text class="el" x="292.7" y="86.3" text-anchor="middle">务指令 H5</text>
+<rect class="elb" x="889.5" y="269.0" width="78.0" height="42" rx="4"/>
+<text class="el" x="928.5" y="281.0" text-anchor="middle">本波分拣完</text>
+<text class="el" x="928.5" y="299.0" text-anchor="middle">成</text>
+<rect class="elb" x="275.0" y="278.0" width="64.8" height="24" rx="4"/>
+<text class="el" x="307.4" y="290.0" text-anchor="middle">确认成功</text>
+<rect class="elb" x="-33.8" y="269.0" width="73.4" height="42" rx="4"/>
+<text class="el" x="2.8" y="281.0" text-anchor="middle">未确认 / </text>
+<text class="el" x="2.8" y="299.0" text-anchor="middle">失败</text>
+<rect class="elb" x="902.2" y="336.5" width="78.0" height="78" rx="4"/>
+<text class="el" x="941.2" y="348.5" text-anchor="middle">超时未确认</text>
+<text class="el" x="941.2" y="366.5" text-anchor="middle"> 报文保留</text>
+<text class="el" x="941.2" y="384.5" text-anchor="middle">、下次自动</text>
+<text class="el" x="941.2" y="402.5" text-anchor="middle">补传</text>
+<rect x="0.0" y="0.0" width="252.4" height="99" rx="9" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text class="nl" x="126.2" y="26.5" text-anchor="middle" fill="#0D47A1">开机</text>
+<text class="nl" x="126.2" y="49.5" text-anchor="middle" fill="#0D47A1">软件自启动</text>
+<text class="nl" x="126.2" y="72.5" text-anchor="middle" fill="#0D47A1">连设备 + 自动开始接收任务</text>
+<rect x="330.4" y="11.5" width="223.6" height="76" rx="9" fill="#F5F5F5" stroke="#9E9E9E" stroke-width="1.4"/>
+<text class="nl" x="442.2" y="38.0" text-anchor="middle" fill="#212121">等待接收任务</text>
+<text class="nl" x="442.2" y="61.0" text-anchor="middle" fill="#212121">● 接收中 · 波次号 --</text>
+<polygon points="764.5,0.5 897.0,49.5 764.5,98.5 632.0,49.5" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.8"/>
+<text class="nl" x="764.5" y="38.0" text-anchor="middle" fill="#1B5E20">WMS 下发任务</text>
+<text class="nl" x="764.5" y="61.0" text-anchor="middle" fill="#1B5E20">H4 波次数据</text>
+<rect x="975.0" y="11.5" width="170.8" height="76" rx="9" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text class="nl" x="1060.4" y="38.0" text-anchor="middle" fill="#0D47A1">界面出现波次</text>
+<text class="nl" x="1060.4" y="61.0" text-anchor="middle" fill="#0D47A1">可点击 开始分拣</text>
+<polygon points="126.2,161.0 302.5,210.0 126.2,259.0 -50.1,210.0" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="126.2" y="198.5" text-anchor="middle" fill="#795548">箱绑定是否完成？</text>
+<text class="nl" x="126.2" y="221.5" text-anchor="middle" fill="#795548">现场人工绑定 / WMS 下发 H6</text>
+<polygon points="442.2,165.0 574.7,210.0 442.2,255.0 309.7,210.0" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.8"/>
+<text class="nl" x="442.2" y="210.0" text-anchor="middle" fill="#1B5E20">WMS 下发指令</text>
+<rect x="646.3" y="172.0" width="236.4" height="76" rx="9" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text class="nl" x="764.5" y="198.5" text-anchor="middle" fill="#0D47A1">分拣运行</text>
+<text class="nl" x="764.5" y="221.5" text-anchor="middle" fill="#0D47A1">查看运行日志 + 效率统计</text>
+<rect x="974.2" y="183.5" width="172.4" height="53" rx="9" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text class="nl" x="1060.4" y="210.0" text-anchor="middle" fill="#0D47A1">一键满箱回传 H7</text>
+<polygon points="126.2,321.0 258.7,370.0 126.2,419.0 -6.3,370.0" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="126.2" y="358.5" text-anchor="middle" fill="#795548">WMS 端确认</text>
+<text class="nl" x="126.2" y="381.5" text-anchor="middle" fill="#795548">回传信息</text>
+<rect x="356.0" y="332.0" width="172.4" height="76" rx="9" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text class="nl" x="442.2" y="358.5" text-anchor="middle" fill="#0D47A1">结束任务</text>
+<text class="nl" x="442.2" y="381.5" text-anchor="middle" fill="#0D47A1">触发完结回传 H8</text>
+<polygon points="764.5,321.0 897.0,370.0 764.5,419.0 632.0,370.0" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.8"/>
+<text class="nl" x="764.5" y="358.5" text-anchor="middle" fill="#1B5E20">WMS 端接收</text>
+<text class="nl" x="764.5" y="381.5" text-anchor="middle" fill="#1B5E20">完结回传信息</text>
+<rect x="985.4" y="332.0" width="150.0" height="76" rx="9" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text class="nl" x="1060.4" y="358.5" text-anchor="middle" fill="#0D47A1">再次点击</text>
+<text class="nl" x="1060.4" y="381.5" text-anchor="middle" fill="#0D47A1">开始接收任务</text>
+</g></svg>
+</div>
+</body>
+</html>

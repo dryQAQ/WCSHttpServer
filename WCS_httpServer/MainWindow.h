@@ -189,7 +189,8 @@ private:
     QLabel*      m_lblExcBin       = nullptr;  // ★ 异常口（= 仍在异常口、尚未处理完的件数；成功落格即递减）
     QLabel*      m_lblExcTrace     = nullptr;  // ★ 2026-09-13 异常留痕条数（exception_record，含仅留痕项）
     int          m_cachedExcTraceCount = -1;   // ★ 该值以 10s 周期刷新（避免每秒同步 DB 查询阻塞主线程）
-    QLabel*      m_lblSumLocation  = nullptr;  // 分拣件数（已落格去重 EPC 数；H8 sumLocation 用此值）
+    QLabel*      m_lblSumLocation  = nullptr;  // ★ 2026-09-25 分拣件数（去重**实物**件数 = 写进落格明细的去重 EPC；
+                                               //   与「波次数据历史记录」页「已分拣」列同源同值；见 updateWavePanel）
     QLabel*      m_lblRfidScanCount= nullptr;  // ★ 2026-09-13 RFID 扫描次数（= RFID 推送 EPC 次数，重复计数）
     QLabel*      m_lblLastWave     = nullptr;  // 上一个波次号
     QLabel*      m_lblElapsed      = nullptr;  // ★ 2026-09-13 波次时长（mm:ss）

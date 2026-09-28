@@ -180,6 +180,10 @@ struct LandedRecord
     QString volu;       // 来源库位
     QString time;       // 落格时间（sort_time）
     qint64  timeMs = 0; // 同上，epoch 毫秒（时间不可解析时为 0）
+    // ★ 2026-09-26 落格**单元类型**（0=分类 1=异常 2=发货；空 = 旧数据/未进计划单元）
+    //   业务确认同一 (SKU,格口) 可有多种 grid_type ⇒ 切回/断电重建时必须按类型精确归属，
+    //   否则只能按"首个有余量单元"猜，会把两个属性的余量填错位。
+    QString gridType;
 };
 
 // ★ 2026-09-15 RFID 原始推送报文留痕（逐帧结构化，长期可追溯）
@@ -217,7 +221,8 @@ public:
                       const QString& gridNum, const QString& carNum,
                       const QString& firstCar, const QString& lastCar,
                       int gridCount, const QString& volu,
-                      const QString& boxcode = QString());  // ★ 2026-09-09 需求6：落格容器号（行进中换容器按新绑定记录）
+                      const QString& boxcode = QString(),  // ★ 2026-09-09 需求6：落格容器号（行进中换容器按新绑定记录）
+                      const QString& gridType = QString()); // ★ 2026-09-26：落格记账单元类型（0/1/2；空=未进计划单元）
     QVector<SortingRecord> queryByBarcode(const QString& barcode, const QDateTime& from, const QDateTime& to,
                                           int limit = 500);
     QVector<SortingRecord> queryByTime(const QDateTime& from, const QDateTime& to, int limit = 1000);

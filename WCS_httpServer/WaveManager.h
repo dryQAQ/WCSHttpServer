@@ -59,7 +59,12 @@ struct WaveSnapshot
     int     waveStatus  = WAVE_IDLE;  // 当前状态
     QString statusText;        // 状态文本（中文）
     qint64  elapsedSec  = 0;   // 已耗时（秒）
-    int     sumLocation = 0;   // 落格分拣总件数（供WMS回传H8的sumLocation字段）
+    int     sumLocation = 0;   // ★ 2026-09-25 注意口径：此处填的是 sorted() = PLC 反馈**件次**累计
+                               //   （历史注释曾写"供WMS回传H8的sumLocation"，但 H8 实际取的是
+                               //    HttpServer 里的 m_pWaveMgr->sorted()，与本字段无关）。
+                               //   波次面板「分拣件数」**已不再**用它 —— 改用
+                               //    HttpServer::sortedDetailCount()（去重实物件数，与历史列表同源）。
+                               //   保留字段仅为快照结构兼容；新代码请勿据此显示"实物件数"。
     QString lastWaveCode;      // ★ 上一个波次号（本次会话内被覆盖/切出的最近波次，供UI「上波次」显示）
 
     static QString statusToString(int s)
@@ -206,7 +211,8 @@ public:
     int     sorted() const;
     int     exception() const;                  // ★ 仍在异常口待处理的件数（去重 EPC，界面上显示为「处理」）
     QStringList exceptionEpcs() const;          // ★ 仍在异常口的 EPC 列表（只读快照，UI 诊断用）
-    int     sumLocation() const;                // 去重格口总数（供WMS回传的sumLocation字段）
+    int     sumLocation() const;                // ★ 当前**无调用者**（返回 GridBuffer 的 uniqueValueCount，不是件数）；
+                                                //   WMS H8 的 sumLocation 实际取 sorted()（件次口径），见 HttpServer 发送处
     int     orderQty() const { return m_orderQty; }  // ★ S8 波次总件数（对账用，T-S8-01）
     QSet<QString> getUnsortedCodes() const;          // 获取未分拣的EPC列表（received - sorted - exception）
 

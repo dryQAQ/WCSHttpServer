@@ -155,20 +155,27 @@ typedef std::function<QString(const QString& code)> PlcCarNumCallback;
 struct PlcPlanAllocInfo
 {
     bool               valid = false;  // 是否查到该 SKU 的计划（false → 选格退回旧逻辑）
-    QMap<QString, int> planQtyPerGrid; // 格口号(内部3位key) → 计划件数
-    QMap<QString, QString> gridTypePerGrid; // 格口号(内部3位key) → 类型 "0"=正常分拣/"1"=异常/"2"=发货
-    QMap<QString, int> landedNum;      // 格口号(内部3位key) → 已落格件数（PLC 反馈成功累计）
+    QMap<QString, int> planQtyPerGrid; // 格口号(内部3位key) → 计划件数（**各类型单元之和**，发送侧上限用）
+    QMap<QString, QString> gridTypePerGrid; // 格口号(内部3位key) → 类型 "0"=正常分拣/"1"=异常/"2"=发货（显示用；同格口两类型时为首个）
+    // ★ 2026-09-26 现场口径：额度唯一单元 = (SKU,格口,分拣类型) —— 下面是**单元口径**明细
+    //   （键 = "034|2"）。同格口的分类/发货各自保额、互不借用；判定/日志/诊断都以这两张表为准。
+    QMap<QString, int>     planQtyPerCell;   // 单元key → 计划件数
+    QMap<QString, QString> gridTypePerCell;  // 单元key → 类型 "0"/"1"/"2"
+    QMap<QString, int> landedNum;      // 格口号(内部3位key) → 已落格件数（PLC 反馈成功累计；各单元之和）
     QMap<QString, int> reservNum;      // ★ 格口号(内部3位key) → 在途认领件数
     int                excGrid = -1;   // 超计划（各计划格口均已满额）时的兜底去往格口，-1=未配置
     int                skuIdx  = -1;   // ★ 分配表内 SHA 下标（认领登记用）
     QString            orderCode;      // ★ 分配表所属波次（日志追溯用）
 
     // ── ★ 额度认领结果（HttpServer::planAllocOf 在锁内完成）──
-    bool               claimOk   = false; // true=已成功认领一个计划格口（额度已扣）
+    //   ★ 2026-09-26 现场口径：认领的单元 = **(SKU, 格口, 分拣类型)** —— claimType 回传该单元类型，
+    //     同格口的分类/发货各自封顶、互不借用；选格日志按单元显示。
+    bool               claimOk   = false; // true=已成功认领一个计划单元（额度已扣）
     int                claimGrid = -1;    // 认领到的格口（内部号）
+    quint8             claimType = 0;     // 认领单元的分拣类型（0=分类 1=异常 2=发货）
     qint16             claimPlanIdx = -1; // 认领单元在该 SKU 计划内的下标
     quint64            claimId   = 0;     // 认领号（日志串联 + 落格提交/失败释放）
-    bool               allEpcsLanded = false; // 该 EPC 已在本 (SKU,格口) 落格（重投回原格口放行）
+    bool               allEpcsLanded = false; // 该 EPC 已在本单元落格（重投回原格口放行）
 };
 // 入参 = (EPC编码, SKU编码, 是否认领额度)，返回该 SKU 的计划分配信息
 //   ★ 为什么要 bClaim=false 的"只读预查"模式：
@@ -181,10 +188,9 @@ struct PlcPlanAllocInfo
 //   注：PlcManager 侧调用时两个字符串入参都传 code（识别码=EPC），SKU 由 HttpServer 按 EPC 取。
 typedef std::function<PlcPlanAllocInfo(const QString& epc, const QString& sku, bool bClaim)> PlcPlanAllocCallback;
 
-// ★ 2026-09-14 计划缺口搬迁回调：(EPC, 不可用格口, 承接格口) → 实际搬迁件数
-//   用途：计划格口满箱未重绑/锁格时，把其未完成计划件转给同 SKU 其它可用计划格口，
-//         避免"计划有 N 件却只落 M 件"（客户口径：按各格口数量分）。
-typedef std::function<int(const QString& epc, qint16 fromGrid, qint16 toGrid)> PlcMoveGapCallback;
+// ★ 2026-09-26：计划缺口搬迁回调 **已整体删除**（现场口径：计划额度不因锁格/禁用等原因搬迁；
+//   每个 (SKU,格口,分拣类型) 计划多少就落多少、不能多。删除的是"搬迁"这条能力本身，
+//   而不是把它默认关掉 —— 避免以后有人再打开开关或重写实现。）
 
 // ★ 2026-09-14 选格成功日志节流回调：返回 true = 本次输出"选格-按计划分配"日志
 //   目的：日万级件下把每件两条日志降到量级可控（异常/超计划/搬迁日志仍逐条保留）
@@ -234,6 +240,12 @@ public:
     // ──── 锁格查询 ────
     bool isGridLocked(int grid) const;  // 查询指定格口是否锁定
     int  lockedGridCount() const;       // 当前锁定格口总数
+    // ★ 2026-09-26 现场口径：锁格状态是否"已知"（S7 首次轮询快照就绪）。
+    //   程序刚启动、S7 尚未读到第一帧时，m_s7Grid_200 全是初值 false，
+    //   此时**绝不能**把"没读到"当成"未锁格" —— 否则启动时本来就锁着的格口会被投件。
+    //   因此未知期一律按"锁格"处理（不可下发）；首次轮询写回快照后即为已知。
+    //   注意：S7 掉线**不**重置本标志（沿用最后快照值，避免掉线即全线停摆），见 .cpp 说明。
+    bool isLockStateKnown() const;
 
     // ──── 格口禁用管理（满箱锁格后禁用，WMS重新绑定H6时恢复）────
     void disableGrid(int grid);         // 满箱锁格后禁用格口（禁止分配和落格）
@@ -241,15 +253,14 @@ public:
     bool isGridDisabled(int grid) const; // 查询格口是否被禁用
     void enableAllGrids();              // 全部启用（新波次开始时）
 
-    // ★ 2026-09-20 现场问题④：下发前置条件「已解锁 且 已绑定容器」
+    // ★ 2026-09-20 现场问题④ / ★ 2026-09-26 现场口径：下发前置条件
     //   isGridBound          —— 该格口当前是否已绑定容器（由 HttpServer 提供；无回调时视为已绑定）
     //   isGridDispatchable   —— 是否允许把分拣指令下发到该格口：
     //                           已禁用(满箱未重绑) → false（原有）
-    //                           锁格               → true （**按原有逻辑处理**，本次不拦截）
-    //                           开关关闭           → true （逐字回退改造前行为）
-    //                           其余               → 必须有容器绑定（本次新增）
+    //                           锁格 / 锁格状态未知 → false（★ 2026-09-26：锁格一律不落件，无论什么情况）
+    //                           其余               → **必须已绑定容器**（★ 开关 sortingRequireBoundGrid 已废弃，恒开）
     //   excGridFromConfig    —— 配置的异常格口号（未配置/越界 → -1）
-    //   canDivertToExc       —— 该异常口自身是否可下发（不可下发则退回"不发指令"）
+    //   canDivertToExc       —— 该异常口自身是否可下发（不可下发则退回"不发指令"，异常口也严格）
     bool isGridBound(int grid) const;
     bool isGridDispatchable(int grid) const;
     int  excGridFromConfig() const;
@@ -262,8 +273,8 @@ public:
     void setCarNumCallback(PlcCarNumCallback cb) { m_carNumCb = std::move(cb); }
     // ★ 2026-09-14 设置「计划分配」查询回调（同品多格口按计划件数分配的依据，含额度认领）
     void setPlanAllocCallback(PlcPlanAllocCallback cb) { m_planAllocCb = std::move(cb); }
-    // ★ 2026-09-14 设置计划缺口搬迁回调（计划格口不可用 → 未完成件转同 SKU 其它计划格口）
-    void setMoveGapCallback(PlcMoveGapCallback cb) { m_moveGapCb = std::move(cb); }
+    // ★ 2026-09-26：计划缺口搬迁回调（PlcMoveGapCallback / setMoveGapCallback）**已整体删除** ——
+    //   现场口径：计划额度不因锁格/禁用等原因搬迁，每个 (SKU,格口,类型) 计划多少就落多少、不能多。
     // ★ 2026-09-14 设置选格成功日志节流回调
     void setSelectLogCallback(PlcSelectLogCallback cb) { m_selectLogCb = std::move(cb); }
     // ★ 2026-09-14 设置单条下发结果回调（发送失败 → 释放认领额度；2026-09-20 增补"最终格口"出参）
@@ -343,7 +354,6 @@ signals:
     PlcLookupCallback  m_lookupCb;   // ★ 相机查询回调：查格口
     PlcCarNumCallback  m_carNumCb;   // ★ 小车号查询回调：从 EpcCache 获取 RFID 小车号
     PlcPlanAllocCallback m_planAllocCb;  // ★ 2026-09-14 计划分配查询回调（同品多格口按计划件数选格+额度认领）
-    PlcMoveGapCallback   m_moveGapCb;    // ★ 2026-09-14 计划缺口搬迁回调（计划格口不可用时转移未完成件）
     PlcSelectLogCallback m_selectLogCb;  // ★ 2026-09-14 选格成功日志节流回调（日万级件日志量控制）
     PlcSendResultCallback m_sendResultCb;// ★ 2026-09-14 单条下发结果回调（失败释放认领额度）
 
@@ -361,6 +371,9 @@ signals:
     bool        m_s7Grid_200[PLC_S7_MAX_GRID_COUNT]{ false }; // 当前锁格状态（200位）
     byte        m_s7PlcLastData[PLC_S7_LOCK_READ_SIZE]{ 0 };  // ★ 上一次S7锁格数据（边沿检测用，与WCSApp一致）
     mutable std::mutex m_lockGridPlc;       // 保护 m_s7Grid_200
+    // ★ 2026-09-26：锁格状态"已知"标志 —— 首次成功轮询写回快照后置 true（此后不再清零）。
+    //   未知期（程序刚启动、S7 尚未读到第一帧）按"锁格"处理 ⇒ 不可下发（见 isGridDispatchable）。
+    std::atomic<bool>  m_lockStateKnown{false};
 
     // ──── 格口禁用集合（满箱锁格后禁用，WMS重新绑定H6时恢复）────
     QSet<int>            m_disabledGrids;          // 已禁用的格口号集合

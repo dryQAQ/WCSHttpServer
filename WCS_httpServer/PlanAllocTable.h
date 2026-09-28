@@ -59,8 +59,10 @@
 #include <QString>
 #include <QStringList>
 #include <QHash>
+#include <QMap>
 #include <QVector>
 #include <QSet>
+#include <QDateTime>
 #include <array>
 #include <atomic>
 #include <algorithm>
@@ -151,6 +153,63 @@ public:
     //   由调用方在分配表锁之外构建后传入 claim；false=可分配，true=本次跳过（额度保留）
     using GridMask = std::array<bool, 67>;
 
+    // ★ 2026-09-26 归属存根上限/保留期
+    //   业务前提（现场确认）：**同一 (SKU,格口) 可以存在多种 grid_type**（分类/异常/发货各一份），
+    //   故"件原本认领的是哪个单元"在认领被释放后仍需保留一小段时间 —— 否则迟到反馈只能落到
+    //   "该格口首个仍有剩余额度的单元"，在同一格口多类型时会把件记到**另一属性**上。
+    static constexpr int    kOrphanCap    = 8192;      // 存根条数上限（超出淘汰最旧一条）
+    static constexpr qint64 kOrphanKeepMs = 600000;    // 存根保留时长（10 分钟，远大于认领超时 30s）
+
+    // ──── ★ 2026-09-26 恢复/编译共用：把「单元表 + 格口级表」整理成 PlanGridInput 列表 ────
+    //   planQtyPerCell 非空 → **单元口径**（键 "034|2" = 格口|类型），一个格口的分类行与发货行
+    //     各成一个单元（各自保额、互不借用）—— 这是额度的唯一口径；
+    //   planQtyPerCell 为空 → 退回格口级表（旧库/无单元表的波次，行为与改造前一致）。
+    //   注：此处自带 5 行键解析（与 WmsGridCode.h 的 makeCellKey/cellKeyGridOf/cellKeyTypeOf 同构），
+    //   刻意不 include WmsGridCode.h —— 该头会带入 ConfigManager 依赖，而本表要能被
+    //   只链 Qt5Core 的只读探针/单测直接驱动。
+    static QVector<PlanGridInput> inputsFromCells(const QMap<QString, int>& planQtyPerCell,
+                                                  const QMap<QString, int>& planQtyPerGrid,
+                                                  const QMap<QString, QString>& gridTypePerGrid,
+                                                  const QString& fallbackType)
+    {
+        QVector<PlanGridInput> gs;
+        if (!planQtyPerCell.isEmpty())
+        {
+            gs.reserve(planQtyPerCell.size());
+            for (auto cit = planQtyPerCell.constBegin(); cit != planQtyPerCell.constEnd(); ++cit)
+            {
+                const int sep = cit.key().indexOf(QLatin1Char('|'));
+                const QString gk = (sep < 0) ? cit.key().trimmed() : cit.key().left(sep).trimmed();
+                const QString ts = (sep < 0) ? QString() : cit.key().mid(sep + 1).trimmed();
+                bool okG = false;
+                const int g = gk.toInt(&okG);
+                if (!okG || g < 1) continue;
+                PlanGridInput gi;
+                gi.grid = (qint16)g;
+                gi.qty  = (qint32)cit.value();
+                gi.type = (quint8)(ts.isEmpty() ? 0 : ts.toInt());
+                if (gi.type > 2) gi.type = 0;                 // 脏数据兜底为"正常分拣"
+                gs.append(gi);
+            }
+            return gs;
+        }
+
+        for (auto pit = planQtyPerGrid.constBegin(); pit != planQtyPerGrid.constEnd(); ++pit)
+        {
+            bool okG = false;
+            const int g = pit.key().trimmed().toInt(&okG);
+            if (!okG || g < 1) continue;
+            PlanGridInput gi;
+            gi.grid = (qint16)g;
+            gi.qty  = (qint32)pit.value();
+            const QString t = gridTypePerGrid.value(pit.key(), fallbackType);
+            gi.type = (quint8)(t.trimmed().isEmpty() ? 0 : t.trimmed().toInt());
+            if (gi.type > 2) gi.type = 0;
+            gs.append(gi);
+        }
+        return gs;
+    }
+
     PlanAllocTable() {}
 
     // ──── 编译：波次开始时调用一次（主线程，持锁）────
@@ -173,7 +232,9 @@ public:
 
             QVector<PlanGridInput> gs = kv.second;
             std::sort(gs.begin(), gs.end(),
-                      [](const PlanGridInput& a, const PlanGridInput& b) { return a.grid < b.grid; });
+                      [](const PlanGridInput& a, const PlanGridInput& b) {
+                          return a.grid != b.grid ? a.grid < b.grid : a.type < b.type;   // ★ 单元 = (格口,类型)
+                      });
 
             SkuPlan sp;
             sp.idxFirst = (qint16)m_cells.size();
@@ -181,12 +242,16 @@ public:
 
             qint32 sum = 0;
             qint16 lastGrid = -1;
+            quint8 lastType = 0;
             for (const PlanGridInput& g : gs)
             {
                 if (g.grid < 1 || g.grid > slotCount) continue;   // 越界格口不进表（不变量⑤）
-                if (g.grid == lastGrid) continue;                 // 防御：重复格口只取一次
+                // ★ 2026-09-26：去重键 = **(格口, 类型)**（原实现按格口去重，会把"同一格口的
+                //   分类行 + 发货行"里的第二行直接丢掉 ⇒ 该类型的计划凭空消失、上限被放大）。
+                if (g.grid == lastGrid && g.type == lastType) continue;   // 同单元重复行只取一次
                 if (g.qty <= 0) continue;                         // 计划 0 件 = 不参与分配
                 lastGrid = g.grid;
+                lastType = g.type;
 
                 PlanCell c;
                 c.grid      = g.grid;
@@ -205,7 +270,10 @@ public:
                 q.remain = g.qty;                                 // 初始：全部额度可用
                 m_quota.append(q);
 
-                sp.gridOff[(size_t)g.grid] = (qint8)(m_cells.size() - 1 - sp.idxFirst);
+                // ★ 2026-09-26：gridOff 记**该格口首个单元**（同格口两类型时不能被后一行覆盖，
+                //   否则 locate() 指向最后一个单元、落格归属的扫描窗口会漏掉前面的单元）
+                if (sp.gridOff[(size_t)g.grid] < 0)
+                    sp.gridOff[(size_t)g.grid] = (qint8)(m_cells.size() - 1 - sp.idxFirst);
                 sum += g.qty;
             }
 
@@ -235,6 +303,7 @@ public:
         m_cells.clear();
         m_quota.clear();
         m_claims.clear();
+        m_orphanClaims.clear();     // ★ 归属存根随波次清空（波次隔离：不得跨波次归属）
         m_landedEpcs.clear();
         m_claimSeq    = 0;
         m_multiSkuCnt = 0;
@@ -245,9 +314,37 @@ public:
     int  version() const { return m_version.load(); }
 
     // ──── 查询（只读）────
+    // ★ 2026-09-26 现场口径：**额度的唯一单元 = (SKU, 格口, 分拣类型)** ——
+    //   一个 (SKU,格口) 可以有两行（分类一份 + 发货一份），故：
+    //     · `m_cells` 一个元素 = 一个单元（含 gridType）；claim/记账/巡检都在单元粒度；
+    //     · 下面这些 "(SKU,格口)" 级查询一律**按该格口所有类型单元求和**（保持既有调用方
+    //       —— H7 报文裁剪、预警、报表、planAllocOf —— 的口径与语义不变）；
+    //     · 需要精确到类型时用 `...OfType(sku, gridKey, type)`。
     int skuCount()  const { return m_skus.size(); }
     int cellCount() const { return m_cells.size(); }
     int inflightCount() const { return m_claims.size(); }
+    // ★ 2026-09-26：归属存根条数（已释放额度、但件可能仍在途的认领）—— 仅供日志/诊断
+    int orphanCount() const { return m_orphanClaims.size(); }
+    // ★ 2026-09-26：清理超期归属存根（主线程持锁调用；返回清理条数）
+    //   为 0 表示没有可归属的迟到反馈了（件彻底丢失 → 只能靠实物盘点）。
+    int pruneOrphanClaims(qint64 nowMs, qint64 keepMs)
+    {
+        int n = 0;
+        if (keepMs <= 0) return n;
+        for (auto it = m_orphanClaims.begin(); it != m_orphanClaims.end(); )
+        {
+            if (it.value().atMs > 0 && nowMs - it.value().atMs >= keepMs)
+            {
+                it = m_orphanClaims.erase(it);
+                ++n;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        return n;
+    }
     // 该 SKU 在表内的下标（-1 = 不在表内）；供认领登记等需要 skuIdx 的场景
     int skuIndexOf(const QString& sku) const { return m_skuIndex.value(sku, -1); }
     bool skuHasPlan(const QString& sku) const { return m_skuIndex.contains(sku); }
@@ -256,19 +353,40 @@ public:
         return (si >= 0 && si < m_skuNames.size()) ? m_skuNames[si] : QString();
     }
 
-    // 该 (SKU,格口) 计划件数；**不在计划内返回 0**（绝不返回 SKU 计划总数）
+    // 该 (SKU,格口) 计划件数（**该格口各类型单元求和**）；不在计划内返回 0
     int planQtyOf(const QString& sku, const QString& gridKey) const
     {
         int si = -1, pi = -1;
-        return locate(sku, gridKey, si, pi) ? m_cells[cellOf(si, pi)].planQty : 0;
+        return locate(sku, gridKey, si, pi) ? sumOverGrid(si, gridKey, 0) : 0;
     }
-    // ★ 2026-09-21 硬上限：该 (SKU,格口) 的 **H4 计划件数快照**（不可变）。
+    // ★ 2026-09-21 硬上限：该 (SKU,格口) 的 **H4 计划件数快照**（不可变；各类型单元求和）。
     //   发送侧封顶、报文裁剪、巡检红线一律以本值为准（planQty 可能被历史搬迁改过，
     //   二者不等时巡检⑤会报违规；对外语义上"格口计划"永远等于本值）。
     int planQtyH4Of(const QString& sku, const QString& gridKey) const
     {
         int si = -1, pi = -1;
-        return locate(sku, gridKey, si, pi) ? m_cells[cellOf(si, pi)].planQtyH4 : 0;
+        return locate(sku, gridKey, si, pi) ? sumOverGrid(si, gridKey, 1) : 0;
+    }
+    // ── ★ 2026-09-26 单元级（(SKU,格口,类型)）查询 ──
+    int planQtyOfType(const QString& sku, const QString& gridKey, quint8 gridType) const
+    {
+        const int ci = cellIndexOf(sku, gridKey, gridType);
+        return ci < 0 ? 0 : m_cells[ci].planQty;
+    }
+    int planQtyH4OfType(const QString& sku, const QString& gridKey, quint8 gridType) const
+    {
+        const int ci = cellIndexOf(sku, gridKey, gridType);
+        return ci < 0 ? 0 : m_cells[ci].planQtyH4;
+    }
+    int landedOfType(const QString& sku, const QString& gridKey, quint8 gridType) const
+    {
+        const int ci = cellIndexOf(sku, gridKey, gridType);
+        return ci < 0 ? 0 : m_quota[ci].landed;
+    }
+    int remainOfType(const QString& sku, const QString& gridKey, quint8 gridType) const
+    {
+        const int ci = cellIndexOf(sku, gridKey, gridType);
+        return ci < 0 ? 0 : m_quota[ci].remain;
     }
     // ★ 2026-09-21 属性级合计（分类/发货各自独立封顶）：
     //   landedSumOfType  = 该 SKU 在"该属性各格口"已落格合计（去重 EPC）
@@ -303,17 +421,17 @@ public:
     int landedOf(const QString& sku, const QString& gridKey) const
     {
         int si = -1, pi = -1;
-        return locate(sku, gridKey, si, pi) ? m_quota[cellOf(si, pi)].landed : 0;
+        return locate(sku, gridKey, si, pi) ? sumOverGrid(si, gridKey, 2) : 0;
     }
     int remainOf(const QString& sku, const QString& gridKey) const
     {
         int si = -1, pi = -1;
-        return locate(sku, gridKey, si, pi) ? m_quota[cellOf(si, pi)].remain : 0;
+        return locate(sku, gridKey, si, pi) ? sumOverGrid(si, gridKey, 3) : 0;
     }
     int reservOf(const QString& sku, const QString& gridKey) const
     {
         int si = -1, pi = -1;
-        return locate(sku, gridKey, si, pi) ? m_quota[cellOf(si, pi)].reserv : 0;
+        return locate(sku, gridKey, si, pi) ? sumOverGrid(si, gridKey, 4) : 0;
     }
     bool inPlanOf(const QString& sku, const QString& gridKey) const
     {
@@ -322,6 +440,7 @@ public:
     }
 
     // 该 SKU 在某格口计划中的类型数字（0=正常分拣 1=异常 2=发货）；不在计划内返回 0
+    //   ★ 同格口两类型时返回**首个**单元的类型（仅用于显示/日志；判据请用 ...OfType）
     int gridTypeOf(const QString& sku, const QString& gridKey) const
     {
         int si = -1, pi = -1;
@@ -362,22 +481,56 @@ public:
     }
 
     // 该 EPC 是否已在本 (SKU,格口) 落格（重投回原格口的放行依据）
+    //   ★ 同格口两类型时逐个单元查（件可能落在该格口的任一个类型单元里）
     bool epcLandedIn(const QString& sku, const QString& gridKey, const QString& epc) const
     {
         if (epc.isEmpty()) return false;
-        int si = -1, pi = -1;
-        if (!locate(sku, gridKey, si, pi)) return false;
-        return m_landedEpcs.contains(dedupKey(cellOf(si, pi), epc));
+        const int si = m_skuIndex.value(sku, -1);
+        if (si < 0) return false;
+        bool ok = false;
+        const int g = gridKey.toInt(&ok);
+        if (!ok) return false;
+        const SkuPlan& sp = m_skus[si];
+        for (qint16 k = 0; k < sp.idxCount; ++k)
+        {
+            const qint32 ci = sp.idxFirst + k;
+            if ((int)m_cells[ci].grid != g) continue;
+            if (m_landedEpcs.contains(dedupKey(ci, epc))) return true;
+        }
+        return false;
+    }
+
+    // ★ 2026-09-26：该 EPC 已在本 (SKU,格口) 的哪个单元落过格 → 返回单元类型（0/1/2）；-1 = 本格口未落过
+    //   用途：重复类落格（重扫重投 / 重复反馈 / DB 防重）**不走 commitOnLanded**，
+    //   写落格明细时仍要带上真实的单元类型，切回/断电重建才能按类型精确归属。
+    int landedTypeOfEpc(const QString& sku, const QString& gridKey, const QString& epc) const
+    {
+        if (epc.isEmpty()) return -1;
+        const int si = m_skuIndex.value(sku, -1);
+        if (si < 0) return -1;
+        bool ok = false;
+        const int g = gridKey.trimmed().toInt(&ok);
+        if (!ok) return -1;
+        const SkuPlan& sp = m_skus[si];
+        for (qint16 k = 0; k < sp.idxCount; ++k)
+        {
+            const qint32 ci = sp.idxFirst + k;
+            if ((int)m_cells[ci].grid != g) continue;
+            if (m_landedEpcs.contains(dedupKey(ci, epc))) return (int)m_cells[ci].gridType;
+        }
+        return -1;
     }
 
     // ──── ① 认领（主线程，持锁）────
     // 返回 true = 认领成功（claimGrid/claimId 输出，供 PLC 下发与回传提交）
-    // 返回 false = 该 SKU **可分配**的计划格口均已满额（已落+在途 = 计划）→ 调用方按超计划处置
+    //   ★ 2026-09-26：认领的单元 = **(SKU,格口,分拣类型)**；claimTypeOut 回传该单元的类型，
+    //     供选格日志/落格记账/H7 裁剪按类型区分（同格口两类型时各自封顶、互不借用）。
+    // 返回 false = 该 SKU **可分配**的计划单元均已满额（已落+在途 = 计划）→ 调用方按超计划处置
     //              ★ 或：尚有额度但全部停在 blocked 标记的"不可分配格口"上（额度保留、不算满额）
-    // blocked（可空）：本次不可分配的格口掩码（现场问题④：已解锁且未绑定容器）。
-    //   命中即跳过，且**不动该格口任何额度**；传 nullptr 时行为与改造前完全一致。
+    // blocked（可空）：本次不可分配的格口掩码（锁格 / 已解锁且未绑定容器 / 禁用）。
+    //   命中即跳过，且**不动该单元任何额度**；传 nullptr 时行为与改造前完全一致。
     bool claim(const QString& sku, qint16* claimGrid, quint64* claimIdOut, qint16* planIdxOut = nullptr,
-               const GridMask* blocked = nullptr)
+               const GridMask* blocked = nullptr, quint8* claimTypeOut = nullptr)
     {
         const int si = m_skuIndex.value(sku, -1);
         if (si < 0) return false;
@@ -426,9 +579,10 @@ public:
         }
 
         applyClaim(si, (qint16)chosenPi);
-        if (claimGrid)  *claimGrid  = m_cells[sp.idxFirst + chosenPi].grid;
-        if (planIdxOut) *planIdxOut = (qint16)chosenPi;
-        if (claimIdOut) *claimIdOut = makeClaimId(si);
+        if (claimGrid)   *claimGrid   = m_cells[sp.idxFirst + chosenPi].grid;
+        if (planIdxOut)  *planIdxOut  = (qint16)chosenPi;
+        if (claimTypeOut) *claimTypeOut = m_cells[sp.idxFirst + chosenPi].gridType;   // ★ 单元类型回传
+        if (claimIdOut)  *claimIdOut  = makeClaimId(si);
         return true;
     }
 
@@ -445,6 +599,8 @@ public:
             if (conflictOut) *conflictOut = true;
             return false;
         }
+        // ★ 2026-09-26：该 EPC 有了新的在途认领 ⇒ 旧的归属存根立即作废（以最新一次下发为准）
+        m_orphanClaims.remove(epc);
         auto old = m_claims.constFind(epc);
         if (old != m_claims.constEnd())
         {
@@ -466,9 +622,13 @@ public:
         return true;
     }
 
-    // ──── ③ 释放认领（发送失败 / 认领超时）— 只动在途，绝不触碰已落格 ────
+    // ──── ③ 释放认领（发送失败 / 认领超时 / 件未进计划格口）— 只动在途，绝不触碰已落格 ────
     // 返回 false = 该 EPC 无在途认领（调用方记 WARN，不改其余计数）
-    bool releaseEpc(const QString& epc)
+    //   ★ 2026-09-26 stashAttribution：额度归还后是否保留"该件原本认领哪个单元"的归属存根
+    //     · true （默认：30s 超时清扫 / 发送失败）—— 件可能仍在途，迟到反馈要记回**原单元**；
+    //     · false（调用方已确认该件没进计划格口：落异常口 66 / PLC 报无格口·信息不全 / 落错格）
+    //       —— 此时留存根反而会把后续查无实据的反馈记错，故连同旧存根一并清掉。
+    bool releaseEpc(const QString& epc, qint64 nowMs = 0, bool stashAttribution = true)
     {
         if (epc.isEmpty()) return false;
         auto it = m_claims.find(epc);
@@ -476,6 +636,8 @@ public:
         const ClaimRef ref = it.value();
         m_claims.erase(it);
         applyRelease(ref.skuIdx, (qint16)ref.planIdx);
+        if (stashAttribution) stashOrphan(epc, ref, nowMs);
+        else                  m_orphanClaims.remove(epc);
         return true;
     }
     bool releaseByClaimId(quint64 claimId)
@@ -494,18 +656,81 @@ public:
     // 语义：landed 只增不减、同一 EPC 去重；有在途认领则一并释放。
     //       claimId 未知/不匹配（人工硬塞、或认领已被超时释放）→ **照实登记 landed**，
     //       并置 mismatch 供调用方留痕 —— 账实优先，绝不因认领异常而丢计数。
+    // ★ 2026-09-26（单元口径）：落格记账的单元 = **该件在途认领的那个 (格口,分拣类型) 单元**。
+    //   原实现按 `locate(sku, gridKey)` 落到"该格口首个单元"——同一格口同时计划了分类与发货时，
+    //   件会被全部记到首个单元（类型账错位，且巡检 ⑥⑧ 会误报"某单元已落 > 计划"）。
+    //   定位顺序：① 在途认领的单元（精确归属）→ ② 该 EPC 已在本格口其它单元登记过（重复反馈，
+    //   保持去重）→ ①b **归属存根**（认领已被释放、反馈迟到：记回原认领单元，绝不串属性）
+    //   → ③ `gridTypeHint`（恢复路径按持久化的单元类型精确归属）→ ④ 该格口"仍有剩余额度"的单元
+    //   → ⑤ 兜底首个单元（此时若该格口有多个单元 → unitGuessedOut=true，调用方留痕）。
     bool commitOnLanded(const QString& sku, const QString& gridKey, const QString& epc,
-                        quint64 claimId, bool* mismatchOut, int* landedNowOut, int* planQtyOut)
+                        quint64 claimId, bool* mismatchOut, int* landedNowOut, int* planQtyOut,
+                        bool* lateStubUsedOut = nullptr, bool* unitGuessedOut = nullptr,
+                        quint8 gridTypeHint = 0xFF, quint8* landedTypeOut = nullptr)
     {
         if (mismatchOut) *mismatchOut = false;
         if (landedNowOut) *landedNowOut = 0;
         if (planQtyOut)   *planQtyOut = 0;
+        if (lateStubUsedOut) *lateStubUsedOut = false;
+        if (unitGuessedOut)  *unitGuessedOut = false;
+        if (landedTypeOut)   *landedTypeOut = 0xFF;
 
         int si = -1, pi = -1;
         if (!locate(sku, gridKey, si, pi)) return false;
 
+        // ── 单元定位（同格口多类型时各自的账必须分开）──
+        //   注意：不假设"同格口单元连续"，直接扫出该格口的全部单元下标（每 SKU 通常 ≤3 个）。
+        const int gnum = (int)m_cells[cellOf(si, pi)].grid;
+        QVector<qint16> cand;                                  // 该格口的单元下标（升序）
+        for (qint16 k = 0; k < m_skus[si].idxCount; ++k)
+            if ((int)m_cells[cellOf(si, k)].grid == gnum) cand.append(k);
+        qint16 usePi = cand.isEmpty() ? (qint16)pi : cand.first();
+        {
+            bool bResolved = false;
+            if (!epc.isEmpty())                                // ① 在途认领的单元（精确）
+            {
+                auto cit = m_claims.constFind(epc);
+                if (cit != m_claims.constEnd() && cit.value().skuIdx == si
+                    && cand.contains((qint16)cit.value().planIdx))
+                {
+                    usePi = (qint16)cit.value().planIdx;
+                    bResolved = true;
+                }
+            }
+            if (!bResolved && !epc.isEmpty())                  // ② 已在本格口某单元登记过（重复反馈去重）
+            {
+                for (qint16 k : cand)
+                    if (m_landedEpcs.contains(dedupKey(cellOf(si, k), epc))) { usePi = k; bResolved = true; break; }
+            }
+            if (!bResolved && !epc.isEmpty())                  // ①b ★ 归属存根（认领已释放、反馈迟到）
+            {
+                auto rit = m_orphanClaims.constFind(epc);
+                if (rit != m_orphanClaims.constEnd() && rit.value().skuIdx == si
+                    && cand.contains((qint16)rit.value().planIdx))
+                {
+                    usePi = (qint16)rit.value().planIdx;
+                    bResolved = true;
+                    if (lateStubUsedOut) *lateStubUsedOut = true;
+                }
+            }
+            if (!bResolved && gridTypeHint != 0xFF)            // ③ ★ 恢复路径：按持久化的单元类型精确归属
+            {
+                for (qint16 k : cand)
+                    if (m_cells[cellOf(si, k)].gridType == gridTypeHint) { usePi = k; bResolved = true; break; }
+            }
+            if (!bResolved)                                    // ④ 仍有剩余额度的单元；⑤ 兜底首个
+            {
+                // 该格口有多个单元却无法判定归属 → 标记，调用方留痕（宁可不猜也要让现场看得见）
+                if (unitGuessedOut) *unitGuessedOut = (cand.size() > 1);
+                for (qint16 k : cand)
+                    if (m_quota[cellOf(si, k)].remain > 0) { usePi = k; break; }
+            }
+            pi = (int)usePi;
+        }
+
         const qint32 ci = cellOf(si, pi);
         if (planQtyOut) *planQtyOut = m_cells[ci].planQty;
+        if (landedTypeOut) *landedTypeOut = m_cells[ci].gridType;   // 本次真正记账单元的类型（供落格明细持久化）
 
         // ① 已落格去重 + 登记（★ 在途转已落：额度保持被占用，不归还）
         if (!epc.isEmpty())
@@ -543,30 +768,28 @@ public:
             }
         }
 
+        // ★ 2026-09-26：该件的落格反馈已归属到具体单元 ⇒ 归属存根使命完成（删除以防无界增长）
+        if (!epc.isEmpty()) m_orphanClaims.remove(epc);
+
         if (landedNowOut) *landedNowOut = m_quota[ci].landed;
         return true;
     }
 
-    // ──── ⑤ 缺口搬迁 —— ★ 2026-09-21 起**已停用**（保留函数以兼容既有调用点）────
+    // ──── ⑤ 缺口搬迁 —— ★ 2026-09-26 **已整体删除** ────
     //
-    //   为什么停用：搬迁会把源格口的 planQty 扣掉、把目标格口的 planQty 抬上去，
-    //   于是"某个 SKU 在某个格口计划 N 件"这条口径被打破 —— 现场实例（波次 PP202600000631，
-    //   SKU 105301083212583… 即 105301083212803）：034(发货) 计划 2 件被搬到 83 件、实拣 83 件；
-    //   040(分类) 176 → 95；且属于**跨属性**搬迁（分类额度搬进发货口）。
-    //   客户口径（2026-09-21）：每个格口严格按 H4 计划件数，额度**不再跨格口/跨属性搬迁**；
-    //   不可下发（未绑定容器 / 满箱未重绑）格口的剩余额度留在原格口，件改用其它格口自身额度，
-    //   都没有则改投异常口 66。
+    //   现场口径：**不允许因锁格或其它原因搬迁计划额度** —— 计划是"（SKU,格口,分拣类型）多少件
+    //   就落多少件、不能多"。删除的是"搬迁能力"本身（连同 HttpServer::moveAllocGap 与
+    //   PlcManager 的 PlcMoveGapCallback 一起删除），而不是把它默认关掉：
+    //   避免以后有人再打开开关或重写实现，把下面这起事故带回来 ——
+    //   现场实例（波次 PP202600000631，SKU 105301083212803）：034(发货) 计划 2 件被搬到 83 件、
+    //   实拣 83 件；040(分类) 176 → 95；且属于**跨属性**搬迁（分类额度搬进发货口）。
     //
-    //   现状：本函数恒返回 0（不改任何数据）；配置项 allocGapMoveOnDisabled/Locked 仅为兼容
-    //   旧 XML 保留解析，启动时若为 true 会打 WARN "该开关已停用"。
-    //   返回值语义保持：0 = 无需搬迁/已停用。
-    int moveGap(const QString& sku, qint16 fromGrid, qint16 toGrid)
-    {
-        Q_UNUSED(sku);
-        Q_UNUSED(fromGrid);
-        Q_UNUSED(toGrid);
-        return 0;
-    }
+    //   现行口径：不可用单元的剩余额度**留在原单元**（不清零、不搬出、不借出）；
+    //   件优先用其它单元**自身**的剩余额度承接（其 planQty 不变、landed ≤ planQtyH4），
+    //   都没有则改投异常口 66 或不发指令；单元恢复可下发后自动继续按计划分配。
+    //   防回归：`audit()` ⑤ planQty==planQtyH4 / ⑥ landed≤planQtyH4 / ⑦ 每 (SKU,类型)
+    //   Σlanded≤ΣplanQtyH4 —— 任何人重新引入"改 planQty"的路径都会被 30s 巡检抓住并写异常表。
+    //   （原 `moveGap()` 恒返回 0 的空实现也一并删除：调用点已全部移除，保留只会让人以为还能用。）
 
     // ──── ⑥ 认领超时清扫（主线程，持锁；每 30s 一次）────
     // 返回被释放的 EPC（供日志留痕）。只清在途，不触碰已落格。
@@ -621,26 +844,36 @@ public:
                 sumRemain += q.remain;
                 landedByType[(int)c.gridType] += q.landed;
                 planByType[(int)c.gridType]   += c.planQtyH4;
+                // ★ 2026-09-26：单元 = (SKU,格口,分拣类型) —— 下面各条的"格口"字样后都补类型，
+                //   现场一眼能看出是哪个单元的账不对。
                 if (q.landed > c.planQty)
-                    bad << QStringLiteral("①SKU%1 格口%2 已落%3>计划%4")
-                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(q.landed).arg(c.planQty);
+                    bad << QStringLiteral("①SKU%1 单元%2|%3 已落%4>计划%5")
+                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(typeNameOf(c.gridType))
+                               .arg(q.landed).arg(c.planQty);
                 if (q.landed + q.reserv > c.planQty)
-                    bad << QStringLiteral("②SKU%1 格口%2 已落%3+在途%4>计划%5")
-                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid))
+                    bad << QStringLiteral("②SKU%1 单元%2|%3 已落%4+在途%5>计划%6")
+                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(typeNameOf(c.gridType))
                                .arg(q.landed).arg(q.reserv).arg(c.planQty);
                 if (q.remain != c.planQty - q.landed - q.reserv)
-                    bad << QStringLiteral("②SKU%1 格口%2 余量%3≠计划%4-已落%5-在途%6")
-                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(q.remain)
-                               .arg(c.planQty).arg(q.landed).arg(q.reserv);
+                    bad << QStringLiteral("②SKU%1 单元%2|%3 余量%4≠计划%5-已落%6-在途%7")
+                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(typeNameOf(c.gridType))
+                               .arg(q.remain).arg(c.planQty).arg(q.landed).arg(q.reserv);
                 // ⑤ 额度被搬动（planQty 偏离 H4 快照）—— 现场"计划 2 件被抬到 83 件"就是这一条
                 if (c.planQty != c.planQtyH4)
-                    bad << QStringLiteral("⑤SKU%1 格口%2 当前计划%3≠H4计划%4（额度被搬动/抬高）")
-                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(c.planQty).arg(c.planQtyH4);
-                // ⑥ 每格口实落不超过 H4 计划（硬上限红线）
+                    bad << QStringLiteral("⑤SKU%1 单元%2|%3 当前计划%4≠H4计划%5（额度被搬动/抬高）")
+                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(typeNameOf(c.gridType))
+                               .arg(c.planQty).arg(c.planQtyH4);
+                // ⑥ 每单元实落不超过 H4 计划（硬上限红线）
                 if (q.landed > c.planQtyH4)
-                    bad << QStringLiteral("⑥SKU%1 格口%2(%3) 已落%4>H4计划%5（严格不大于被突破）")
+                    bad << QStringLiteral("⑥SKU%1 单元%2|%3 已落%4>H4计划%5（严格不大于被突破）")
                                .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(typeNameOf(c.gridType))
                                .arg(q.landed).arg(c.planQtyH4);
+                // ⑧ ★ 2026-09-26 新增：每单元"已落+在途"不超过 H4 计划（单元级硬上限，
+                //    含同格口另一类型：分类/发货各自的额度绝不互相借用）
+                if (q.landed + q.reserv > c.planQtyH4)
+                    bad << QStringLiteral("⑧SKU%1 单元%2|%3 已落%4+在途%5>H4计划%6（单元级硬上限被突破）")
+                               .arg(skuNameAt(si)).arg(gridKeyOf(c.grid)).arg(typeNameOf(c.gridType))
+                               .arg(q.landed).arg(q.reserv).arg(c.planQtyH4);
             }
             if (sumPlan != sp.planTotal)
                 bad << QStringLiteral("③SKU%1 Σ计划%2≠总数%3")
@@ -751,6 +984,8 @@ public:
 
 private:
     // 定位 (SKU,格口) → (skuIdx, planIdx)：走本 SKU 的 gridOff 小表，O(1)
+    //   ★ 2026-09-26：同格口可能有多个单元（分类 + 发货）—— gridOff 存**该格口首个单元**的下标，
+    //     故本函数用于"(SKU,格口)"级判定/聚合（sumOverGrid）；单元级精确匹配用 cellIndexOf。
     bool locate(const QString& sku, const QString& gridKey, int& siOut, int& piOut) const
     {
         const int si = m_skuIndex.value(sku, -1);
@@ -765,6 +1000,50 @@ private:
         siOut = si;
         piOut = (int)off;
         return true;
+    }
+
+    // ★ 2026-09-26：精确定位单元 (SKU, 格口, 类型) → m_cells 全局下标（-1 = 不在计划内）
+    //   扫描该 SKU 的单元（通常 1~3 个，最多几行），开销可忽略。
+    int cellIndexOf(const QString& sku, const QString& gridKey, quint8 gridType) const
+    {
+        const int si = m_skuIndex.value(sku, -1);
+        if (si < 0) return -1;
+        bool ok = false;
+        const int g = gridKey.trimmed().toInt(&ok);
+        if (!ok || g < 1) return -1;
+        const SkuPlan& sp = m_skus[si];
+        for (qint16 k = 0; k < sp.idxCount; ++k)
+        {
+            const qint32 ci = sp.idxFirst + k;
+            if ((int)m_cells[ci].grid == g && m_cells[ci].gridType == gridType) return (int)ci;
+        }
+        return -1;
+    }
+
+    // ★ 2026-09-26：(SKU,格口) 级求和（该格口各类型单元之和）
+    //   mode：0=planQty 1=planQtyH4 2=landed 3=remain 4=reserv
+    qint32 sumOverGrid(int si, const QString& gridKey, int mode) const
+    {
+        if (si < 0 || si >= m_skus.size()) return 0;
+        bool ok = false;
+        const int g = gridKey.trimmed().toInt(&ok);
+        if (!ok) return 0;
+        const SkuPlan& sp = m_skus[si];
+        qint32 n = 0;
+        for (qint16 k = 0; k < sp.idxCount; ++k)
+        {
+            const qint32 ci = sp.idxFirst + k;
+            if ((int)m_cells[ci].grid != g) continue;
+            switch (mode)
+            {
+            case 0: n += m_cells[ci].planQty;   break;
+            case 1: n += m_cells[ci].planQtyH4; break;
+            case 2: n += m_quota[ci].landed;    break;
+            case 3: n += m_quota[ci].remain;    break;
+            default: n += m_quota[ci].reserv;   break;
+            }
+        }
+        return n;
     }
 
     qint32 cellOf(int si, int pi) const { return m_skus[si].idxFirst + pi; }
@@ -838,6 +1117,25 @@ private:
         m_skus[si].skuRemain = sum;
     }
 
+    // ★ 2026-09-26：落一条归属存根（EPC → 该件原本认领的单元）
+    //   只在"认领被释放、但件可能仍在途"时调用（超时清扫 / 发送失败）。
+    //   上限 kOrphanCap：超出即淘汰最旧一条（只在满时扫描，代价可控；宁可丢最老的归属，
+    //   也不要无界增长 —— 丢归属只会退回"启发式 + unitGuessed 留痕"，不会算错额度）。
+    void stashOrphan(const QString& epc, const ClaimRef& ref, qint64 nowMs)
+    {
+        if (epc.isEmpty()) return;
+        ClaimRef stub = ref;
+        stub.atMs = (nowMs > 0) ? nowMs : QDateTime::currentMSecsSinceEpoch();
+        m_orphanClaims.insert(epc, stub);
+        while (m_orphanClaims.size() > kOrphanCap)
+        {
+            auto oldest = m_orphanClaims.constBegin();
+            for (auto it = m_orphanClaims.constBegin(); it != m_orphanClaims.constEnd(); ++it)
+                if (it.value().atMs < oldest.value().atMs) oldest = it;
+            m_orphanClaims.remove(oldest.key());
+        }
+    }
+
     quint64 makeClaimId(int skuIdx) const
     {
         return ((quint64)(++m_claimSeq) << 32) | (quint64)((quint16)(skuIdx & 0xFFFF));
@@ -856,6 +1154,7 @@ private:
     QVector<CellQuota>        m_quota;        // 与 m_cells 同下标
 
     QHash<QString, ClaimRef>  m_claims;       // 在途：EPC → 认领（只装在途）
+    QHash<QString, ClaimRef>  m_orphanClaims; // ★ 2026-09-26 归属存根：已释放额度的认领（EPC → 原单元）
     QSet<QString>             m_landedEpcs;   // "单元下标\nEPC" → 已落格（去重，不变量①）
 
     mutable quint32 m_claimSeq = 0;

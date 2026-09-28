@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 645 1482" width="645" height="1482" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="645" height="1482" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M49.0,265.0 L49.0,343.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,265.0 L49.0,304.0 L198.0,304.0 L198.0,343.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,265.0 L49.0,304.0 L198.0,304.0 L198.0,343.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,265.0 L49.0,304.0 L198.0,304.0 L198.0,343.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,585.0 L49.0,663.0"/>
+<path class="fw" marker-end="url(#ah)" d="M198.0,585.0 L198.0,663.0"/>
+<path class="fw" marker-end="url(#ah)" d="M198.0,585.0 L198.0,624.0 L336.0,624.0 L336.0,663.0"/>
+<path class="fw" marker-end="url(#ah)" d="M198.0,585.0 L198.0,624.0 L336.0,624.0 L336.0,663.0"/>
+<polygon points="49.0,0.0 98.0,132.5 49.0,265.0 0.0,132.5" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="49.0" y="121.0" text-anchor="middle" fill="#795548">每个功能投资的</text>
+<text class="nl" x="49.0" y="144.0" text-anchor="middle" fill="#795548">价值—成本定位</text>
+<rect x="11.0" y="343.0" width="76.0" height="242" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="49.0" y="452.5" text-anchor="middle" fill="#212121">高价值 · 低成本</text>
+<text class="nl" x="49.0" y="475.5" text-anchor="middle" fill="#212121">必须保留并固化为规则内核</text>
+<rect x="160.0" y="343.0" width="76.0" height="242" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="198.0" y="452.5" text-anchor="middle" fill="#212121">高价值 · 高成本</text>
+<text class="nl" x="198.0" y="475.5" text-anchor="middle" fill="#212121">保留，但必须拆解与治理</text>
+<rect x="160.0" y="343.0" width="76.0" height="242" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="198.0" y="452.5" text-anchor="middle" fill="#212121">低价值 · 低成本</text>
+<text class="nl" x="198.0" y="475.5" text-anchor="middle" fill="#212121">允许存在，不再投入</text>
+<rect x="160.0" y="343.0" width="76.0" height="242" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="198.0" y="452.5" text-anchor="middle" fill="#212121">低价值 · 高成本</text>
+<text class="nl" x="198.0" y="475.5" text-anchor="middle" fill="#212121">MVP 减法的首要目标</text>
+<rect x="11.0" y="663.0" width="76.0" height="330.80000000000007" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="49.0" y="816.9" text-anchor="middle" fill="#212121">主链路五步 · 纯策略头 + 单测</text>
+<text class="nl" x="49.0" y="839.9" text-anchor="middle" fill="#212121">计划分配表 · 只读核对脚本</text>
+<rect x="160.0" y="663.0" width="76.0" height="330.80000000000007" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="198.0" y="816.9" text-anchor="middle" fill="#212121">切出切回与断电兜底</text>
+<text class="nl" x="198.0" y="839.9" text-anchor="middle" fill="#212121">三层报文留痕 · 崩溃转储</text>
+<rect x="309.5" y="663.0" width="53.0" height="330.80000000000007" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="336.0" y="828.4" text-anchor="middle" fill="#212121">分类日志目录 · 效率统计弹窗</text>
+<rect x="298.0" y="663.0" width="76.0" height="330.80000000000007" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="336.0" y="816.9" text-anchor="middle" fill="#212121">OutboxManager 死代码 · src 旧实现</text>
+<text class="nl" x="336.0" y="839.9" text-anchor="middle" fill="#212121">旧 Designer 壳 · 未验证的面板开关</text>
+</g></svg>

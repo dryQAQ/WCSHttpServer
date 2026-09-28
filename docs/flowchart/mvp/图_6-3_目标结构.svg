@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1569 429" width="1569" height="429" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1569" height="429" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M204.4,38.0 L282.4,38.0"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M282.4,38.0 L12.0,38.0 L12.0,38.0 L0.0,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M633.2,38.0 L711.2,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M633.2,38.0 L672.2,38.0 L672.2,176.0 L711.2,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M633.2,38.0 L672.2,38.0 L672.2,176.0 L711.2,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M633.2,38.0 L672.2,38.0 L672.2,176.0 L711.2,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M633.2,38.0 L672.2,38.0 L672.2,176.0 L711.2,176.0"/>
+<rect class="elb" x="224.2" y="95.0" width="38.4" height="24" rx="4"/>
+<text class="el" x="243.4" y="107.0" text-anchor="middle">命令</text>
+<rect class="elb" x="-13.2" y="95.0" width="38.4" height="24" rx="4"/>
+<text class="el" x="6.0" y="107.0" text-anchor="middle">订阅</text>
+<rect x="0.0" y="0.0" width="204.4" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="102.2" y="26.5" text-anchor="middle" fill="#212121">MainWindow</text>
+<text class="nl" x="102.2" y="49.5" text-anchor="middle" fill="#212121">只发命令 + 订阅视图</text>
+<rect x="282.4" y="0.0" width="350.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="457.8" y="26.5" text-anchor="middle" fill="#212121">波次协调器</text>
+<text class="nl" x="457.8" y="49.5" text-anchor="middle" fill="#212121">活动上下文 / generation / 状态所有权</text>
+<rect x="711.2" y="0.0" width="346.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="884.6" y="26.5" text-anchor="middle" fill="#212121">策略头</text>
+<text class="nl" x="884.6" y="49.5" text-anchor="middle" fill="#212121">分配 / 出队 / 留痕 / EPC 识别</text>
+<rect x="711.2" y="138.0" width="346.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="884.6" y="164.5" text-anchor="middle" fill="#212121">设备适配</text>
+<text class="nl" x="884.6" y="187.5" text-anchor="middle" fill="#212121">PLC / RFID / S7</text>
+<rect x="711.2" y="138.0" width="346.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="884.6" y="164.5" text-anchor="middle" fill="#212121">存储层</text>
+<text class="nl" x="884.6" y="187.5" text-anchor="middle" fill="#212121">事务 / 提交点 / 迁移版本</text>
+<rect x="711.2" y="138.0" width="346.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="884.6" y="164.5" text-anchor="middle" fill="#212121">报文交付</text>
+<text class="nl" x="884.6" y="187.5" text-anchor="middle" fill="#212121">Outbox 状态机（复用 OutboxManager）</text>
+<rect x="711.2" y="138.0" width="346.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="884.6" y="164.5" text-anchor="middle" fill="#212121">观测</text>
+<text class="nl" x="884.6" y="187.5" text-anchor="middle" fill="#212121">分段时延 / 队列水位 / 审计</text>
+</g></svg>

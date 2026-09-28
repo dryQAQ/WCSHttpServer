@@ -113,3 +113,37 @@ static inline QString normalizeGridKey(const QString& input)
     if (grid < 0) return s;
     return QString("%1").arg(grid, width, 10, QChar('0'));
 }
+
+// ============================================================================
+// ★ 2026-09-26 现场口径：计划额度的**唯一单元 = (SKU, 格口, 分拣类型)**
+//   单元复合键形式："034|2"（格口 3 位 key + '|' + 类型 0=分类/1=异常/2=发货）。
+//   为什么要复合键：一个 (SKU,格口) 可以有两行计划（分类一份 + 发货一份），
+//   把类型并进键里，才谈得上"每个单元多少件就落多少件、不能多、互不借用/搬迁"。
+//   拼/解一律走下面三个助手（禁止各处手写拼串，避免 '|' 与类型缺失口径不一致）。
+// ============================================================================
+static inline QString makeCellKey(const QString& gridKey, const QString& gridType)
+{
+    const QString t = gridType.trimmed().isEmpty() ? QStringLiteral("0") : gridType.trimmed();
+    return gridKey.trimmed() + QLatin1Char('|') + t;
+}
+static inline QString makeCellKey(int grid, const QString& gridType)
+{
+    return makeCellKey(QString("%1").arg(grid, GRID_KEY_PADDING, 10, QChar('0')), gridType);
+}
+// "034|2" → "034"（无分隔符时原样返回，兼容历史/异形数据）
+static inline QString cellKeyGridOf(const QString& cellKey)
+{
+    const int p = cellKey.indexOf(QLatin1Char('|'));
+    return p < 0 ? cellKey : cellKey.left(p);
+}
+// "034|2" → "2"（无分隔符时按"分类(0)"兜底，与 H4 未下发 gridType 的口径一致）
+static inline QString cellKeyTypeOf(const QString& cellKey)
+{
+    const int p = cellKey.indexOf(QLatin1Char('|'));
+    const QString t = (p < 0) ? QString() : cellKey.mid(p + 1).trimmed();
+    return t.isEmpty() ? QStringLiteral("0") : t;
+}
+static inline int cellKeyTypeNumOf(const QString& cellKey)
+{
+    return cellKeyTypeOf(cellKey).toInt();
+}

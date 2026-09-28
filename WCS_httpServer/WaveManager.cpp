@@ -334,6 +334,10 @@ WaveSnapshot WaveManager::snapshot() const
         snap.skuCount = m_pBuffer->size();
     }
 
+    // ★ 2026-09-25 口径说明：本行填的是 sorted() = PLC 反馈**件次**累计（含重复反馈/重投，
+    //   以及 no_bind/no_match 等"只计件不写明细"的件），**不是**"去重实物件数"。
+    //   波次面板「分拣件数」已改为读 HttpServer::sortedDetailCount()（与历史列表同源），
+    //   本字段仅为快照结构兼容保留 —— 新代码请勿用它显示实物件数。
     snap.sumLocation   = sorted();
     snap.lastWaveCode  = m_lastOrderCode;  // ★ UI「上波次」显示
 

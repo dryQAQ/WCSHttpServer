@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1901 429" width="1901" height="429" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1901" height="429" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M298.0,38.0 L376.0,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M628.4,38.0 L706.4,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M905.2,38.0 L983.2,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M1304.4,38.0 L689.2,38.0 L689.2,176.0 L74.0,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M1304.4,38.0 L689.2,38.0 L689.2,176.0 L74.0,176.0"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M74.0,176.0 L40.0,176.0 L40.0,38.0 L376.0,38.0"/>
+<rect class="elb" x="656.1" y="95.0" width="66.1" height="24" rx="4"/>
+<text class="el" x="689.2" y="107.0" text-anchor="middle">&quot;未覆盖&quot;</text>
+<rect class="elb" x="656.1" y="133.0" width="66.1" height="24" rx="4"/>
+<text class="el" x="689.2" y="145.0" text-anchor="middle">&quot;已覆盖&quot;</text>
+<rect class="elb" x="21.0" y="86.0" width="72.1" height="42" rx="4"/>
+<text class="el" x="57.0" y="98.0" text-anchor="middle">&quot;修复后回</text>
+<text class="el" x="57.0" y="116.0" text-anchor="middle">归&quot;</text>
+<rect x="0.0" y="0.0" width="298.0" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="149.0" y="26.5" text-anchor="middle" fill="#212121">需求来源</text>
+<text class="nl" x="149.0" y="49.5" text-anchor="middle" fill="#212121">现场问题 / WMS 契约 / 设备约束</text>
+<rect x="376.0" y="0.0" width="252.4" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="502.2" y="26.5" text-anchor="middle" fill="#212121">需求条目</text>
+<text class="nl" x="502.2" y="49.5" text-anchor="middle" fill="#212121">FR / BR / NFR / IR / DR</text>
+<rect x="706.4" y="0.0" width="198.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="805.8" y="26.5" text-anchor="middle" fill="#212121">实现载体</text>
+<text class="nl" x="805.8" y="49.5" text-anchor="middle" fill="#212121">模块 / 表 / 配置键</text>
+<rect x="983.2" y="0.0" width="321.2" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1143.8" y="26.5" text-anchor="middle" fill="#212121">验证资产</text>
+<text class="nl" x="1143.8" y="49.5" text-anchor="middle" fill="#212121">单测 / 仿真 / 只读脚本 / 现场用例</text>
+<rect x="74.0" y="138.0" width="150.0" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="149.0" y="164.5" text-anchor="middle" fill="#212121">残余风险</text>
+<text class="nl" x="149.0" y="187.5" text-anchor="middle" fill="#212121">R1 - R19</text>
+<rect x="74.0" y="138.0" width="150.0" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="149.0" y="164.5" text-anchor="middle" fill="#212121">投产状态</text>
+<text class="nl" x="149.0" y="187.5" text-anchor="middle" fill="#212121">release-2.0</text>
+</g></svg>

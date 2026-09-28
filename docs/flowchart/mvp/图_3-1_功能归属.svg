@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 616 1382" width="616" height="1382" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="616" height="1382" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M38.0,174.0 L38.0,252.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,174.0 L38.0,213.0 L176.0,213.0 L176.0,252.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,174.0 L38.0,213.0 L176.0,213.0 L176.0,252.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,510.0 L38.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,510.0 L38.0,549.0 L176.0,549.0 L176.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,510.0 L38.0,549.0 L176.0,549.0 L176.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,510.0 L38.0,549.0 L176.0,549.0 L176.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,510.0 L38.0,549.0 L176.0,549.0 L176.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<path class="fw" marker-end="url(#ah)" d="M176.0,510.0 L176.0,549.0 L314.0,549.0 L314.0,588.0"/>
+<rect x="0.0" y="0.0" width="76.0" height="174" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="38.0" y="75.5" text-anchor="middle" fill="#212121">现有能力盘点</text>
+<text class="nl" x="38.0" y="98.5" text-anchor="middle" fill="#212121">按 MVP 边界归属</text>
+<rect x="0.0" y="252.0" width="76.0" height="258" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="38.0" y="369.5" text-anchor="middle" fill="#212121">主线内 L1</text>
+<text class="nl" x="38.0" y="392.5" text-anchor="middle" fill="#212121">缺了产品不成立</text>
+<rect x="138.0" y="252.0" width="76.0" height="258" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="176.0" y="369.5" text-anchor="middle" fill="#212121">保障层 L2</text>
+<text class="nl" x="176.0" y="392.5" text-anchor="middle" fill="#212121">现场真出过问题才做</text>
+<rect x="138.0" y="252.0" width="76.0" height="258" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="176.0" y="369.5" text-anchor="middle" fill="#212121">超出 MVP</text>
+<text class="nl" x="176.0" y="392.5" text-anchor="middle" fill="#212121">当前不产生价值或价值未验证</text>
+<rect x="11.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="38.0" y="753.8" text-anchor="middle" fill="#212121">H4 收波次 + 三路由 HTTP</text>
+<rect x="149.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="176.0" y="753.8" text-anchor="middle" fill="#212121">计划映射 + 计划分配表</text>
+<rect x="149.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="176.0" y="753.8" text-anchor="middle" fill="#212121">RFID 读 EPC + 查 SKU</text>
+<rect x="149.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="176.0" y="753.8" text-anchor="middle" fill="#212121">PLC 下发 + 落格反馈</text>
+<rect x="149.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="176.0" y="753.8" text-anchor="middle" fill="#212121">H7 / H8 回传</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">额度守恒 + 超计划改投异常口 6</text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">6</text>
+<rect x="287.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="753.8" text-anchor="middle" fill="#212121">去重 / 重扫重投 / 计时归零</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">Outbox 持久化 + 自动重试 + </text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">人工补传</text>
+<rect x="287.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="753.8" text-anchor="middle" fill="#212121">切出 / 切回 / 断电兜底</text>
+<rect x="287.5" y="588.0" width="53.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="753.8" text-anchor="middle" fill="#212121">三层报文留痕 + WAVE_MAP 闸门</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">OutboxManager 361 行</text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">已编译但无实例化</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">旧 Designer 壳 WCS_httpServer</text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">仍编译，main 不使用</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">src/ 旧实现整套</text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">未被 vcxproj 引用</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">SiemensPLC DB1 写入</text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">已注释停用</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">qcustomplot 1.3 MB 源码</text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">只服务一个效率图表弹窗</text>
+<rect x="276.0" y="588.0" width="76.0" height="331.60000000000014" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.0" y="742.3" text-anchor="middle" fill="#212121">showLivePage / showPlanAllocPage</text>
+<text class="nl" x="314.0" y="765.3" text-anchor="middle" fill="#212121">配置默认 false</text>
+</g></svg>

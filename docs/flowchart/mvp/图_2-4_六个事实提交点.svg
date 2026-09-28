@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1408 429" width="1408" height="429" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1408" height="429" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M150.0,38.0 L228.0,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M401.2,38.0 L479.2,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M690.0,38.0 L768.0,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M938.8,38.0 L464.2,38.0 L464.2,176.0 L-10.4,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M160.4,176.0 L237.2,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M392.0,176.0 L477.6,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M691.6,176.0 L759.6,176.0"/>
+<rect x="0.0" y="0.0" width="150.0" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="75.0" y="26.5" text-anchor="middle" fill="#212121">① 已受理</text>
+<text class="nl" x="75.0" y="49.5" text-anchor="middle" fill="#212121">HTTP 200</text>
+<rect x="228.0" y="0.0" width="173.2" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.6" y="26.5" text-anchor="middle" fill="#212121">② 已入队</text>
+<text class="nl" x="314.6" y="49.5" text-anchor="middle" fill="#212121">TaskQueue push</text>
+<rect x="479.2" y="0.0" width="210.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="584.6" y="26.5" text-anchor="middle" fill="#212121">③ 已持久化</text>
+<text class="nl" x="584.6" y="49.5" text-anchor="middle" fill="#212121">wave_raw / 明细入库</text>
+<rect x="768.0" y="0.0" width="170.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="853.4" y="26.5" text-anchor="middle" fill="#212121">④ 已入发送队列</text>
+<text class="nl" x="853.4" y="49.5" text-anchor="middle" fill="#212121">send 池排队</text>
+<rect x="-10.4" y="138.0" width="170.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="75.0" y="164.5" text-anchor="middle" fill="#212121">⑤ 传输层已发出</text>
+<text class="nl" x="75.0" y="187.5" text-anchor="middle" fill="#212121">TCP write 成功</text>
+<rect x="237.2" y="138.0" width="154.8" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="314.6" y="164.5" text-anchor="middle" fill="#212121">⑥ 已收到反馈</text>
+<text class="nl" x="314.6" y="187.5" text-anchor="middle" fill="#212121">PLC 落格结果</text>
+<rect x="477.6" y="138.0" width="214.0" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="584.6" y="164.5" text-anchor="middle" fill="#212121">⑦ 报文已入 Outbox</text>
+<text class="nl" x="584.6" y="187.5" text-anchor="middle" fill="#212121">outbox_fullbox 提交</text>
+<rect x="759.6" y="138.0" width="187.6" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="853.4" y="164.5" text-anchor="middle" fill="#212121">⑧ 对端已接受</text>
+<text class="nl" x="853.4" y="187.5" text-anchor="middle" fill="#212121">WMS 回执 success</text>
+</g></svg>

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1526 616" width="1526" height="616" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1526" height="616" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M150.0,38.0 L228.0,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M150.0,38.0 L189.0,38.0 L189.0,176.0 L228.0,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M378.0,38.0 L456.0,38.0"/>
+<path class="fw" marker-end="url(#ah)" d="M378.0,38.0 L417.0,38.0 L417.0,176.0 L456.0,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M378.0,176.0 L417.0,176.0 L417.0,314.0 L456.0,314.0"/>
+<path class="fw" marker-end="url(#ah)" d="M660.4,176.0 L738.4,176.0"/>
+<path class="fw" marker-end="url(#ah)" d="M660.4,176.0 L699.4,176.0 L699.4,314.0 L738.4,314.0"/>
+<path class="fw" marker-end="url(#ah)" d="M660.4,176.0 L699.4,176.0 L699.4,314.0 L738.4,314.0"/>
+<path class="fw" marker-end="url(#ah)" d="M660.4,176.0 L699.4,176.0 L699.4,314.0 L738.4,314.0"/>
+<path class="fw" marker-end="url(#ah)" d="M660.4,176.0 L699.4,176.0 L699.4,314.0 L738.4,314.0"/>
+<rect x="0.0" y="11.5" width="150.0" height="53" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="75.0" y="38.0" text-anchor="middle" fill="#212121">当前工作区</text>
+<rect x="228.0" y="11.5" width="150.0" height="53" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="303.0" y="38.0" text-anchor="middle" fill="#212121">参与编译</text>
+<rect x="228.0" y="149.5" width="150.0" height="53" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="303.0" y="176.0" text-anchor="middle" fill="#212121">未参与编译</text>
+<rect x="456.0" y="0.0" width="204.4" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="558.2" y="26.5" text-anchor="middle" fill="#212121">被主链路调用</text>
+<text class="nl" x="558.2" y="49.5" text-anchor="middle" fill="#212121">＝当前价值</text>
+<rect x="456.0" y="138.0" width="204.4" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="558.2" y="164.5" text-anchor="middle" fill="#212121">不被调用 / 默认关闭</text>
+<text class="nl" x="558.2" y="187.5" text-anchor="middle" fill="#212121">＝纯负担</text>
+<rect x="456.0" y="276.0" width="204.4" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="558.2" y="302.5" text-anchor="middle" fill="#212121">src/ 旧实现</text>
+<text class="nl" x="558.2" y="325.5" text-anchor="middle" fill="#212121">＝阅读噪音</text>
+<rect x="738.4" y="149.5" width="287.6" height="53" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="882.2" y="176.0" text-anchor="middle" fill="#212121">OutboxManager 361 行</text>
+<rect x="738.4" y="287.5" width="287.6" height="53" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="882.2" y="314.0" text-anchor="middle" fill="#212121">旧 Designer 壳 + ui/moc/uic</text>
+<rect x="738.4" y="287.5" width="287.6" height="53" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="882.2" y="314.0" text-anchor="middle" fill="#212121">SiemensPLC DB1 写入</text>
+<rect x="738.4" y="287.5" width="287.6" height="53" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="882.2" y="314.0" text-anchor="middle" fill="#212121">qcustomplot 1.3 MB</text>
+<rect x="738.4" y="276.0" width="287.6" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="882.2" y="302.5" text-anchor="middle" fill="#212121">showLivePage / showPlanAllo</text>
+<text class="nl" x="882.2" y="325.5" text-anchor="middle" fill="#212121">cPage</text>
+</g></svg>

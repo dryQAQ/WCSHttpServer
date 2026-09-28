@@ -39,6 +39,8 @@ bool AppConfig::loadFromFile(const QString& path)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return false;
 
+    int deprecatedKeys = 0;   // ★ 2026-09-22：已废弃键计数（读完统一提示，便于现场清理旧 XML）
+
     QXmlStreamReader xml(&file);
     while (!xml.atEnd())
     {
@@ -117,12 +119,33 @@ bool AppConfig::loadFromFile(const QString& path)
         else if (name == "sortingConflictPolicy")   sortingConflictPolicy = xml.readElementText();
         else if (name == "sortingAllowOverrecv")    sortingAllowOverrecv = (xml.readElementText().trimmed().toLower() == "true");
         // ★ 2026-09-20 现场问题④：解锁且未绑定容器的格口不下发（改投异常口）
-        else if (name == "sortingRequireBoundGrid") sortingRequireBoundGrid = (xml.readElementText().trimmed().toLower() == "true");
+        //   ★ 2026-09-26 已废弃：容器绑定闸门**恒开**（不绑定容器不允许落件），键值不再影响行为
+        else if (name == "sortingRequireBoundGrid")
+        {
+            const QString raw = xml.readElementText().trimmed();
+            sortingRequireBoundGrid = true;   // 恒开：不绑定容器一律不下发
+            if (raw.toLower() == "false")
+            {
+                LOG_WARN("[配置] sortingRequireBoundGrid=false 已废弃（容器绑定闸门恒开）："
+                         "不绑定容器的格口一律不下发（件改投异常口或按根因不发指令），本键不再影响行为");
+                ++deprecatedKeys;
+            }
+        }
         // ★ 2026-09-22 现场需求：锁格即保存+清理容器号（不等 H7 回执）
         else if (name == "sortingClearBoxOnFullbox") sortingClearBoxOnFullbox = (xml.readElementText().trimmed().toLower() == "true");
-        // ★ 2026-09-22 现场需求：完结回传（H8）最后进行（H7 未成功时暂缓 + 人工决策）
-        else if (name == "endFullboxBarrier")       endFullboxBarrier = (xml.readElementText().trimmed().toLower() == "true");
-        else if (name == "endFullboxBarrierPolicy") endFullboxBarrierPolicy = xml.readElementText().trimmed().toLower();
+        // ★ 2026-09-22 现场口径（最终定稿）：满箱回传统一补发后，固定延迟 N 毫秒强制发送完结回传（H8）
+        //   （不论 H7 是否成功；0=补发完立即发。范围钳制 0..60000ms）
+        else if (name == "endReportDelayMs")        endReportDelayMs = qBound(0, xml.readElementText().trimmed().toInt(), 60000);
+        // ★ 2026-09-22 已废弃：原"完结屏障/策略"（ask/block/人工接管）已整体移除 ——
+        //   保留读取分支只为**明确提示**（旧 XML 残留不会改变行为：完结回传一律固定延迟后强制发送）。
+        else if (name == "endFullboxBarrier" || name == "endFullboxBarrierPolicy")
+        {
+            const QString oldValue = xml.readElementText().trimmed();
+            LOG_WARN("[配置] %s=%s 已废弃（完结屏障已取消）：完结回传现在固定在满箱补发后 %dms 强制发送，"
+                     "与满箱回传结果完全分开；如需调整请改 endReportDelayMs",
+                name.toLocal8Bit().constData(), oldValue.toLocal8Bit().constData(), END_REPORT_DELAY_MS);
+            ++deprecatedKeys;
+        }
         // ★ 2026-09-11 同波次重扫重投
         else if (name == "rescanResendEnabled")     rescanResendEnabled = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "rescanResendCooldownMs")  rescanResendCooldownMs = xml.readElementText().toInt();
@@ -131,8 +154,20 @@ bool AppConfig::loadFromFile(const QString& path)
         // ──── ★ 2026-09-14 计划分配表（落格结构优化）────
         else if (name == "allocEnabled")            allocEnabled = (xml.readElementText().trimmed().toLower() == "true");
         else if (name == "allocRequirePlanValid")   allocRequirePlanValid = (xml.readElementText().trimmed().toLower() == "true");
-        else if (name == "allocGapMoveOnDisabled")  allocGapMoveOnDisabled = (xml.readElementText().trimmed().toLower() == "true");
-        else if (name == "allocGapMoveOnLocked")    allocGapMoveOnLocked = (xml.readElementText().trimmed().toLower() == "true");
+        // ★ 2026-09-26 已删除：计划缺口搬迁能力已从代码中整体移除（现场口径：计划额度不因锁格等
+        //   原因搬迁；每个 (SKU,格口,分拣类型) 计划多少就落多少、不能多）。
+        //   保留读取分支只为**明确提示**：旧 XML 残留（尤其是 true）不会改变任何行为。
+        else if (name == "allocGapMoveOnDisabled" || name == "allocGapMoveOnLocked")
+        {
+            const QString oldValue = xml.readElementText().trimmed();
+            allocGapMoveOnDisabled = false;
+            allocGapMoveOnLocked   = false;
+            LOG_WARN("[配置] %s=%s 已删除（缺口搬迁能力已整体移除，不生效）："
+                     "不可用单元的额度留在原单元、不清零不搬迁；件改用其它单元自身剩余额度，"
+                     "都没有则改投异常口或不发指令。请从 XML 中删除本键",
+                name.toLocal8Bit().constData(), oldValue.toLocal8Bit().constData());
+            ++deprecatedKeys;
+        }
         else if (name == "allocMaxInflight")        allocMaxInflight = xml.readElementText().toInt();
         else if (name == "allocAuditIntervalMs")    allocAuditIntervalMs = xml.readElementText().toInt();
         else if (name == "allocClaimTimeoutMs")     allocClaimTimeoutMs = xml.readElementText().toInt();
@@ -180,6 +215,14 @@ bool AppConfig::loadFromFile(const QString& path)
         }
     }
     file.close();
+    if (deprecatedKeys > 0)
+    {
+        LOG_WARN("[配置] 本次共忽略/强制 %d 个已废弃键（endFullboxBarrier / endFullboxBarrierPolicy / "
+                 "sortingRequireBoundGrid=false / allocGapMoveOnDisabled / allocGapMoveOnLocked）——"
+                 "请从 XML 中删除；当前固定行为：容器绑定闸门恒开、缺口搬迁能力已删除、"
+                 "满箱补发后 %dms 强制发送完结回传（H8）",
+            deprecatedKeys, END_REPORT_DELAY_MS);
+    }
     return !xml.hasError();
 }
 
@@ -300,10 +343,11 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("allocEnabled",            allocEnabled ? "true" : "false");
     xml.writeComment(" true=开工预检发现『Σ每格口计划 ≠ H4 orderQty』即拒绝开工（默认 false 仅告警） ");
     xml.writeTextElement("allocRequirePlanValid",   allocRequirePlanValid ? "true" : "false");
-    xml.writeComment(" 计划格口满箱未重绑(禁用)时，把未完成计划件转给同 SKU 其它可用计划格口（true/false） ");
-    xml.writeTextElement("allocGapMoveOnDisabled",  allocGapMoveOnDisabled ? "true" : "false");
-    xml.writeComment(" 计划格口物理锁格时同样转移（true/false；false 时锁格格口不转移） ");
-    xml.writeTextElement("allocGapMoveOnLocked",    allocGapMoveOnLocked ? "true" : "false");
+    xml.writeComment(" 【已删除·恒 false】缺口搬迁能力已整体移除（2026-09-26）：计划额度不因锁格/禁用等原因搬迁，"
+                     "不可用单元的额度留在原单元；件改用其它单元自身剩余额度，都没有则改投异常口或不发指令。本键仅为兼容旧 XML，读取时只提示不生效 ");
+    xml.writeTextElement("allocGapMoveOnDisabled",  "false");
+    xml.writeComment(" 【已删除·恒 false】同上（物理锁格亦不搬迁） ");
+    xml.writeTextElement("allocGapMoveOnLocked",    "false");
     xml.writeComment(" 在途认领上限（超出即强制清扫+异常留痕，防认领泄漏） ");
     xml.writeTextElement("allocMaxInflight",        QString::number(allocMaxInflight));
     xml.writeComment(" 不变量巡检 + 认领超时清扫周期(ms) ");
@@ -340,14 +384,16 @@ bool AppConfig::saveToFile(const QString& path) const
     xml.writeTextElement("sortingConflictPolicy",   sortingConflictPolicy);
     xml.writeComment(" 是否允许超收（true/false） ");
     xml.writeTextElement("sortingAllowOverrecv",     sortingAllowOverrecv ? "true" : "false");
-    xml.writeComment(" ★ 下发前置条件：格口必须已解锁且已绑定容器（true=未绑定容器不下发到该格、改投异常口且不消耗额度；false=回退改造前照发行为） ");
+    xml.writeComment(" 【已废弃·恒 true】下发前置条件：格口必须已解锁且已绑定容器"
+                     "（2026-09-26 现场口径：不绑定容器一律不允许落件、锁格一律不允许落件，本键不再影响行为） ");
     xml.writeTextElement("sortingRequireBoundGrid",  sortingRequireBoundGrid ? "true" : "false");
-    xml.writeComment(" ★ 锁格(=满箱)/完结补发时立即保存并清理容器号（true=不等H7回执即清绑定，件改投异常口；false=回退为等H7成功才解绑） ");
+    xml.writeComment(" ★ 锁格(=满箱)/完结补发时立即保存并清理容器号（true=不等H7回执即清绑定，件改投异常口；false=锁格/补发都不清容器号）。※ 满箱回传结果一律不改容器绑定 ");
     xml.writeTextElement("sortingClearBoxOnFullbox", sortingClearBoxOnFullbox ? "true" : "false");
-    xml.writeComment(" ★ 完结回传(H8)最后进行：先补发H7并等其到终态，有失败则暂缓并提示人工（true/false） ");
-    xml.writeTextElement("endFullboxBarrier",        endFullboxBarrier ? "true" : "false");
-    xml.writeComment(" 屏障策略：ask=提示人工选择(默认) / auto=不询问直接完结并留痕 / block=必须人工重传成功 ");
-    xml.writeTextElement("endFullboxBarrierPolicy",  endFullboxBarrierPolicy);
+    xml.writeComment(" ★ 完结回传(H8)固定延迟：满箱回传(H7)统一补发完成后，等 endReportDelayMs 毫秒，"
+                     "**不论 H7 是否成功**都发送完结回传（H8 始终是最后一条报文）。"
+                     "H7 的结果只影响它自己那条报文（自动重试/耗尽落 failed/人工补传），与完结回传完全分开。"
+                     "0 = 补发完立即发送（默认 1000ms） ");
+    xml.writeTextElement("endReportDelayMs",         QString::number(endReportDelayMs));
     // ──── ★ 2026-09-11 同波次重扫重投 ────
     xml.writeComment(" 重扫重投开关（true=已落格件重新上料仍按原格口下发；false=旧行为不再下发） ");
     xml.writeTextElement("rescanResendEnabled",      rescanResendEnabled ? "true" : "false");

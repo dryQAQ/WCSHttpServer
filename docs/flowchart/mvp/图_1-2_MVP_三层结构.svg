@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 243 2214" width="243" height="2214" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="243" height="2214" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M38.0,460.0 L38.0,538.0"/>
+<path class="fw" marker-end="url(#ah)" d="M38.0,998.0 L38.0,1076.0"/>
+<path class="fb" marker-end="url(#ah-fb)" d="M38.0,1076.0 L38.0,12.0 L38.0,12.0 L38.0,0.0"/>
+<rect class="elb" x="-73.2" y="-60.0" width="64.8" height="132" rx="4"/>
+<text class="el" x="-40.8" y="-48.0" text-anchor="middle">&quot;验证结</text>
+<text class="el" x="-40.8" y="-30.0" text-anchor="middle">果反哺：</text>
+<text class="el" x="-40.8" y="-12.0" text-anchor="middle">现场问题</text>
+<text class="el" x="-40.8" y="6.0" text-anchor="middle"> → 根</text>
+<text class="el" x="-40.8" y="24.0" text-anchor="middle">因 → </text>
+<text class="el" x="-40.8" y="42.0" text-anchor="middle">修复 →</text>
+<text class="el" x="-40.8" y="60.0" text-anchor="middle"> 用例&quot;</text>
+<rect x="0.0" y="0.0" width="76.0" height="460" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="38.0" y="218.5" text-anchor="middle" fill="#212121">L1 核心闭环层 —— 少了它就没有产品</text>
+<text class="nl" x="38.0" y="241.5" text-anchor="middle" fill="#212121">收波次 H4 · 建计划映射 · 读 EPC · 查 SKU · 下发 PLC · 收落格 · 回传 H7/H8</text>
+<rect x="0.0" y="538.0" width="76.0" height="460" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="38.0" y="756.5" text-anchor="middle" fill="#212121">L2 生产保障层 —— 少了它不敢上生产</text>
+<text class="nl" x="38.0" y="779.5" text-anchor="middle" fill="#212121">额度守恒 · 超计划处置 · 去重重投 · 报文持久化与补传 · 切出切回与断电兜底</text>
+<rect x="0.0" y="1076.0" width="76.0" height="460" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="38.0" y="1294.5" text-anchor="middle" fill="#212121">L3 工程治理层 —— 少了它改不动、查不清</text>
+<text class="nl" x="38.0" y="1317.5" text-anchor="middle" fill="#212121">策略头 + 单测 · 离线仿真 · 只读核对脚本 · 分类留痕 · 崩溃转储 · 配置模板</text>
+</g></svg>

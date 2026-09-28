@@ -95,30 +95,34 @@ struct AppConfig
     QString sortingOrderQtyValidate = SORTING_ORDERQTY_VALIDATE; // orderQty校验模式（strict/loose）
     QString sortingConflictPolicy = SORTING_CONFLICT_POLICY;   // 冲突策略（STRICT_EXCEPTION/LOOSE_FIRST）
     bool    sortingAllowOverrecv = SORTING_ALLOW_OVERRECV;     // 允许超收（true/false）
-    // ★ 2026-09-20 现场问题④：下发前必须确认格口"已解锁且已绑定容器"
-    //   true（默认）= 解锁且未绑定容器的格口不下发到该格，改投异常口（不计分拣、不消耗额度）
-    //   false        = 逐字回退改造前行为（锁格/未绑定都按原有逻辑照发）
+    // ★ 2026-09-20 现场问题④ → ★ 2026-09-26 已废弃（恒开）：下发前置条件
+    //   现口径（无条件，不受本键影响）：**未禁用 且 未锁格（含锁格状态未知） 且 已绑定容器**才可下发。
+    //   读到 false 时只打一行 WARN"已废弃、不生效"，行为不变（不再有"关掉开关就照发"的回退口子）。
     bool    sortingRequireBoundGrid = SORTING_REQUIRE_BOUND_GRID;
     // ★ 2026-09-22 现场需求（第2条）：锁格（=满箱）/完结补发时**立即**清掉该格活跃绑定（不等 H7 回执）
     //   true（默认）= 锁格瞬间保存箱号快照并清理绑定 ⇒ 门禁立刻视为"未绑定"，件改投异常口；
     //                  H7 报文与箱号持久保留在 outbox_fullbox，失败自动重试、耗尽留痕等人工重传。
-    //   false        = 逐字回退改造前行为（等 H7 回传成功后才解绑）。
+    //   false        = 锁格/完结补发都**不**清容器号（容器号只在 H6 换绑、启动归档、清空格口绑定、
+    //                  关闭软件切出、新任务、波次取消时变化）。
+    //   ★ 无论开关取值：满箱回传（H7）的成功/失败/重试/人工重传**一律不改容器绑定**（结果独立）。
     bool    sortingClearBoxOnFullbox = SORTING_CLEAR_BOX_ON_FULLBOX;
-    // ★ 2026-09-22 现场需求（完结顺序）：完结回传（H8）一定是最后一条报文。
-    //   endFullboxBarrier=true（默认）：先把未回传记录补发成 H7，等它们跑到终态；
-    //     全部成功 → 直接发 H8；存在失败/未生成 → 暂缓并提示（列格口号），由人工决策。
-    //   false = 逐字回退改造前行为（补发完立即发 H8，不等结果）。
-    bool    endFullboxBarrier = END_FULLBOX_BARRIER;
-    // ask（默认）= 有失败时提示人工选择；auto = 不询问直接完结（留痕）；block = 必须人工重传成功才能完结
-    QString endFullboxBarrierPolicy = END_FULLBOX_BARRIER_POLICY;
+    // ★ 2026-09-22 现场口径（最终定稿）→ ★ 2026-09-26 定稿：点「结束任务」= 对**当前所有已绑定容器**
+    //   做一次「一键满箱回传」（有分拣记录才生成报文）→ 固定 endReportDelayMs（默认 2000ms）后，
+    //   **不论 H7 是否成功**发送完结回传（H8）；未绑定容器但仍有未上传记录的格口跳过并留痕（等人工补传）。
+    //   H7 的成功/失败/自动重试/人工补传只影响它自己那条报文（不阻塞、不改写、不取消 H8）。
+    //   说明：本版**取消完结屏障**——原 endFullboxBarrier / endFullboxBarrierPolicy（ask/block）、
+    //   人工接管（holdEndReport）、120 秒等待上限、完结弹窗均已整体移除；旧 XML 里残留的这两个键会被忽略。
+    int     endReportDelayMs = END_REPORT_DELAY_MS;   // 满箱补发完成 → 完结回传之间的固定间隔（0=立即发）
 
     // ──── ★ 2026-09-14 计划分配表（落格结构优化）配置 ────
     //   客户口径：一个 SKU 可同时计划到「正常分拣格口」与「发货格口」，
-    //   每个格口各有一份数量，落格按各格口数量分；已落+在途 ≥ 计划 → 改投异常口。
+    //   每个 (SKU,格口,分拣类型) 单元各有一份数量，落格按各单元数量分；已落+在途 ≥ 计划 → 改投异常口。
     bool    allocEnabled            = ALLOC_ENABLED;             // 总开关（false=回退改造前"恒取首个格口"行为）
     bool    allocRequirePlanValid   = ALLOC_REQUIRE_PLAN_VALID;  // true=Σ每格口计划≠orderQty 时拒绝开工
-    bool    allocGapMoveOnDisabled  = ALLOC_GAP_MOVE_ON_DISABLED;// 计划格口禁用时把未完成件转给同 SKU 其它计划格口（★默认 false：2026-09-21 起取消跨格口搬额度）
-    bool    allocGapMoveOnLocked    = ALLOC_GAP_MOVE_ON_LOCKED;  // 物理锁格时同样转移（★默认 false）
+    // ★ 2026-09-26：缺口搬迁能力**已整体删除**（PlanAllocTable::moveGap / HttpServer::moveAllocGap /
+    //   PlcMoveGapCallback 均已移除）。这两个字段仅为兼容旧 XML 保留解析，恒为 false、不参与任何判断。
+    bool    allocGapMoveOnDisabled  = false;   // 【已删除】恒 false
+    bool    allocGapMoveOnLocked    = false;   // 【已删除】恒 false
     int     allocMaxInflight        = ALLOC_MAX_INFLIGHT;        // 在途认领上限（超出强制清扫+留痕）
     int     allocAuditIntervalMs    = ALLOC_AUDIT_INTERVAL_MS;   // 不变量巡检+认领清扫周期(ms)
     int     allocClaimTimeoutMs     = ALLOC_CLAIM_TIMEOUT_MS;    // 认领超时(ms)

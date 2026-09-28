@@ -430,6 +430,8 @@ void SortingDatabase::createTables()
     q.exec(SQL_ALTER_ADD_SKU);
     // ★ 2026-09-09 需求6：旧库加 boxcode 列（行进中换容器的记录容器号），重复列错误忽略
     q.exec(SQL_ALTER_SORTING_ADD_BOXCODE);
+    // ★ 2026-09-26：旧库加 grid_type 列（落格记账单元类型 0/1/2）——切回/断电重建按类型精确归属
+    q.exec(SQL_ALTER_SORTING_ADD_GRID_TYPE);
 
     // ──── S0 新增表 ────
     // 退货波次头
@@ -512,7 +514,7 @@ bool SortingDatabase::insertRecord(const QString& orderCode, const QString& barc
                                     const QString& gridNum, const QString& carNum,
                                     const QString& firstCar, const QString& lastCar,
                                     int gridCount, const QString& volu,
-                                    const QString& boxcode)
+                                    const QString& boxcode, const QString& gridType)
 {
     return runOnDbThread([&]() -> bool {
         if (!m_bOpened) return false;
@@ -538,6 +540,10 @@ bool SortingDatabase::insertRecord(const QString& orderCode, const QString& barc
         q.addBindValue(now);
         q.addBindValue(now);
         q.addBindValue(boxcode);   // ★ 2026-09-09 需求6：落格容器号
+        // ★ 2026-09-26：落格记账单元类型（0/1/2；空=未进计划单元）
+        //   ★ 必须把"空"绑成 '' 而不是 NULL：grid_type 是 NOT NULL 列，而 QString() 是**空值(null)**
+        //     —— 直接绑 null 会被 NOT NULL 约束拒绝（静默插不进去），这正是"10 实参默认值写法"踩的坑。
+        q.addBindValue(gridType.isEmpty() ? QString("") : gridType);
 
         Data_INFO("[SortingDB] insertRecord barcode=%s sku=%s grid=%s carNum=%s firstCar=%s lastCar=%s gridCount=%d sobi=%s box=%s orderCode=%s",
             barcode.toLocal8Bit().data(), sku.toLocal8Bit().data(),
@@ -1313,6 +1319,7 @@ QVector<LandedRecord> SortingDatabase::getLandingRecordsForWave(const QString& o
         r.boxcode  = q.value(3).toString();
         r.volu     = q.value(4).toString();
         r.time     = q.value(5).toString();
+        r.gridType = q.value(6).toString();   // ★ 2026-09-26：落格单元类型（旧行为空 = 需回退并留痕）
         // 落格时间 → epoch ms（解析失败保持 0 —— 不臆造时间）
         //   容错两种写法：带毫秒（insertRecord 的 currentTimeStr）与不带毫秒
         if (!r.time.isEmpty())

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2010 678" width="2010" height="678" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="2010" height="678" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M150.0,49.5 L228.0,49.5"/>
+<path class="fw" marker-end="url(#ah)" d="M656.4,49.5 L734.4,49.5"/>
+<path class="fw" marker-end="url(#ah)" d="M1119.6,49.5 L1197.6,49.5"/>
+<path class="fw" marker-end="url(#ah)" d="M1385.2,49.5 L637.8,49.5 L637.8,210.5 L-109.6,210.5"/>
+<path class="fw" marker-end="url(#ah)" d="M259.6,210.5 L302.8,210.5"/>
+<path class="fw" marker-end="url(#ah)" d="M656.4,49.5 L695.4,49.5 L695.4,210.5 L734.4,210.5"/>
+<path class="fw" marker-end="url(#ah)" d="M1385.2,49.5 L637.8,49.5 L637.8,210.5 L-109.6,210.5"/>
+<path class="fw" marker-end="url(#ah)" d="M581.6,210.5 L716.8,210.5 L716.8,360.0 L852.0,360.0"/>
+<rect class="elb" x="659.4" y="109.0" width="72.1" height="42" rx="4"/>
+<text class="el" x="695.4" y="121.0" text-anchor="middle">&quot;阶段标志</text>
+<text class="el" x="695.4" y="139.0" text-anchor="middle">&quot;</text>
+<rect class="elb" x="601.8" y="165.0" width="72.1" height="42" rx="4"/>
+<text class="el" x="637.8" y="177.0" text-anchor="middle">&quot;阶段标志</text>
+<text class="el" x="637.8" y="195.0" text-anchor="middle">&quot;</text>
+<rect class="elb" x="680.8" y="270.0" width="72.1" height="42" rx="4"/>
+<text class="el" x="716.8" y="282.0" text-anchor="middle">&quot;阶段标志</text>
+<text class="el" x="716.8" y="300.0" text-anchor="middle">&quot;</text>
+<rect x="0.0" y="0.0" width="150.0" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="75.0" y="26.5" text-anchor="middle" fill="#212121">2026-07-22</text>
+<text class="nl" x="75.0" y="49.5" text-anchor="middle" fill="#212121">项目起步</text>
+<text class="nl" x="75.0" y="72.5" text-anchor="middle" fill="#212121">分析 + 建库</text>
+<rect x="228.0" y="0.0" width="428.4" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="442.2" y="26.5" text-anchor="middle" fill="#212121">2026-07/08</text>
+<text class="nl" x="442.2" y="49.5" text-anchor="middle" fill="#212121">建 L1 主线</text>
+<text class="nl" x="442.2" y="72.5" text-anchor="middle" fill="#212121">HTTP 收波次 · PLC 下发 · SNP7 接入 · 日志系统</text>
+<rect x="734.4" y="0.0" width="385.2" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="927.0" y="26.5" text-anchor="middle" fill="#212121">2026-09-13</text>
+<text class="nl" x="927.0" y="49.5" text-anchor="middle" fill="#212121">现场问题爆发点</text>
+<text class="nl" x="927.0" y="72.5" text-anchor="middle" fill="#212121">换箱重报 · 多格口恒取首格 · 落错格污染 H7</text>
+<rect x="1197.6" y="0.0" width="187.6" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1291.4" y="26.5" text-anchor="middle" fill="#212121">2026-09-17</text>
+<text class="nl" x="1291.4" y="49.5" text-anchor="middle" fill="#212121">release-2.0 投产</text>
+<text class="nl" x="1291.4" y="72.5" text-anchor="middle" fill="#212121">『生产稳定运行』</text>
+<rect x="-109.6" y="161.0" width="369.2" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="75.0" y="187.5" text-anchor="middle" fill="#212121">2026-09-19</text>
+<text class="nl" x="75.0" y="210.5" text-anchor="middle" fill="#212121">L2/L3 加密</text>
+<text class="nl" x="75.0" y="233.5" text-anchor="middle" fill="#212121">分配表 · 切出切回 · 映射留痕 · 仿真脚本</text>
+<rect x="302.8" y="161.0" width="278.8" height="99" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="442.2" y="187.5" text-anchor="middle" fill="#212121">2026-09-22</text>
+<text class="nl" x="442.2" y="210.5" text-anchor="middle" fill="#212121">硬上限严格封顶</text>
+<text class="nl" x="442.2" y="233.5" text-anchor="middle" fill="#212121">锁格即容器离场 · H8 最后进行</text>
+<rect x="734.4" y="172.5" width="385.2" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="927.0" y="199.0" text-anchor="middle" fill="#212121">L1 核心闭环闭合</text>
+<text class="nl" x="927.0" y="222.0" text-anchor="middle" fill="#212121">边界：一条链</text>
+<rect x="-109.6" y="172.5" width="369.2" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="75.0" y="199.0" text-anchor="middle" fill="#212121">L2 保障成型</text>
+<text class="nl" x="75.0" y="222.0" text-anchor="middle" fill="#212121">边界：一致性补丁</text>
+<rect x="852.0" y="322.0" width="150.0" height="76" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="927.0" y="348.5" text-anchor="middle" fill="#212121">L3 治理起步</text>
+<text class="nl" x="927.0" y="371.5" text-anchor="middle" fill="#212121">边界：待收口</text>
+</g></svg>

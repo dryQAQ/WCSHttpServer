@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1887 1810" width="1887" height="1810" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="1887" height="1810" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M49.0,158.0 L49.0,236.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,501.0 L49.0,579.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,501.0 L49.0,540.0 L209.0,540.0 L209.0,579.0"/>
+<path class="fw" marker-end="url(#ah)" d="M209.0,861.5 L209.0,939.5"/>
+<path class="fw" marker-end="url(#ah)" d="M209.0,861.5 L209.0,900.5 L365.0,900.5 L365.0,939.5"/>
+<path class="fw" marker-end="url(#ah)" d="M365.0,1237.0 L365.0,578.6 L517.0,578.6 L517.0,-79.8"/>
+<path class="fw" marker-end="url(#ah)" d="M365.0,1237.0 L365.0,578.6 L517.0,578.6 L517.0,-79.8"/>
+<path class="fw" marker-end="url(#ah)" d="M517.0,237.8 L517.0,250.8 L821.0,250.8 L821.0,263.9"/>
+<path class="fw" marker-end="url(#ah)" d="M517.0,237.8 L517.0,248.0 L669.0,248.0 L669.0,258.3"/>
+<path class="fw" marker-end="url(#ah)" d="M669.0,478.7 L669.0,639.3"/>
+<path class="fw" marker-end="url(#ah)" d="M669.0,801.3 L669.0,955.8"/>
+<path class="fw" marker-end="url(#ah)" d="M669.0,1220.8 L669.0,583.6 L821.0,583.6 L821.0,-53.5"/>
+<path class="fw" marker-end="url(#ah)" d="M669.0,1220.8 L669.0,583.6 L821.0,583.6 L821.0,-53.5"/>
+<path class="fw" marker-end="url(#ah)" d="M821.0,211.5 L821.0,263.9"/>
+<path class="fw" marker-end="url(#ah)" d="M821.0,211.5 L821.0,237.7 L966.0,237.7 L966.0,263.9"/>
+<path class="fw" marker-end="url(#ah)" d="M821.0,211.5 L821.0,237.7 L966.0,237.7 L966.0,263.9"/>
+<path class="fw" marker-end="url(#ah)" d="M966.0,473.1 L966.0,527.6 L1111.0,527.6 L1111.0,582.0"/>
+<path class="fw" marker-end="url(#ah)" d="M1111.0,858.5 L1111.0,955.8"/>
+<path class="fw" marker-end="url(#ah)" d="M1111.0,1220.8 L1111.0,594.8 L1256.0,594.8 L1256.0,-31.2"/>
+<path class="fw" marker-end="url(#ah)" d="M1111.0,1220.8 L1111.0,594.8 L1256.0,594.8 L1256.0,-31.2"/>
+<path class="fw" marker-end="url(#ah)" d="M1111.0,1220.8 L1111.0,594.8 L1256.0,594.8 L1256.0,-31.2"/>
+<path class="fw" marker-end="url(#ah)" d="M1111.0,1220.8 L1111.0,594.8 L1256.0,594.8 L1256.0,-31.2"/>
+<rect class="elb" x="116.4" y="528.0" width="25.2" height="24" rx="4"/>
+<text class="el" x="129.0" y="540.0" text-anchor="middle">否</text>
+<rect class="elb" x="77.2" y="528.0" width="25.2" height="24" rx="4"/>
+<text class="el" x="89.8" y="540.0" text-anchor="middle">是</text>
+<rect class="elb" x="116.4" y="888.5" width="25.2" height="24" rx="4"/>
+<text class="el" x="129.0" y="900.5" text-anchor="middle">否</text>
+<rect class="elb" x="276.4" y="888.5" width="25.2" height="24" rx="4"/>
+<text class="el" x="289.0" y="900.5" text-anchor="middle">是</text>
+<rect class="elb" x="428.4" y="566.6" width="25.2" height="24" rx="4"/>
+<text class="el" x="441.0" y="578.6" text-anchor="middle">否</text>
+<rect class="elb" x="389.2" y="566.6" width="25.2" height="24" rx="4"/>
+<text class="el" x="401.8" y="578.6" text-anchor="middle">是</text>
+<rect class="elb" x="637.8" y="206.8" width="25.2" height="24" rx="4"/>
+<text class="el" x="650.4" y="218.8" text-anchor="middle">无</text>
+<rect class="elb" x="580.4" y="236.0" width="25.2" height="24" rx="4"/>
+<text class="el" x="593.0" y="248.0" text-anchor="middle">有</text>
+<rect class="elb" x="732.4" y="571.6" width="25.2" height="24" rx="4"/>
+<text class="el" x="745.0" y="583.6" text-anchor="middle">有</text>
+<rect class="elb" x="693.2" y="571.6" width="25.2" height="24" rx="4"/>
+<text class="el" x="705.8" y="583.6" text-anchor="middle">无</text>
+<rect class="elb" x="713.6" y="216.7" width="62.8" height="42" rx="4"/>
+<text class="el" x="745.0" y="228.7" text-anchor="middle">excepti</text>
+<text class="el" x="745.0" y="246.7" text-anchor="middle">on</text>
+<rect class="elb" x="872.9" y="225.7" width="48.3" height="24" rx="4"/>
+<text class="el" x="897.0" y="237.7" text-anchor="middle">block</text>
+<rect class="elb" x="1161.2" y="582.8" width="51.6" height="24" rx="4"/>
+<text class="el" x="1187.0" y="594.8" text-anchor="middle">落对格</text>
+<rect class="elb" x="1125.9" y="550.8" width="51.6" height="24" rx="4"/>
+<text class="el" x="1151.7" y="562.8" text-anchor="middle">落错格</text>
+<rect class="elb" x="1229.9" y="573.8" width="64.8" height="42" rx="4"/>
+<text class="el" x="1262.3" y="585.8" text-anchor="middle">落异常口</text>
+<text class="el" x="1262.3" y="603.8" text-anchor="middle"> 66</text>
+<rect class="elb" x="1189.5" y="550.8" width="64.8" height="24" rx="4"/>
+<text class="el" x="1221.9" y="562.8" text-anchor="middle">反馈超时</text>
+<rect x="22.5" y="0.0" width="53.0" height="158" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="49.0" y="79.0" text-anchor="middle" fill="#212121">单件 EPC 到达</text>
+<polygon points="49.0,236.0 98.0,368.5 49.0,501.0 0.0,368.5" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="49.0" y="357.0" text-anchor="middle" fill="#795548">EPC 可识别？</text>
+<text class="nl" x="49.0" y="380.0" text-anchor="middle" fill="#795548">A + N-1 位数字</text>
+<rect x="11.0" y="579.0" width="76.0" height="282.5" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="49.0" y="708.8" text-anchor="middle" fill="#212121">按原文处理 + 告警留痕</text>
+<text class="nl" x="49.0" y="731.8" text-anchor="middle" fill="#212121">不下发</text>
+<polygon points="209.0,579.0 258.0,720.3 209.0,861.5 160.0,720.3" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="209.0" y="708.8" text-anchor="middle" fill="#795548">SKU 已就绪？</text>
+<text class="nl" x="209.0" y="731.8" text-anchor="middle" fill="#795548">缓存命中或查询已返回</text>
+<rect x="171.0" y="939.5" width="76.0" height="297.5" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="209.0" y="1076.8" text-anchor="middle" fill="#212121">挂起等待 + 超时重试</text>
+<text class="nl" x="209.0" y="1099.8" text-anchor="middle" fill="#212121">不消耗额度</text>
+<polygon points="365.0,939.5 410.0,1088.3 365.0,1237.0 320.0,1088.3" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="365.0" y="1088.3" text-anchor="middle" fill="#795548">该 SKU 属于当前波次？</text>
+<rect x="479.0" y="-79.8" width="76.0" height="317.5" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="517.0" y="67.5" text-anchor="middle" fill="#212121">挂起不投</text>
+<text class="nl" x="517.0" y="90.5" text-anchor="middle" fill="#212121">等待该波次激活</text>
+<polygon points="517.0,-79.8 562.0,79.0 517.0,237.8 472.0,79.0" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="517.0" y="79.0" text-anchor="middle" fill="#795548">该 SKU 在计划中有格口？</text>
+<rect x="783.0" y="263.9" width="76.0" height="209.2" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="821.0" y="357.0" text-anchor="middle" fill="#212121">改投物理异常口 66</text>
+<text class="nl" x="821.0" y="380.0" text-anchor="middle" fill="#212121">留痕区分原因</text>
+<rect x="631.0" y="258.3" width="76.0" height="220.39999999999998" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="669.0" y="357.0" text-anchor="middle" fill="#212121">排除不可下发格口</text>
+<text class="nl" x="669.0" y="380.0" text-anchor="middle" fill="#212121">满箱未重绑 / 业务禁用</text>
+<rect x="631.0" y="639.3" width="76.0" height="162" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="669.0" y="708.8" text-anchor="middle" fill="#212121">查计划分配表</text>
+<text class="nl" x="669.0" y="731.8" text-anchor="middle" fill="#212121">各格口剩余额度</text>
+<polygon points="669.0,955.8 714.0,1088.3 669.0,1220.8 624.0,1088.3" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="669.0" y="1088.3" text-anchor="middle" fill="#795548">存在剩余额度？</text>
+<rect x="783.0" y="-53.5" width="76.0" height="265" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="821.0" y="67.5" text-anchor="middle" fill="#212121">claim 认领额度</text>
+<text class="nl" x="821.0" y="90.5" text-anchor="middle" fill="#212121">noteIssued 登记在途</text>
+<polygon points="821.0,-53.5 866.0,79.0 821.0,211.5 776.0,79.0" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="821.0" y="79.0" text-anchor="middle" fill="#795548">超计划处置策略</text>
+<rect x="939.5" y="263.9" width="53.0" height="209.2" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="966.0" y="368.5" text-anchor="middle" fill="#212121">拒发 + 标注 + 留痕</text>
+<rect x="928.0" y="263.9" width="76.0" height="209.2" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="966.0" y="357.0" text-anchor="middle" fill="#212121">叠加物理锁格决策</text>
+<text class="nl" x="966.0" y="380.0" text-anchor="middle" fill="#212121">缺口按 moveGap 搬迁</text>
+<rect x="1073.0" y="582.0" width="76.0" height="276.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1111.0" y="708.8" text-anchor="middle" fill="#212121">下发 PLC：EPC + 格口 + 小车</text>
+<text class="nl" x="1111.0" y="731.8" text-anchor="middle" fill="#212121">号</text>
+<polygon points="1111.0,955.8 1156.0,1088.3 1111.0,1220.8 1066.0,1088.3" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="1111.0" y="1088.3" text-anchor="middle" fill="#795548">PLC 落格反馈</text>
+<rect x="1218.0" y="-31.2" width="76.0" height="220.40000000000003" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1256.0" y="67.5" text-anchor="middle" fill="#212121">commitOnLanded</text>
+<text class="nl" x="1256.0" y="90.5" text-anchor="middle" fill="#212121">写 sorting_records</text>
+<rect x="1218.0" y="-31.2" width="76.0" height="220.40000000000003" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1256.0" y="67.5" text-anchor="middle" fill="#212121">只留痕</text>
+<text class="nl" x="1256.0" y="90.5" text-anchor="middle" fill="#212121">不写明细、不进 H7</text>
+<rect x="1218.0" y="-31.2" width="76.0" height="220.40000000000003" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1256.0" y="67.5" text-anchor="middle" fill="#212121">不计已分拣</text>
+<text class="nl" x="1256.0" y="90.5" text-anchor="middle" fill="#212121">不写箱内明细、不进 H7</text>
+<rect x="1218.0" y="-31.2" width="76.0" height="220.40000000000003" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="1256.0" y="67.5" text-anchor="middle" fill="#212121">记异常 + 计时归零</text>
+<text class="nl" x="1256.0" y="90.5" text-anchor="middle" fill="#212121">允许重扫重投</text>
+</g></svg>

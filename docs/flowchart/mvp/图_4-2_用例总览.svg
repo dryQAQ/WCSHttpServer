@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 633 1517" width="633" height="1517" font-family="'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif">
+<rect x="0" y="0" width="633" height="1517" fill="#FFFFFF"/>
+<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/>
+    </marker>
+    <marker id="ah-fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#FB8C00"/>
+    </marker>
+  </defs>
+<style>
+    .nl { font-size:15px; font-weight:600; }
+    .el { font-size:13px; fill:#37474F; }
+    .elb { fill:#FFFFFF; fill-opacity:.95; stroke:#CFD8DC; stroke-width:1; }
+    .fb { stroke:#FB8C00; stroke-width:2; fill:none; stroke-dasharray:7 4; }
+    .fw { stroke:#546E7A; stroke-width:1.8; fill:none; }
+    text { dominant-baseline:middle; }
+  </style>
+<g transform="translate(52,52) scale(1.35)">
+<path class="fw" marker-end="url(#ah)" d="M49.0,296.5 L49.0,374.5"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,296.5 L49.0,335.5 L205.0,335.5 L205.0,374.5"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,296.5 L49.0,335.5 L205.0,335.5 L205.0,374.5"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,296.5 L49.0,335.5 L205.0,335.5 L205.0,374.5"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M49.0,673.0 L49.0,712.0 L205.0,712.0 L205.0,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<path class="fw" marker-end="url(#ah)" d="M205.0,673.0 L205.0,712.0 L338.5,712.0 L338.5,751.0"/>
+<polygon points="49.0,0.0 98.0,148.3 49.0,296.5 0.0,148.3" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="49.0" y="136.8" text-anchor="middle" fill="#795548">系统边界</text>
+<text class="nl" x="49.0" y="159.8" text-anchor="middle" fill="#795548">WCSHttpServer 单进程</text>
+<polygon points="49.0,374.5 94.0,523.8 49.0,673.0 4.0,523.8" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="49.0" y="523.8" text-anchor="middle" fill="#795548">现场操作员</text>
+<polygon points="205.0,374.5 250.0,523.8 205.0,673.0 160.0,523.8" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="205.0" y="523.8" text-anchor="middle" fill="#795548">WMS 网关</text>
+<polygon points="205.0,374.5 250.0,523.8 205.0,673.0 160.0,523.8" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="205.0" y="523.8" text-anchor="middle" fill="#795548">设备 PLC / RFID / S7</text>
+<polygon points="205.0,374.5 250.0,523.8 205.0,673.0 160.0,523.8" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.8"/>
+<text class="nl" x="205.0" y="523.8" text-anchor="middle" fill="#795548">运维 / 开发</text>
+<rect x="22.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="49.0" y="885.2" text-anchor="middle" fill="#212121">开始接收任务</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">开始分拣</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">结束任务，触发 H8</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">一键满箱，触发 H7</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">切出 / 切回波次</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">清空格口容器绑定</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">查询分拣记录 / 按容器查明细</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">查看预警 / 异常 / 回传结果</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">重传 H7 / H8</text>
+<rect x="178.5" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="205.0" y="885.2" text-anchor="middle" fill="#212121">编辑配置并热生效</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">下发波次 H4</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">取消波次 H5</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">绑定容器 H6</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">接收 H7 / H8 并回执</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">RFID 推送 EPC 帧与小车号</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">PLC 上报落格结果</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">S7 提供锁格位图</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">只读核对：计划 vs 实际落格</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">离线仿真验证分配算法</text>
+<rect x="312.0" y="751.0" width="53.0" height="268.4" rx="9" fill="#FFFFFF" stroke="#37474F" stroke-width="1.6"/>
+<text class="nl" x="338.5" y="885.2" text-anchor="middle" fill="#212121">崩溃现场定位 minidump</text>
+</g></svg>

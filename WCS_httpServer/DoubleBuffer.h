@@ -49,6 +49,15 @@ struct GridEntry
     //   本表按格口保存，供选格日志/UI 显示"这一件分到的是分类口还是发货口"，也便于核对分配。
     QMap<QString, QString> gridTypePerGrid;   // 格口号(内部3位key) → "0"=分类 / "1"=异常 / "2"=发货
 
+    // ── ★ 2026-09-26 现场口径：计划额度的**唯一单元 = (SKU, 格口, 分拣类型)** ──
+    //   现场要求"计划是（SKU,格口,分拣类型）多少件就落多少件、不能多"，不允许跨单元借用/搬迁。
+    //   上面两张表是"按格口"口径（同格口两类型时 planQtyPerGrid 是两行之和、gridTypePerGrid 只留
+    //   最后一行）—— 不足以作为封顶依据，故新增下面两张**按单元**的表，作为解析/恢复的权威明细：
+    //     选格额度、认领掩码、落格记账、H7 报文裁剪、巡检红线一律走单元口径；
+    //     planQtyPerGrid / gridTypePerGrid 退化为"派生视图"（旧报表/日志/兜底仍可用）。
+    QMap<QString, int>     planQtyPerCell;    // 单元key "034|2" → 该单元计划件数
+    QMap<QString, QString> gridTypePerCell;   // 单元key "034|2" → "0"/"1"/"2"（与 key 内的类型一致，便于遍历）
+
     // ── 批次信息 ──
     QString orderCode;      // 批次号（所属波次）
     int     orderQty  = 0;  // 该批次总件数
