@@ -31,7 +31,11 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QDateTime>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QSqlError>
 #include <QDebug>
+#include <thread>
 #include <cstdio>
 
 #include "SortingDatabase.h"
@@ -975,7 +979,121 @@ int main(int argc, char** argv)
               QString("count=%1 src=%2").arg(backB.size()).arg(src));
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // ⑳ ★ 2026-09-26 落格单元类型持久化（业务确认：同一 (SKU,格口) 可有多类型单元）
+    //    切回/断电重建必须能按 grid_type 精确归属，否则只能按"首个有余量单元"猜。
+    // ══════════════════════════════════════════════════════════════════════
+    const QString WTYPE = "PP2026UNITTYPE";
+    std::printf("== ⑳ 落格明细带单元类型（sorting_records.grid_type 往返）==\n");
+    {
+        db.upsertReturnWave(WTYPE, 5, 3 /*WAVE_SORTING*/);
+        // 同一 (SKU,格口) 两行：分类 2 件 + 发货 3 件（H4 单元口径）
+        {
+            QVector<ReturnWaveItemRecord> items;
+            auto mk = [&](const QString& type, int qty) {
+                ReturnWaveItemRecord it;
+                it.orderCode = WTYPE; it.inco = "SKU-T"; it.gridNum = "034"; it.gridType = type;
+                it.planQty = qty; it.volu = "H-01-AB"; it.obxCode = "H-T0101";
+                items.append(it);
+            };
+            mk("0", 2);
+            mk("2", 3);
+            db.insertWaveItems(WTYPE, items);
+        }
+        // 两件落同一格口，但记账单元不同 → 落格明细各自带自己的类型
+        check(db.insertRecord(WTYPE, "EPC-T-CAT", "SKU-T", "034", "01", "01", "02", 1, "H-01-AB", "H-T0101", "0"),
+              QString("落格写入（分类单元）：insertRecord 带 grid_type=\"0\""));
+        check(db.insertRecord(WTYPE, "EPC-T-SHP", "SKU-T", "034", "01", "01", "02", 1, "H-01-AB", "H-T0101", "2"),
+              QString("落格写入（发货单元）：insertRecord 带 grid_type=\"2\""));
+        // 未进计划单元的件（异常口/落错格）不带类型 → 留空（不臆造）
+        check(db.insertRecord(WTYPE, "EPC-T-EXC", "SKU-T", "066", "01", "01", "02", 1, "H-01-AB", "", ""),
+              QString("未进计划单元的件：grid_type 留空"));
+
+        const QVector<LandedRecord> landed = db.getLandingRecordsForWave(WTYPE);
+        check(landed.size() == 3, QString("重建取回 3 行落格明细"), QString::number(landed.size()));
+        QString typeOfCat, typeOfShp, typeOfExc;
+        for (const LandedRecord& r : landed)
+        {
+            if (r.epc == "EPC-T-CAT") typeOfCat = r.gridType;
+            if (r.epc == "EPC-T-SHP") typeOfShp = r.gridType;
+            if (r.epc == "EPC-T-EXC") typeOfExc = r.gridType;
+        }
+        check(typeOfCat == "0" && typeOfShp == "2",
+              QString("同一 (SKU,格口) 两件按各自单元类型回读（分类=%1 发货=%2）").arg(typeOfCat, typeOfShp));
+        check(typeOfExc.isEmpty(), QString("未进计划单元的件类型为空（重建时走启发式并留痕）"));
+    }
+
     db.close();
     std::printf("\n===== 结果：通过 %d 项，失败 %d 项 =====\n", g_pass, g_fail);
+
+    // ══════════════════════════════════════════════════════════════════════
+    // ㉑ ★ 2026-09-26 旧库迁移：旧版 sorting_records（无 grid_type 列）在 open() 时自动补列
+    //    旧版 DDL 取"加 grid_type 之前"的真实定义；旧行读回类型为空（→ 调用方回退并留痕）
+    // ══════════════════════════════════════════════════════════════════════
+    std::printf("== ㉑ 旧库迁移（缺 grid_type 列自动补列，旧行类型为空）==\n");
+    {
+        const QString legacyPath = QCoreApplication::applicationDirPath() + "/test_resume_legacy_type.db";
+        QFile::remove(legacyPath);
+        QFile::remove(legacyPath + "-wal");
+        QFile::remove(legacyPath + "-shm");
+        {
+            QSqlDatabase c = QSqlDatabase::addDatabase("QSQLITE", "legacyNoType");
+            c.setDatabaseName(legacyPath);
+            if (!c.open())
+            {
+                std::printf("  [FAIL] 旧库创建失败: %s\n", c.lastError().text().toUtf8().constData());
+                return 1;
+            }
+            QSqlQuery q(c);
+            const bool ddlOk =
+                q.exec("CREATE TABLE IF NOT EXISTS sorting_records ("
+                       "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                       "  order_code TEXT NOT NULL DEFAULT '', barcode TEXT NOT NULL DEFAULT '',"
+                       "  sku TEXT NOT NULL DEFAULT '', grid_num TEXT NOT NULL DEFAULT '',"
+                       "  car_num TEXT NOT NULL DEFAULT '1', first_car TEXT NOT NULL DEFAULT '',"
+                       "  last_car TEXT NOT NULL DEFAULT '', grid_count INTEGER NOT NULL DEFAULT 0,"
+                       "  volu TEXT NOT NULL DEFAULT '', sort_time TEXT NOT NULL DEFAULT '',"
+                       "  create_time TEXT NOT NULL DEFAULT '', boxcode TEXT NOT NULL DEFAULT '')")
+             && q.exec("INSERT INTO sorting_records (order_code, barcode, sku, grid_num, car_num,"
+                       "  first_car, last_car, grid_count, volu, sort_time, create_time, boxcode) VALUES "
+                       "('PP2026LEGACYTYPE','EPC-LEGACY-T','SKU-T','034','01','01','02',1,'H-01-AB',"
+                       " '2026-09-26 09:00:00','2026-09-26 09:00:00','H-T0101')");
+            c.close();
+            if (!ddlOk) { std::printf("  [FAIL] 旧库结构与旧数据准备失败\n"); return 1; }
+        }
+        QSqlDatabase::removeDatabase("legacyNoType");
+
+        SortingDatabase& db2 = SortingDatabase::instance();
+        check(db2.open(legacyPath), QString("旧版结构数据库打开成功（createTables 触发迁移）"), legacyPath);
+        // ★ 只读查询连接（queryDb）是**每线程缓存、绑定首次打开时的库路径**的：同进程内换库后，
+        //   原线程的缓存连接仍指向先前那个库文件。这里在独立线程里做读写，
+        //   等价于真实场景（进程启动即绑定该库），测的是"迁移后的库能否被应用正常读写"。
+        int pass = 0, fail = 0;
+        QString detail;
+        std::thread worker([&]() {
+            const QVector<LandedRecord> old = db2.getLandingRecordsForWave("PP2026LEGACYTYPE");
+            if (old.size() == 1 && old.first().epc == "EPC-LEGACY-T" && old.first().gridType.isEmpty())
+                ++pass;
+            else { ++fail; detail += QString(" 旧行=%1(类型='%2')").arg(old.size())
+                                       .arg(old.isEmpty() ? QString("-") : old.first().gridType); }
+
+            if (db2.insertRecord("PP2026LEGACYTYPE", "EPC-NEW-T", "SKU-T", "034", "01", "01", "02",
+                                 1, "H-01-AB", "H-T0101", "2"))
+                ++pass;
+            else { ++fail; detail += " 新行写入失败"; }
+
+            const QVector<LandedRecord> after = db2.getLandingRecordsForWave("PP2026LEGACYTYPE");
+            QString newType;
+            for (const LandedRecord& r : after) if (r.epc == "EPC-NEW-T") newType = r.gridType;
+            if (newType == "2") ++pass;
+            else { ++fail; detail += QString(" 新行类型='%1'").arg(newType); }
+        });
+        worker.join();
+        check(pass == 3 && fail == 0,
+              QString("迁移后：旧行可读且类型为空、新行带类型可写可回读（3/3 项）"), detail);
+        db2.close();
+    }
+
+    std::printf("\n===== 汇总：通过 %d 项，失败 %d 项 =====\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

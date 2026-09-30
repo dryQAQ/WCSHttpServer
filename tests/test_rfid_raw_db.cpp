@@ -59,20 +59,29 @@ int main(int argc, char** argv)
     std::printf("== ② 批量落库 3 帧（截断帧 / 正常帧 / NOREAD 帧）==\n");
     QVector<RfidRawRecord> rows;
     {
+        // ★ 2026-09-22 修复"时间炸弹"：这三帧的 time 原为硬编码 "2026-09-15 10:00:0x"，
+        //   而 ⑤ 用 cleanupOldRfidRaw(7)（保留 7 天）验证"保留期内的帧不能被误删" ——
+        //   硬编码日期一旦过去 7 天，它们自己就变成"超期行"而被删掉，用例必然失败
+        //   （2026-09-22 复现：3 行 + 旧行 全被删，deleted=5）。
+        //   改为**相对当前时间**（1 小时前）→ 与运行日期无关，语义（保留期内）不变。
+        const QString tRecent = QDateTime::currentDateTime().addSecs(-3600)
+                                    .toString("yyyy-MM-dd HH:mm:ss");
         RfidRawRecord r;   // 长串截断帧
-        r.time = "2026-09-15 10:00:00"; r.epc = EPC_CUT; r.epcRaw = EPC_RAW_LONG;
+        r.time = tRecent; r.epc = EPC_CUT; r.epcRaw = EPC_RAW_LONG;
         r.carNum = "98"; r.seq = "SN0098"; r.devCode = "01";
         r.rawFrame = FRAME_LONG; r.bytes = FRAME_LONG.toUtf8().size(); r.noread = false;
         rows.append(r);
 
         RfidRawRecord r2;  // 正常 24 位帧
-        r2.time = "2026-09-15 10:00:01"; r2.epc = EPC_OK; r2.epcRaw = EPC_OK;
+        r2.time = QDateTime::currentDateTime().addSecs(-3599).toString("yyyy-MM-dd HH:mm:ss");
+        r2.epc = EPC_OK; r2.epcRaw = EPC_OK;
         r2.carNum = "27"; r2.seq = "SN0027"; r2.devCode = "01";
         r2.rawFrame = FRAME_OK; r2.bytes = FRAME_OK.toUtf8().size(); r2.noread = false;
         rows.append(r2);
 
         RfidRawRecord r3;  // NOREAD 帧（epc 空，仅留痕）
-        r3.time = "2026-09-15 10:00:02"; r3.epc = ""; r3.epcRaw = "";
+        r3.time = QDateTime::currentDateTime().addSecs(-3598).toString("yyyy-MM-dd HH:mm:ss");
+        r3.epc = ""; r3.epcRaw = "";
         r3.carNum = "31"; r3.seq = "SN0031"; r3.devCode = "01";
         r3.rawFrame = FRAME_NOREAD; r3.bytes = FRAME_NOREAD.toUtf8().size(); r3.noread = true;
         rows.append(r3);
@@ -111,7 +120,8 @@ int main(int argc, char** argv)
         //（现场会出现：NOREAD 帧 epc 空、流水号无数字→carNum 空、两段帧 devCode 空）
         QVector<RfidRawRecord> bare;
         RfidRawRecord r;   // 只填 time/rawFrame，其余保持默认（null QString）
-        r.time = "2026-09-15 10:00:03";
+        // ★ 2026-09-22 同上：改用相对时间（保留期内），避免硬编码日期过期后被 ⑤ 的清理删掉
+        r.time = QDateTime::currentDateTime().addSecs(-3597).toString("yyyy-MM-dd HH:mm:ss");
         r.rawFrame = "{|01|}0D";
         r.bytes = r.rawFrame.toUtf8().size();
         bare.append(r);

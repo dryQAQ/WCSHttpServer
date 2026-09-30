@@ -359,11 +359,15 @@ class S7Server:
                 # WCS 每次轮询读 25 字节 DB77（0..25）；无论其 count 字段如何编码均回 25B
                 with self._lock:
                     data = bytes(self.db77[:DB77_SIZE])
-                data_parts.append(bytes([0xFF, 0x04]) + struct.pack(">H", len(data)) + data)
+                # ★ 2026-09-26 修复（实测定位）：传输尺寸 0x04 = BIT 时，**长度字段必须按"位"计**，
+                #   即 Len = 25×8 = 200；写 25（当字节用）会被客户端按位换算成 25/8 = 4 字节，
+                #   ⇒ byte4..24 全部丢失 = **格口 ≥ 32 的锁格位永远读不到**（33..66 是现场主用格口）。
+                #   实测：Len=25 时置位 bit34 无反应、只有 bit0..31 生效；Len=200 后 bit34 立即可见。
+                data_parts.append(bytes([0xFF, 0x04]) + struct.pack(">H", len(data) * 8) + data)
             else:
                 rc, data = self._read_data_for(item["area"], item["db"], item["addr"], item["length"])
                 if rc == 0xFF:
-                    data_parts.append(bytes([0xFF, 0x04]) + struct.pack(">H", len(data)) + data)
+                    data_parts.append(bytes([0xFF, 0x04]) + struct.pack(">H", len(data) * 8) + data)
                 else:
                     data_parts.append(bytes([rc, 0x00, 0x00, 0x00]))
         dlen = sum(len(p) for p in data_parts)

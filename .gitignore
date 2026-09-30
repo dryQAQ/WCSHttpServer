@@ -1,26 +1,23 @@
 /src/*
-/WCS_httpServer/.vs
-/WCS_httpServer/x64
+/WCS_httpServer/.vs/*
+/WCS_httpServer/x64/*
 /doc
 /.git
-/WCS_httpServer/doc
+/WCS_httpServer/doc/*
 /release_WcsHttpServer/*.dmp
 /release_WcsHttpServer/crash.log
-/release_WcsHttpServer/log_bak
-/test
+/release_WcsHttpServer/log_bak/*
+/test/*
 /check_db_schema.py
 # 提交信息同步脚本：本地工具，不入库（只读 git 历史并写入 提交信息.md，不做任何提交操作）
 /commit_msg_sync.py
 /.dshignore
 /dsh.config.json
 /*.zip
-*.zip
-*.dmp
-
-
-*.dmp
-*.zip
-*.bak
-release_WcsHttpServer/crash.log
+/*.dmp
+/*.bak
+/release_WcsHttpServer/crash.log
 # 本地编译验证工作区（moc 输出 + cl 编译日志，仅本地语法/编译校验用，不入库）
 /.build_check/
+/*.py
+/*.rar
